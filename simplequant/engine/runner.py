@@ -10,6 +10,7 @@ import backtrader as bt
 import pandas as pd
 
 from ..data.base import EXTRA_COLUMNS
+from ..bonds.rates import MACRO_COLUMNS
 from ..data.cash_dividend import has_columns, events_of
 from .base_strategy import ORDER_COLUMNS, TRADE_COLUMNS
 from .commission import AShareCommission
@@ -30,9 +31,9 @@ class BrokerConfig:
 
 
 class FactorPandasData(bt.feeds.PandasData):
-    """在 OHLCV 之外带上可选的因子列；数据里没有的列为 NaN"""
-    lines = tuple(EXTRA_COLUMNS)
-    params = tuple((c, -1) for c in EXTRA_COLUMNS)
+    """在 OHLCV 之外带上可选的因子列（估值、换手、利率）；数据里没有的列为 NaN"""
+    lines = tuple(EXTRA_COLUMNS + MACRO_COLUMNS)
+    params = tuple((c, -1) for c in EXTRA_COLUMNS + MACRO_COLUMNS)
 
 
 def _feed(df: pd.DataFrame, name: str) -> bt.feeds.PandasData:
@@ -44,7 +45,7 @@ def _feed(df: pd.DataFrame, name: str) -> bt.feeds.PandasData:
         tf, comp = bt.TimeFrame.Minutes, max(int(step / pd.Timedelta(minutes=1)), 1)
     else:
         tf, comp = bt.TimeFrame.Seconds, max(int(step / pd.Timedelta(seconds=1)), 1)
-    extras = {c: c for c in EXTRA_COLUMNS if c in df.columns}
+    extras = {c: c for c in EXTRA_COLUMNS + MACRO_COLUMNS if c in df.columns}
     return FactorPandasData(dataname=df, name=name, timeframe=tf, compression=comp,
                             datetime=None, openinterest=-1, **extras)
 

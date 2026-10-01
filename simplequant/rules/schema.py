@@ -29,6 +29,7 @@ GROUPS = {
     "volume": L("量能", "Volume"),
     "volatility": L("波动", "Volatility"),
     "valuation": L("估值/换手", "Valuation / turnover"),
+    "macro": L("利率/信用利差", "Rates / credit spread"),
     "position": L("持仓", "Position"),
 }
 
@@ -102,10 +103,27 @@ INDICATORS = {
            "desc": L("仅 BaoStock 股票日线提供", "BaoStock stock daily data only")},
     "ps": {"label": L("市销率 PS(TTM)", "P/S (TTM)"), "group": "valuation", "params": [], "requires": "ps",
            "desc": L("仅 BaoStock 股票日线提供", "BaoStock stock daily data only")},
+    # ---- 利率 / 信用利差（中债收益率曲线，所有标的共用；见 simplequant/bonds/rates.py） ----
+    "cgb10y": {"label": L("10年期国债收益率(%)", "10Y government bond yield (%)"), "group": "macro", "params": [],
+               "requires": "cgb10y", "macro": True,
+               "desc": L("中债国债收益率曲线；需先在「数据」页下载利率数据", "ChinaBond curve; download rates on the Data page first")},
+    "term_spread": {"label": L("期限利差 10年−1年(BP)", "Term spread 10Y−1Y (bp)"), "group": "macro", "params": [],
+                    "requires": "term_spread", "macro": True,
+                    "desc": L("10 年减 1 年期国债收益率，单位 BP；收窄常被视为经济预期转弱",
+                              "10Y minus 1Y government yield in bp; flattening often signals weaker growth expectations")},
+    "credit_spread": {"label": L("信用利差 3年AAA中票−国债(BP)", "Credit spread 3Y AAA MTN − govt (bp)"), "group": "macro",
+                      "params": [], "requires": "credit_spread", "macro": True,
+                      "desc": L("3 年期中短期票据（AAA）减 3 年期国债收益率，单位 BP；走阔通常表示风险偏好下降",
+                                "3Y AAA medium-term notes minus 3Y government yield in bp; widening usually means risk aversion")},
     # ---- 持仓 ----
     "pnl_pct": {"label": L("持仓收益率(%)", "Position P&L (%)"), "group": "position", "params": [], "position": True,
                 "desc": L("用于止损/止盈，例如 < -8", "for stop loss / take profit, e.g. < -8")},
 }
+
+
+def macro_columns(rule: dict) -> set[str]:
+    """规则用到的利率列（不在行情数据里，回测前从利率数据并入）"""
+    return {c for c in required_columns(rule) if INDICATORS.get(c, {}).get("macro")}
 
 
 def required_columns(rule: dict) -> set[str]:

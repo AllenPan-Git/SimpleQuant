@@ -8,7 +8,7 @@ import operator
 
 import backtrader as bt
 
-from ..rules.schema import CROSS_OPS, default_line, validate
+from ..rules.schema import CROSS_OPS, INDICATORS, default_line, validate
 from .factors import KDJ, OBV
 from .templates import _PerAsset
 
@@ -83,8 +83,8 @@ def _build_line(d, spec: dict, bases: dict | None = None):
         return OBV(d).obv
     if ind == "volatility":
         return bt.ind.StdDev(bt.ind.PctChange(d.close, period=1), period=int(p["period"])) * 100
-    if ind in ("turnover", "pe", "pb", "ps"):
-        return getattr(d, ind)
+    if INDICATORS.get(ind, {}).get("requires"):          # 数据里的列：估值、换手、利率
+        return getattr(d, INDICATORS[ind]["requires"])
     raise ValueError(f"Unknown indicator / 未知指标 {ind}")
 
 

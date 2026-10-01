@@ -215,17 +215,20 @@ def selection_schema() -> dict:
         "neutralize_industry": {"type": "boolean"},
         "neutralize_size": {"type": "boolean"},
         "position_pct": {"type": "number"},
+        "max_price": {"type": "number"},
     }
     return {"type": "object", "properties": props, "required": list(props), "additionalProperties": False}
 
 
 def selection_system_prompt(lang: str = "zh") -> str:
-    from ..stocks import FACTORS, UNIVERSES, GROUPS
+    from ..stocks import FACTORS, UNIVERSES, GROUPS, factor_assets
+    for_text = {("stock",): "stocks only", ("cb",): "convertible bonds only", ("stock", "cb"): "stocks and convertible bonds"}
     cat = "\n".join(
         f"- {k}: {pick(m['label'], 'en')} / {pick(m['label'], 'zh')}; group {pick(GROUPS[m['group']], 'en')}; "
         f"usual direction {'higher' if m['direction'] > 0 else 'lower'} is better"
         + (f"; {pick(m['desc'], 'en')}" if m.get("desc") else "")
         + ("; needs financial data" if m.get("requires_fin") else "")
+        + f"; for {for_text.get(tuple(factor_assets(k)), 'stocks only')}"
         for k, m in FACTORS.items())
     unis = ", ".join(f"{k} = {pick(u['label'], 'en')} / {pick(u['label'], 'zh')}" for k, u in UNIVERSES.items())
     language = LANG_NAMES.get(lang, "English")
@@ -247,6 +250,7 @@ Conventions:
 - top_n default 10; "hold 20 stocks / 持有20只" → 20. exclude_st default true. min_list_days default 250 ("exclude new listings under a year").
 - "industry neutral / 行业中性 / 各行业分散" → neutralize_industry true. "size neutral / 市值中性" → neutralize_size true. Default false.
 - position_pct default 95.
+- Convertible bonds ("可转债 / 转债 / convertible bonds") → universe cb, and only factors marked for convertible bonds. "双低 / double-low" → cb_double_low lower. "低价转债" → cb_price lower. "低溢价 / 低转股溢价率" → cb_premium lower. "接近债底 / 纯债溢价率低" → cb_bond_premium lower. "小规模转债" → cb_issue_size lower. For cb set exclude_st false and min_list_days 0 unless asked. max_price: the price cap for cb ("价格低于 130 元" → 130); 0 keeps the default (130). For stock universes set max_price to 0.
 
 Be honest about limits: anything not expressible with this catalog and these settings (e.g. factors not listed such as dividend yield, analyst ratings, specific industries to include/exclude, stop-losses, market-timing overlays, universes other than those listed) goes into "unsupported" as short phrases written in {language} and is left out. Do not use a different factor as a stand-in for an unsupported one (e.g. never use ep in place of dividend yield); the user decides whether to add something else. If none of what the user asked for can be expressed (or the text is not a stock-picking idea at all), return an empty factors list and explain in "unsupported".
 understood: one short paragraph in {language} restating the strategy you built. name: short name in {language}."""
@@ -265,18 +269,34 @@ def to_selection_spec(out: dict) -> dict:
         "factors": factors,
         "top_n": int(round(out.get("top_n") or 10)),
         "rebalance": rebalance,
-        "filters": {"exclude_st": bool(out.get("exclude_st", True)), "min_list_days": int(out.get("min_list_days") or 0)},
+        "filters": _filters(out),
         "position_pct": float(out.get("position_pct") or 95),
         "weighting": out.get("weighting") if out.get("weighting") in WEIGHTING else "manual",
         "neutralize": {"industry": bool(out.get("neutralize_industry")), "size": bool(out.get("neutralize_size"))},
     }
 
 
+def _filters(out: dict) -> dict:
+    from ..stocks import universe as U
+    if U.kind(out.get("universe") or "") == "cb":
+        from ..bonds.panel import cb_filters
+        f = cb_filters({"min_list_days": int(out.get("min_list_days") or 0)})
+        if out.get("max_price"):
+            f["max_price"] = float(out["max_price"])
+        return f
+    return {"exclude_st": bool(out.get("exclude_st", True)), "min_list_days": int(out.get("min_list_days") or 0)}
+
+
 def validate_selection(spec: dict, lang: str = "zh") -> list[str]:
     from ..i18n import tr
+    from ..stocks import FACTORS, factor_assets, universe as U
     errors = []
     if not spec.get("factors"):
         errors.append(tr("err.sel_no_factor", lang))
+    kind = U.kind(spec.get("universe") or "")
+    for f in spec.get("factors") or []:
+        if kind not in factor_assets(f["key"]):
+            errors.append(tr("err.sel_factor_kind", lang, name=pick(FACTORS[f["key"]]["label"], lang)))
     if not 1 <= spec.get("top_n", 0) <= 100:
         errors.append(tr("err.sel_top_n", lang))
     if not isinstance(spec.get("rebalance"), str) and not 1 <= int(spec["rebalance"]) <= 250:

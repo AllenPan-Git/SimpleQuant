@@ -68,6 +68,12 @@ def describe_selection(spec: dict, lang: str = "zh") -> str:
             + tr("sel.top_n", lang, n=spec["top_n"]) + f"\n【{tr('sel.factors', lang)}】{facs}")
     if neutral:
         text += f"\n【{tr('sel.neutral', lang)}】" + sep.join(neutral)
+    if UNIVERSES[spec["universe"]].get("kind") == "cb":          # 可转债：价格上限等条件
+        from ..bonds.panel import CB_FILTERS, cb_filters
+        flt = cb_filters(spec.get("filters"))
+        items = [f"{pick(m['label'], lang)} {flt[k]:g}" for k, m in CB_FILTERS.items() if flt.get(k) is not None]
+        if items:
+            text += f"\n【{tr('sel.filters', lang)}】" + sep.join(items)
     if spec.get("dividend") == "cash":
         text += " · " + tr("sel.div_cash", lang)
     return text

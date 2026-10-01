@@ -35,6 +35,13 @@ class Panel:
     has_fin: bool = False         # 是否已加载财务数据
     div_codes: frozenset = frozenset()   # 有分红送转数据的股票（字段 div_cash / div_bonus / div_reserve）
     div_patched: pd.DataFrame | None = None   # 分红表漏记、按复权因子补上的除权除息（code + 分红表各列）
+    # ---- 品种差异（可转债见 simplequant/bonds/panel.py） ----
+    kind: str = "stock"           # stock / cb
+    lot_size: int = 100           # 每手数量：股票 100 股，可转债 10 张
+    size_factor: str = "size"     # 市值中性化用的规模因子
+    exit: pd.DataFrame | None = None     # 当天开盘必须卖出（可转债强赎公告后、退市前），bool
+    exit_dates: dict = field(default_factory=dict)   # 代码 -> 必须卖出的第一天（模拟盘判断明天要不要卖）
+    extra_filters: dict = field(default_factory=dict)   # 选股条件名 -> fn(panel, 值) -> bool DataFrame
 
     @property
     def calendar(self) -> pd.DatetimeIndex:

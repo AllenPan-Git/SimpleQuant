@@ -32,6 +32,9 @@ FILENAME = "<factor-code>"
 GROUPS.setdefault("custom", L("自定义", "Custom"))
 # 用到这些字段就需要财务数据
 FIN_WORDS = set(FIN_FIELDS) | {"mcap"}
+STOCK_WORDS = {"pe", "pb", "ps", "turnover"}           # 只有股票有
+CB_WORDS = {"premium", "bond_premium", "double_low", "conv_value", "bond_value", "conv_price", "stock_close",
+            "remain_years", "issue_size", "remain_size", "rating_score"}     # 只有可转债有
 
 
 class FactorCodeError(Exception):
@@ -72,13 +75,26 @@ def check_syntax(code: str, lang: str = "zh") -> list[str]:
     return []
 
 
-def uses_fin(code: str) -> bool:
-    """代码里以字符串形式用到了财务字段（p["roe"]、p["mcap"] 等）"""
+def _uses(code: str, words: set) -> bool:
     try:
         tree = ast.parse(code)
     except SyntaxError:
         return False
-    return any(isinstance(n, ast.Constant) and n.value in FIN_WORDS for n in ast.walk(tree))
+    return any(isinstance(n, ast.Constant) and n.value in words for n in ast.walk(tree))
+
+
+def uses_fin(code: str) -> bool:
+    """代码里以字符串形式用到了财务字段（p["roe"]、p["mcap"] 等）"""
+    return _uses(code, FIN_WORDS)
+
+
+def assets_of(code: str) -> tuple:
+    """适用的品种：用到财务 / 估值字段的只适用于股票，用到转债字段的只适用于可转债，其余两者都可以"""
+    if _uses(code, FIN_WORDS | STOCK_WORDS):
+        return ("stock",)
+    if _uses(code, CB_WORDS):
+        return ("cb",)
+    return ("stock", "cb")
 
 
 _CACHE: dict[str, object] = {}
@@ -143,7 +159,8 @@ def _entry(d: dict) -> dict:
     code = d["code"]
     return {"label": L(d["name"], d["name"]), "group": "custom", "direction": 1 if d.get("direction", 1) > 0 else -1,
             "fn": lambda p, code=code: evaluate(code, p), "desc": L(d.get("desc", ""), d.get("desc", "")),
-            "requires_fin": uses_fin(code), "custom": True, "code": code, "name": d["name"]}
+            "requires_fin": uses_fin(code), "custom": True, "code": code, "name": d["name"],
+            "assets": assets_of(code)}
 
 
 def list_factors(store_dir: Path | None = None) -> dict[str, dict]:

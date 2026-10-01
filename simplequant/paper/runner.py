@@ -102,13 +102,18 @@ def load_single_data(acc: PaperAccount) -> dict[str, pd.DataFrame]:
 def refresh_selection_data(acc: PaperAccount, store, done: set | None = None, workers: int = 4,
                            calendar: pd.DatetimeIndex | None = None) -> None:
     """选股账户：增量更新股票池数据（同一次运行中同一个股票池只更新一次）"""
-    from ..stocks import UNIVERSES, FACTORS
+    from ..stocks import UNIVERSES, FACTORS, universe
     done = done if done is not None else set()
     if acc.universe in done:
         return
     # 只更新到"此刻应有数据"的最新交易日：数据已到这天的股票会被跳过，周末/盘中重复运行很快
     today = latest_expected_day(calendar if calendar is not None else load_calendar()).date().isoformat()
-    first = store.load_index(UNIVERSES[acc.universe]["index"]).index[0].date().isoformat() \
+    if universe.kind(acc.universe) == "cb":          # 可转债：列表、条款、指数、日线一起增量更新
+        first = (pd.Timestamp(acc.start) - pd.Timedelta(days=PANEL_WARMUP_DAYS)).date().isoformat()
+        universe.update(acc.universe, first, today, workers=workers)
+        done.add(acc.universe)
+        return
+    first =store.load_index(UNIVERSES[acc.universe]["index"]).index[0].date().isoformat() \
         if (store.root / "index" / f"{UNIVERSES[acc.universe]['index']}.parquet").exists() else acc.start
     uni = store.update_universe(acc.universe, first, today)
     store.update_index(UNIVERSES[acc.universe]["index"], first, today)
@@ -125,10 +130,10 @@ def refresh_selection_data(acc: PaperAccount, store, done: set | None = None, wo
 
 
 def load_selection_panel(acc: PaperAccount, store):
-    from ..stocks import UNIVERSES, build_panel
-    idx = store.load_index(UNIVERSES[acc.universe]["index"])
+    from ..stocks import universe
+    idx = universe.load_benchmark(acc.universe, store)
     start = max(idx.index[0], pd.Timestamp(acc.start) - pd.Timedelta(days=PANEL_WARMUP_DAYS))
-    return build_panel(store, acc.universe, start.date().isoformat(), idx.index[-1].date().isoformat())
+    return universe.build(acc.universe, start.date().isoformat(), idx.index[-1].date().isoformat(), store)
 
 
 def _reason(r):
@@ -136,6 +141,21 @@ def _reason(r):
     if isinstance(r, tuple):
         return list(r)
     return [r, {}] if isinstance(r, str) and r else None
+
+
+def with_rates(acc: PaperAccount, prices: dict, refresh: bool = False) -> dict:
+    """规则用到利率 / 信用利差时并入利率数据；refresh 时本地数据旧了先更新（当年部分约 12 秒）"""
+    from ..rules import macro_columns
+    cols = macro_columns(acc.spec["rule"]) if acc.spec.get("kind") == "rule" else set()
+    if not cols:
+        return prices
+    from ..bonds.rates import RatesStore, attach
+    st = RatesStore()
+    if refresh and st.stale():
+        st.update()
+    if not st.ready():
+        raise ValueError("rates data missing; download it on the Data page / 缺少利率数据，请先在「数据」页下载")
+    return attach(prices, cols, st.load())
 
 
 # ---------------- 重放 ----------------
@@ -227,7 +247,7 @@ def run_all(accounts: list[PaperAccount], store=None, refresh: bool = True, log=
                 state = run_account(acc, calendar, panel=load_selection_panel(acc, store))
             else:
                 prices = refresh_single_data(acc) if refresh else load_single_data(acc)
-                state = run_account(acc, calendar, prices=prices)
+                state = run_account(acc, calendar, prices=with_rates(acc, prices, refresh))
             log(f"[{acc.name}] data through {state['as_of']}, value {state['value']:,.0f}, "
                 f"{len(state['signals'])} signal(s) for {state['execute_on']}")
             expected = latest_expected_day(calendar).date().isoformat()

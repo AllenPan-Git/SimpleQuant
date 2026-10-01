@@ -29,6 +29,8 @@ UNIVERSES = {
     "hs300": {"label": L("沪深300", "CSI 300"), "index": "sh.000300", "query": "query_hs300_stocks"},
     "zz500": {"label": L("中证500", "CSI 500"), "index": "sh.000905", "query": "query_zz500_stocks"},
     "sz50": {"label": L("上证50", "SSE 50"), "index": "sh.000016", "query": "query_sz50_stocks"},
+    # 可转债：数据在 simplequant/bonds（东方财富 / 新浪），基准为中证转债指数；统一入口见 universe.py
+    "cb": {"label": L("可转债（全市场）", "Convertible bonds (all)"), "index": "000832", "kind": "cb"},
 }
 
 DAILY_FIELDS = "date,open,high,low,close,preclose,volume,amount,turn,tradestatus,pctChg,isST,peTTM,pbMRQ,psTTM"

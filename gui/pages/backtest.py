@@ -132,7 +132,7 @@ def page():
             run_btn.disable()
             running.set_visibility(True)
             try:
-                prices, skipped, patched = await run.io_bound(prepare_prices, by_id, pick, broker)
+                prices, skipped, patched = await run.io_bound(prepare_prices, by_id, pick, broker, spec)
                 cls, params = strategies.resolve(spec)
                 res = await run.io_bound(run_backtest, prices, cls, params, broker, with_panels=True)
                 BT.clear()

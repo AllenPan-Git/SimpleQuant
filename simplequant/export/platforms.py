@@ -67,8 +67,8 @@ def check_exportable(spec: dict, lang: str = "zh") -> None:
                               lang))
     if spec.get("kind") == "rule" and required_columns(spec["rule"]):
         cols = ", ".join(sorted(required_columns(spec["rule"])))
-        raise ValueError(pick(L(f"规则用到了估值/换手因子（{cols}），各平台取法不同，暂不支持导出到平台",
-                                f"The rule uses valuation/turnover factors ({cols}); not supported for platform export yet"),
+        raise ValueError(pick(L(f"规则用到了估值、换手或利率数据（{cols}），各平台取法不同，暂不支持导出到平台",
+                                f"The rule uses valuation, turnover or rates data ({cols}); not supported for platform export yet"),
                               lang))
 
 

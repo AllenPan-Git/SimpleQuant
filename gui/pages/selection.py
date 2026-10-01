@@ -16,9 +16,10 @@ from simplequant import llm, strategies
 from simplequant.engine.optimize import value_range, default_workers
 from simplequant.engine.walkforward import make_windows
 from simplequant.stocks import (StockStore, UNIVERSES, FACTORS, GROUPS, REBALANCE, WEIGHTING, DIVIDEND,
-                                DEFAULT_FILTERS, build_panel, analyze, compute, run_selection, today, factor_zscores,
+                                DEFAULT_FILTERS, analyze, compute, run_selection, today, factor_zscores,
                                 factor_correlation, sample_dates)
-from simplequant.stocks import custom_factors
+from simplequant.stocks import custom_factors, universe as U, factors_for
+from simplequant.bonds.panel import CB_FILTERS, CB_DEFAULT_FILTERS
 from simplequant.stocks.walkforward import (walk_forward_selection, selection_tunables, selection_grid,
                                             REBALANCE_CHOICES, TARGET_METRICS as WF_TARGETS, MAX_COMBOS as WF_MAX)
 from gui import state, history
@@ -32,6 +33,9 @@ from ui.shared import export_filename, default_range, fmt_metric, pct, num, orde
 DENSE = "outlined dense options-dense"
 WARMUP_DAYS = 400          # 面板往前多取约 400 天，只用来预热因子；研究与回测从所选开始日起算
 SEL_DEFAULT = [{"key": "ep", "weight": 1.0, "direction": 1}, {"key": "ret20", "weight": 1.0, "direction": -1}]
+CB_SEL_DEFAULT = [{"key": "cb_double_low", "weight": 1.0, "direction": -1}]       # 可转债「双低」
+# 股票与可转债各自记住的表单项（切换股票池时互换）
+KIND_KEYS = ("factors", "excl_st", "min_list", "dividend", "ni", "ns")
 
 _PANELS: OrderedDict = OrderedDict()    # (股票池, 起, 止, 数据版本) → 面板；最多留 3 个
 
@@ -41,7 +45,7 @@ def store() -> StockStore:
 
 
 def sp_state() -> dict:
-    return state.STATE.setdefault("sp", {
+    sp = state.STATE.setdefault("sp", {
         "universe": "hs300", "ranges": {},
         # 选股回测表单
         "factors": [dict(f) for f in SEL_DEFAULT], "weighting": "manual", "lookback": 252, "ni": False, "ns": False,
@@ -61,6 +65,32 @@ def sp_state() -> dict:
         # 自定义因子编辑区（key 为空 = 新建）
         "cf": {"key": None, "name": "", "code": "", "direction": 1, "desc": ""}, "cf_trial": None,
     })
+    # 可转债的选股条件（价格上限等；None = 不限）；旧版保存的界面状态里没有这两项
+    sp.setdefault("cbf", {k: v for k, v in CB_DEFAULT_FILTERS.items() if k in CB_FILTERS})
+    sp.setdefault("forms", {})
+    sp["dl"].setdefault("cb_start", "2017-01-01")
+    return sp
+
+
+def kind_defaults(kind: str) -> dict:
+    if kind == "cb":
+        return {"factors": [dict(f) for f in CB_SEL_DEFAULT], "excl_st": False,
+                "min_list": CB_DEFAULT_FILTERS["min_list_days"], "dividend": "reinvest", "ni": False, "ns": False}
+    return {"factors": [dict(f) for f in SEL_DEFAULT], "excl_st": True, "min_list": DEFAULT_FILTERS["min_list_days"],
+            "dividend": "reinvest", "ni": False, "ns": False}
+
+
+def switch_kind(SP, old: str, new: str):
+    """股票池在股票与可转债之间切换：各自的因子、条件分开记住"""
+    if old == new:
+        return
+    SP.setdefault("forms", {})[old] = {k: SP[k] for k in KIND_KEYS if k in SP}
+    SP.update(SP["forms"].get(new) or kind_defaults(new))
+    usable = factors_for(new)
+    if SP["res"]["fkey"] not in usable:
+        SP["res"]["fkey"] = usable[0]
+    SP["res"]["min_days"] = SP["min_list"]
+    SP["corr_keys"] = None
 
 
 def factor_label(k: str) -> str:
@@ -73,8 +103,7 @@ def reb_label(r) -> str:
 
 def data_version(st: StockStore, universe: str) -> str:
     """数据有更新时让缓存的面板失效"""
-    files = [st.root / "manifest.json", st.root / "universe" / f"{universe}.parquet",
-             st.root / "fin_manifest.json", st.root / "industry.parquet"]
+    files = U.data_files(universe, st)
     return "|".join(str(f.stat().st_mtime) if f.exists() else "-" for f in files)
 
 
@@ -84,7 +113,7 @@ def get_panel(universe: str, start: str, end: str):
     if key in _PANELS:
         _PANELS.move_to_end(key)
         return _PANELS[key]
-    panel = build_panel(st, universe, start, end)
+    panel = U.build(universe, start, end, st)
     _PANELS[key] = panel
     while len(_PANELS) > 3:
         _PANELS.popitem(last=False)
@@ -92,8 +121,7 @@ def get_panel(universe: str, start: str, end: str):
 
 
 def universe_ready(universe: str) -> bool:
-    st = store()
-    return st.has_universe(universe) and (st.root / "index" / f"{UNIVERSES[universe]['index']}.parquet").exists()
+    return U.ready(universe, store())
 
 
 class Ctx:
@@ -113,7 +141,9 @@ def page():
         with ui.card().classes("w-full"):
             with ui.row().classes("w-full items-start gap-4"):
                 def on_universe(e):
+                    old = U.kind(SP["universe"])
                     SP["universe"] = e.value
+                    switch_kind(SP, old, U.kind(e.value))
                     reload_all()
                 ui.select({u: p(UNIVERSES[u]["label"]) for u in UNIVERSES}, label=t("sp.universe"),
                           value=SP["universe"], on_change=on_universe).props(DENSE).classes("w-48").mark("sp_universe")
@@ -132,7 +162,7 @@ def page():
                 ctx.lo = ctx.hi = None
                 warm.set_visibility(False)
                 return False
-            idx = store().load_index(UNIVERSES[u]["index"])
+            idx = U.load_benchmark(u, store())
             ctx.lo, ctx.hi = idx.index[0].date(), idx.index[-1].date()
             a, b = SP["ranges"].get(u, (ctx.lo, ctx.hi))
             a, b = max(a, ctx.lo), min(b, ctx.hi)
@@ -198,9 +228,11 @@ def page():
 
         def factors_changed():
             """自定义因子保存 / 删除后：研究、回测、滚动优化里的因子列表重画（面板不用重新载入）"""
-            SP["factors"] = [f for f in SP["factors"] if f["key"] in FACTORS] or [dict(f) for f in SEL_DEFAULT]
-            if SP["res"]["fkey"] not in FACTORS:
-                SP["res"]["fkey"] = "ep"
+            kind = U.kind(SP["universe"])
+            SP["factors"] = [f for f in SP["factors"] if f["key"] in factors_for(kind)] or \
+                kind_defaults(kind)["factors"]
+            if SP["res"]["fkey"] not in factors_for(kind):
+                SP["res"]["fkey"] = factors_for(kind)[0]
             if ctx.panel is None:
                 return
             for box, build in ((res_box, _research), (bt_box, _backtest), (wf_box, _walkforward)):
@@ -258,6 +290,9 @@ def page():
 # ================= 数据 =================
 def _data_tab(SP, ctx, reload_all):
     universe = SP["universe"]
+    if U.kind(universe) == "cb":
+        _cb_data_tab(SP, ctx, reload_all)
+        return
     st = store()
     if ctx.lo is not None:
         uni = st.load_universe(universe)
@@ -377,11 +412,80 @@ def _data_tab(SP, ctx, reload_all):
                     .props("accept=.zip flat bordered").classes("w-full")
 
 
+def _cb_data_tab(SP, ctx, reload_all):
+    """可转债全市场：列表、条款、日线、中证转债指数"""
+    from simplequant.bonds import CBStore
+    st = CBStore()
+    if ctx.lo is not None:
+        lst, info = st.load_list(), st.load_info()
+        have = sum(st.has(c) for c in lst["code"])
+        now = pd.Timestamp(dt.date.today())
+        trading = sum(1 for c in lst["code"] if st.has(c) and c in info.index
+                      and (pd.isna(info.at[c, "delist_date"]) or info.at[c, "delist_date"] > now))
+        with ui.grid().classes("w-full gap-3 grid-cols-2 md:grid-cols-4"):
+            metric_tile(t("cb.total"), str(len(lst)), help_text=t("cb.total_help"))
+            metric_tile(t("cb.downloaded"), str(have), help_text=t("cb.downloaded_help"))
+            metric_tile(t("cb.trading"), str(trading))
+            metric_tile(t("cb.as_of"), str(ctx.hi))
+    else:
+        notice(t("sp.no_data"), "info")
+
+    D = SP["dl"]
+    with ui.card().classes("w-full gap-3"):
+        with ui.row().classes("w-full items-center gap-4"):
+            d_start = ui.input(t("data.start"), value=D["cb_start"]).props("outlined dense type=date") \
+                .classes("w-44").tooltip(t("cb.start_help"))
+            workers = ui.number(t("sp.workers"), value=min(int(D["workers"]), 3), min=1, max=4, precision=0) \
+                .props("outlined dense").classes("w-32").tooltip(t("cb.workers_help"))
+        ui.label(t("cb.download_note")).classes("sq-muted text-sm")
+        prog = Progress()
+        out = ui.column().classes("w-full")
+        steps = {"list": t("cb.step_list"), "info": t("cb.step_info"), "index": t("cb.step_index"),
+                 "daily": t("cb.step_daily")}
+
+        async def download():
+            D["cb_start"] = d_start.value
+            s, e, w = d_start.value, today(), int(workers.value or 3)
+            btn.disable()
+            out.clear()
+            prog.start()
+            t0 = time.time()
+
+            def progress(step, i, n):
+                prog.set(i / n if n else 0, f"{steps[step]} · {i}/{n} · {time.time() - t0:.0f}s")
+            try:
+                errs = await run.io_bound(st.update_all, s, e, w, progress)
+                ui.notify(t("cb.download_done"), type="positive")
+                if errs:
+                    with out:
+                        notice(t("sp.download_errors", n=len(errs)) + "\n\n" +
+                               "\n".join(f"- {c}: {m}" for c, m in list(errs.items())[:10]), "warning", "warning")
+                    return
+            except Exception as ex:  # noqa: BLE001
+                with out:
+                    notice(t("data.fetch_failed", sym=p(UNIVERSES["cb"]["label"])) + f"：{type(ex).__name__}: {ex}",
+                           "error", "error")
+                return
+            finally:
+                prog.stop()
+                btn.enable()
+            reload_all()
+
+        btn = ui.button(t("sp.download"), icon="download", on_click=download).props("unelevated no-caps") \
+            .classes("self-start").mark("cb_download")
+
+    with ui.expansion(t("cb.rules"), icon="rule").classes("w-full q-card"):
+        ui.markdown(t("cb.rules_text")).classes("text-sm")
+
+
 # ================= 因子研究 =================
 def _research(SP, ctx):
     lg = lang()
     panel, R = ctx.panel, SP["res"]
-    usable = [k for k in FACTORS if panel.has_fin or not FACTORS[k].get("requires_fin")]
+    kinds = factors_for(panel.kind)
+    if R["fkey"] not in kinds:
+        R["fkey"] = kinds[0]
+    usable = [k for k in kinds if panel.has_fin or not FACTORS[k].get("requires_fin")]
 
     with ui.card().classes("w-full gap-3"):
         with ui.row().classes("w-full items-start gap-3"):
@@ -391,7 +495,7 @@ def _research(SP, ctx):
                         R[k] = cast(e.value) if cast else e.value
                         hints()
                 return f
-            fsel = ui.select({k: factor_label(k) for k in FACTORS}, label=t("sp.factor"), value=R["fkey"],
+            fsel = ui.select({k: factor_label(k) for k in kinds}, label=t("sp.factor"), value=R["fkey"],
                              with_input=True, on_change=set_r("fkey")).props(DENSE).classes("grow min-w-[260px]") \
                 .mark("sp_res_factor")
             ui.select({h: str(h) for h in (5, 10, 20, 60)}, label=t("sp.horizon"), value=R["horizon"],
@@ -406,8 +510,8 @@ def _research(SP, ctx):
                 .tooltip(t("sp.neutral_industry_help"))
             ni.set_enabled(not panel.industry.dropna().empty)
             ns = ui.switch(t("sp.neutral_size"), value=R["ns"], on_change=set_r("ns")).tooltip(t("sp.neutral_size_help"))
-            ns.set_enabled(panel.has_fin)
-        if not panel.has_fin:
+            ns.set_enabled(panel.has_fin or panel.kind == "cb")
+        if not panel.has_fin and panel.kind == "stock":
             ui.label(t("sp.no_fin")).classes("sq-muted text-sm")
         hint_box = ui.column().classes("w-full")
 
@@ -513,7 +617,8 @@ def _research(SP, ctx):
 
     with ui.expansion(t("sp.corr"), icon="grid_view").classes("w-full q-card"):
         ui.label(t("sp.corr_note")).classes("sq-muted text-sm")
-        default = [k for k in ("ep", "bp", "roe", "np_yoy", "vol60", "turn20", "ret20", "size") if k in usable]
+        default = [k for k in ("ep", "bp", "roe", "np_yoy", "vol60", "turn20", "ret20", "size", "cb_double_low",
+                               "cb_price", "cb_premium", "cb_bond_premium", "cb_issue_size") if k in usable]
         keys = [k for k in (SP.get("corr_keys") or default) if k in usable]
 
         def on_keys(e):
@@ -709,27 +814,36 @@ def _custom_factors(SP, ctx):
 
 # ================= 选股回测 =================
 def current_spec(SP) -> dict:
+    cb = U.kind(SP["universe"]) == "cb"
+    filters = {"exclude_st": bool(SP["excl_st"]) and not cb, "min_list_days": int(SP["min_list"])}
+    if cb:
+        filters.update({k: SP["cbf"].get(k) for k in CB_FILTERS})
     return {"kind": "selection", "universe": SP["universe"],
             "factors": [dict(f) for f in SP["factors"]], "top_n": int(SP["top_n"]),
             "rebalance": SP["reb"] if SP["reb"] != "n" else int(SP["reb_n"]),
-            "filters": {"exclude_st": bool(SP["excl_st"]), "min_list_days": int(SP["min_list"])},
+            "filters": filters,
             "position_pct": int(SP["pos"]), "weighting": SP["weighting"], "ic_lookback": int(SP["lookback"]),
             "neutralize": {"industry": bool(SP["ni"]), "size": bool(SP["ns"])},
-            **({"dividend": "cash"} if SP.get("dividend") == "cash" else {})}
+            **({"dividend": "cash"} if SP.get("dividend") == "cash" and not cb else {})}
 
 
 def apply_spec(SP, spec: dict, name: str = ""):
     """把选股策略描述填进表单（载入已保存的策略、AI 生成的策略、滚动优化的最新参数都用它）"""
+    old = U.kind(SP["universe"])
     SP["universe"] = spec.get("universe", SP["universe"])
+    kind = U.kind(SP["universe"])
+    switch_kind(SP, old, kind)
     SP["factors"] = [{"key": f["key"], "weight": float(f.get("weight", 1)), "direction": int(f.get("direction", 1))}
-                     for f in spec["factors"] if f["key"] in FACTORS]          # 已删除的自定义因子跳过
+                     for f in spec["factors"] if f["key"] in factors_for(kind)]   # 已删除的自定义因子跳过
     SP["top_n"] = int(spec["top_n"])
     reb = spec.get("rebalance", "monthly")
     SP["reb"] = reb if reb in REBALANCE else "n"
     if reb not in REBALANCE:
         SP["reb_n"] = int(reb)
-    flt = {**DEFAULT_FILTERS, **(spec.get("filters") or {})}
+    flt = {**(CB_DEFAULT_FILTERS if kind == "cb" else DEFAULT_FILTERS), **(spec.get("filters") or {})}
     SP["excl_st"], SP["min_list"] = bool(flt["exclude_st"]), int(flt["min_list_days"])
+    if kind == "cb":
+        SP["cbf"] = {k: flt.get(k) for k in CB_FILTERS}
     SP["pos"] = int(spec.get("position_pct", 95))
     SP["weighting"] = spec.get("weighting", "manual")
     SP["lookback"] = int(spec.get("ic_lookback", 252))
@@ -831,7 +945,7 @@ def _backtest_form(SP, ctx, rebuild):
                              for k in keys]
             factor_rows.refresh()
             changed()
-        ui.select({k: factor_label(k) for k in FACTORS}, label=t("sp.pick_factors"),
+        ui.select({k: factor_label(k) for k in factors_for(panel.kind)}, label=t("sp.pick_factors"),
                   value=[f["key"] for f in SP["factors"]], multiple=True, with_input=True, on_change=on_factors) \
             .props(DENSE + " use-chips").classes("w-full").mark("sp_factors")
         fin_warn = ui.column().classes("w-full")
@@ -878,13 +992,13 @@ def _backtest_form(SP, ctx, rebuild):
                 .tooltip(t("sp.neutral_industry_help")).mark("sp_ni")
             ni.set_enabled(not panel.industry.dropna().empty)
             ns = ui.switch(t("sp.neutral_size"), value=SP["ns"], on_change=lambda e: set_sp("ns", e.value)) \
-                .tooltip(t("sp.neutral_size_help"))
-            ns.set_enabled(panel.has_fin)
+                .tooltip(t("cb.neutral_size_help") if panel.kind == "cb" else t("sp.neutral_size_help"))
+            ns.set_enabled(panel.has_fin or panel.kind == "cb")
 
     # ---- 选股规则 ----
     with section(t("sp.rules"), "filter_alt"):
         with ui.row().classes("w-full items-center gap-4"):
-            ui.number(t("sp.top_n"), value=SP["top_n"], min=1, max=100, step=1, precision=0,
+            ui.number(t("cb.top_n" if panel.kind == "cb" else "sp.top_n"), value=SP["top_n"], min=1, max=100, step=1, precision=0,
                       on_change=lambda e: set_sp("top_n", e.value, int)).props("outlined dense").classes("w-32") \
                 .mark("sp_top_n")
 
@@ -897,8 +1011,18 @@ def _backtest_form(SP, ctx, rebuild):
             reb_n = ui.number(t("sp.every_n_days"), value=SP["reb_n"], min=1, max=250, precision=0,
                               on_change=lambda e: set_sp("reb_n", e.value, int)).props("outlined dense").classes("w-36")
             reb_n.set_enabled(SP["reb"] == "n")
+        if panel.kind == "cb":
+            with ui.row().classes("w-full items-center gap-4"):
+                for k, m in CB_FILTERS.items():
+                    def on_f(e, k=k):
+                        SP["cbf"][k] = float(e.value) if e.value not in (None, "") else None
+                        changed()
+                    ui.number(p(m["label"]), value=SP["cbf"].get(k), on_change=on_f) \
+                        .props("outlined dense clearable").classes("w-60") \
+                        .tooltip(p(m["help"]) + t("cb.empty_no_limit")).mark(f"cb_{k}")
         with ui.row().classes("w-full items-center gap-4"):
-            ui.switch(t("sp.exclude_st"), value=SP["excl_st"], on_change=lambda e: set_sp("excl_st", e.value))
+            if panel.kind == "stock":
+                ui.switch(t("sp.exclude_st"), value=SP["excl_st"], on_change=lambda e: set_sp("excl_st", e.value))
             ui.number(t("sp.min_days"), value=SP["min_list"], min=0, max=2000, step=50, precision=0,
                       on_change=lambda e: set_sp("min_list", e.value, int)).props("outlined dense").classes("w-36") \
                 .tooltip(t("sp.min_days_help"))
@@ -911,7 +1035,9 @@ def _backtest_form(SP, ctx, rebuild):
                     pos_lbl.text = f"{int(e.value)}%"
                     set_sp("pos", e.value, int)
                 ui.slider(min=10, max=100, step=5, value=SP["pos"], on_change=on_pos)
-        with ui.row().classes("w-full items-center gap-4"):
+        if panel.kind == "cb":
+            ui.label(t("cb.coupon_note")).classes("sq-muted text-sm")
+        with ui.row().classes("w-full items-center gap-4") as div_row:
             with ui.column().classes("gap-0"):
                 ui.label(t("sp.dividend")).classes("text-xs sq-muted").tooltip(t("sp.dividend_help"))
                 div_radio = ui.radio({k: p(v) for k, v in DIVIDEND.items()}, value=SP.get("dividend", "reinvest"),
@@ -919,8 +1045,10 @@ def _backtest_form(SP, ctx, rebuild):
                     .props("inline dense").mark("sp_dividend")
                 div_radio.tooltip(t("sp.dividend_help"))
             div_warn = ui.column()
+        div_row.set_visibility(panel.kind == "stock")
 
-    make_broker = broker_settings("sp", default_preset="stock", default_cash=1_000_000, show_t1=False)
+    make_broker = broker_settings(broker_key(panel.kind), default_preset="bond" if panel.kind == "cb" else "stock",
+                                  default_cash=1_000_000, show_t1=False)
 
     preview = ui.label().classes("sq-code w-full")
     with ui.row().classes("w-full items-end gap-3"):
@@ -956,7 +1084,7 @@ def _backtest_form(SP, ctx, rebuild):
             with fin_warn:
                 notice(t("sp.need_fin"), "warning", "warning")
         div_warn.clear()
-        if SP.get("dividend") == "cash" and not panel.div_codes:
+        if SP.get("dividend") == "cash" and not panel.div_codes and panel.kind == "stock":
             with div_warn:
                 notice(t("sp.need_div"), "warning", "warning")
 
@@ -1067,7 +1195,8 @@ def _selection_results(SP, ctx):
         sep = "、" if lg == "zh" else ", "
         eg = sep.join(f"{res.names.get(r.code, r.code)} {r.ex_date:%Y-%m-%d} {r.cash:g}" for r in cash.head(5).itertuples())
         notice(t("sp.div_patched", n=len(cash), m=len(rights), eg=eg + ("…" if len(cash) > 5 else "")), "info", "info")
-    bench_label = t("sp.bench_label", name=p(UNIVERSES[rspec["universe"]]["label"]))
+    bench_label = t("cb.bench_label") if U.kind(rspec["universe"]) == "cb" else \
+        t("sp.bench_label", name=p(UNIVERSES[rspec["universe"]]["label"]))
     with ui.card().classes("w-full p-2"):
         plot(equity_chart(res.equity, lg, bench_label))
 
@@ -1099,7 +1228,8 @@ def _selection_results(SP, ctx):
 
 
 # ================= 运行导出的选股脚本 =================
-SCRIPT_MARK = "from simplequant.stocks import StockStore, UNIVERSES, build_panel, run_selection"
+SCRIPT_MARKS = ("from simplequant.stocks import StockStore, run_selection, universe",
+                "from simplequant.stocks import StockStore, UNIVERSES, build_panel, run_selection")   # 旧版导出的
 
 
 def run_script_dialog():
@@ -1119,7 +1249,7 @@ def run_script_dialog():
             data = await e.file.read()
             text = data.decode("utf-8", errors="replace")
             status.clear()
-            if SCRIPT_MARK not in text:
+            if not any(m in text for m in SCRIPT_MARKS):
                 with status:
                     notice(t("exp.run_bad"), "error", "error")
                 return
@@ -1303,7 +1433,7 @@ def _walkforward(SP, ctx):
 
     async def do_wf():
         ax, is_int = axes()
-        broker = _sp_broker()
+        broker = _sp_broker(ctx.panel.kind)
         n_combos = len(selection_grid(spec, ax))
         run_btn.disable()
         prog.start(t("spwf.progress_select", d=0, n=n_combos))
@@ -1372,10 +1502,16 @@ def _walkforward(SP, ctx):
     wf_results()
 
 
-def _sp_broker():
+def broker_key(kind: str) -> str:
+    """股票与可转债的资金和费率分开记（可转债默认用债券费率）"""
+    return "sp_cb" if kind == "cb" else "sp"
+
+
+def _sp_broker(kind: str = "stock"):
     """滚动优化用选股回测标签页里的资金与费率设置"""
     from simplequant.engine import BrokerConfig, COST_PRESETS
-    b = state.STATE.get("sp_broker") or {"cash": 1_000_000, "preset": "stock", "slippage": 5.0, "custom": {}}
+    b = state.STATE.get(f"{broker_key(kind)}_broker") or \
+        {"cash": 1_000_000, "preset": "bond" if kind == "cb" else "stock", "slippage": 5.0, "custom": {}}
     c = COST_PRESETS[b["preset"]]
     mine = b.get("custom", {}).get(b["preset"], {})
     return BrokerConfig(cash=float(b["cash"]), commission=mine.get("commission", c["commission"] * 1e4) / 1e4,

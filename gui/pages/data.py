@@ -14,7 +14,7 @@ from simplequant.data.tdx_local_src import DEFAULT_TDX_DIR
 from simplequant.rules import INDICATORS
 from gui.common import t, p, lang
 from gui.layout import frame, page_title
-from gui.widgets import df_table, plot
+from gui.widgets import df_table, plot, Progress
 from ui.charts import preview_chart
 from ui.shared import POPULAR, ADJUST, parse_symbols, import_csv, dataset_label
 
@@ -115,6 +115,47 @@ def _download_tab(on_change):
                 on_change()
 
         btn = ui.button(t("data.download"), icon="download", on_click=download).props("unelevated no-caps")
+
+    _rates_card()
+
+
+def _rates_card():
+    """利率与信用利差（中债收益率曲线）：择时规则的「利率/信用利差」条件用"""
+    from simplequant.bonds.rates import RatesStore, FIRST_YEAR
+    st = RatesStore()
+    with ui.card().classes("w-full gap-2"):
+        with ui.row().classes("items-center gap-2"):
+            ui.icon("percent").classes("text-primary")
+            ui.label(t("rates.title")).classes("font-semibold")
+        ui.label(t("rates.note", year=FIRST_YEAR)).classes("text-sm sq-muted")
+        status = ui.label().classes("text-sm")
+        prog = Progress()
+
+        def show():
+            if st.ready():
+                m = st.load().dropna()
+                last = m.iloc[-1] if len(m) else None
+                status.text = t("rates.status", start=m.index[0].date(), end=m.index[-1].date(),
+                                cgb=f"{last['cgb10y']:.2f}", term=f"{last['term_spread']:.0f}",
+                                credit=f"{last['credit_spread']:.0f}") if last is not None else ""
+            else:
+                status.text = t("rates.none")
+        show()
+
+        async def update():
+            b.disable()
+            prog.start()
+            try:
+                await run.io_bound(st.update, FIRST_YEAR, None, lambda i, n: prog.set(i / n, f"{i}/{n}"))
+                ui.notify(t("rates.done"), type="positive")
+            except Exception as e:  # noqa: BLE001
+                ui.notify(f"{type(e).__name__}: {e}", type="negative", multi_line=True)
+            finally:
+                prog.stop()
+                b.enable()
+            show()
+        b = ui.button(t("rates.update"), icon="download", on_click=update).props("outline no-caps") \
+            .classes("self-start").mark("rates_update")
 
 
 def _status(row, icon: str, color: str, text: str, detail: str = ""):

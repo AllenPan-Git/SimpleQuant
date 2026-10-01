@@ -54,6 +54,8 @@ def _line_expr(spec: dict) -> tuple[str, str]:
         return ind, f"d.{ind}"
     if ind in ("turnover", "pe", "pb", "ps"):
         return ind, f"d.{ind}"
+    if INDICATORS.get(ind, {}).get("macro"):
+        raise ValueError("rates indicators are not supported in the exported script yet / 利率类条件暂不支持导出为独立脚本")
     if ind == "obv":
         return "obv", "OBV(d).obv"
     # 只有一个"周期"参数的指标：(变量名前缀, 表达式模板)
@@ -412,7 +414,7 @@ if not getattr(sys, "frozen", False):          # 源码版：从项目目录导�
 import pandas as pd
 from simplequant.engine import BrokerConfig
 from simplequant.paper.calendar import load_calendar, latest_expected_day
-from simplequant.stocks import StockStore, UNIVERSES, build_panel, run_selection
+from simplequant.stocks import StockStore, run_selection, universe
 
 SPEC = {pprint.pformat(spec, width=100, sort_dicts=False)}
 BROKER = BrokerConfig(**{broker!r})
@@ -425,17 +427,11 @@ if __name__ == "__main__":
     store = StockStore()
     end = latest_expected_day(load_calendar()).date().isoformat()
     print("updating data / 更新数据…", flush=True)
-    uni = store.update_universe(SPEC["universe"], START, end)
-    store.update_index(UNIVERSES[SPEC["universe"]]["index"], START, end)
-    codes = sorted(uni["code"].unique())
-    store.update(codes, START, end)
-    if NEEDS_FIN:
-        store.update_fundamentals(codes, int(START[:4]) - 1)
-    if SPEC.get("dividend") == "cash":
-        store.update_dividends(codes, int(START[:4]) - 1)
-    first = store.load_index(UNIVERSES[SPEC["universe"]]["index"]).index[0]
+    universe.update(SPEC["universe"], START, end, store, fin=NEEDS_FIN, div=SPEC.get("dividend") == "cash")
+    first = universe.load_benchmark(SPEC["universe"], store).index[0]
+    first = max(first, pd.Timestamp(START) - pd.Timedelta(days=400))    # 面板往前多取约 400 天预热因子
     print("backtesting / 回测…", flush=True)
-    panel = build_panel(store, SPEC["universe"], str(first.date()), end)
+    panel = universe.build(SPEC["universe"], str(first.date()), end, store)
     res = run_selection(panel, SPEC, BROKER, start=max(START, str((first + pd.Timedelta(days=400)).date())))
     for k in ("total_return", "cagr", "max_drawdown", "sharpe", "benchmark_return", "turnover_annual"):
         print(f"{{k:18s}} {{res.metrics[k]:.4f}}")

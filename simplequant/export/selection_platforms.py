@@ -25,6 +25,11 @@ QMT_UNSUPPORTED = ("ep", "bp", "sp", "size", "turn20")
 
 
 def check_selection_exportable(spec: dict, platform: str, follow: bool = False, lang: str = "zh") -> None:
+    if spec.get("universe") == "cb":
+        raise ValueError(pick(L("可转债选股暂不支持导出到聚宽 / 掘金 / QMT（各平台的转债数据与交易接口未核实），"
+                                "请使用独立 Python 脚本",
+                                "Convertible-bond selection can't be exported to platforms yet (their bond data and "
+                                "order APIs are unverified); use the standalone Python script"), lang))
     if follow:
         return
     keys = [f["key"] for f in spec["factors"]]

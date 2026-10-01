@@ -83,6 +83,10 @@ def test_every_indicator_can_be_exported():
     for key, meta in INDICATORS.items():
         if meta.get("position"):
             continue
+        if meta.get("macro"):                     # 利率条件不支持导出（见 test_rates.py）
+            with pytest.raises(ValueError):
+                _line_expr(make_ind(key))
+            continue
         for line in (meta.get("lines") or {None: None}):
             spec = make_ind(key)
             if line:

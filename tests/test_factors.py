@@ -23,6 +23,10 @@ def with_factor_columns(df):
     df["pe"] = 20 + np.cumsum(rng.normal(0, 0.3, len(df)))
     df["pb"] = 2 + np.cumsum(rng.normal(0, 0.02, len(df)))
     df["ps"] = 5 + np.cumsum(rng.normal(0, 0.05, len(df)))
+    # 利率列（回测前由 simplequant/bonds/rates.py 并入）
+    df["cgb10y"] = 2.5 + np.cumsum(rng.normal(0, 0.01, len(df)))
+    df["term_spread"] = 60 + np.cumsum(rng.normal(0, 1, len(df)))
+    df["credit_spread"] = 70 + np.cumsum(rng.normal(0, 1, len(df)))
     return df
 
 
@@ -91,7 +95,7 @@ def test_vol_ratio_bias_slope_volatility_match_reference(prices):
 
 
 def test_valuation_columns_pass_through(prices):
-    for col in ("turnover", "pe", "pb", "ps"):
+    for col in ("turnover", "pe", "pb", "ps", "cgb10y", "term_spread", "credit_spread"):
         got = line_values(prices, make_ind(col))
         np.testing.assert_allclose(got.values, prices[col].values)
 

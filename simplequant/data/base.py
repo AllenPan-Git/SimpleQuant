@@ -119,7 +119,7 @@ def with_retry(fn, retries: int = 3, wait: float = 1.5):
 def exchange_prefix(symbol: str) -> str:
     """根据 6 位代码推断交易所：沪市 'sh' / 深市 'sz' / 北交所 'bj'"""
     s = symbol.strip()
-    if s[:1] in ("6", "5", "9") or s[:3] in ("110", "113", "118", "019"):
+    if s[:1] in ("6", "5", "9") or s[:3] in ("110", "111", "113", "118", "019"):
         return "sh"
     if s[:1] in ("4", "8"):
         return "bj"

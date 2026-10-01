@@ -12,7 +12,7 @@ from simplequant.paper import list_accounts, load_account, delete_account, creat
 from simplequant.paper import account as account_mod
 from simplequant.paper import runner, schedule
 from simplequant.paper.calendar import latest_expected_day
-from simplequant.stocks import StockStore, UNIVERSES
+from simplequant.stocks import UNIVERSES, universe as U
 from simplequant.strategies import TEMPLATES
 from simplequant.strategies.code_strategy import explain_error
 from gui import state
@@ -118,7 +118,7 @@ def _new_account_form(PP, run_accounts, redraw):
                         .props(DENSE).classes("w-full").mark("pp_sel")
                     spec = sel[PP["sel"]]
                     universe = spec["universe"]
-                    if not StockStore().has_universe(universe):
+                    if not U.ready(universe):
                         notice(t("pp.need_universe", name=p(UNIVERSES[universe]["label"])), "warning", "warning")
                         ok = False
             if spec:
@@ -138,7 +138,9 @@ def _new_account_form(PP, run_accounts, redraw):
                     .props("outlined dense type=date").classes("w-44").tooltip(t("pp.start_date_help")).mark("pp_past")
                 past.set_enabled(PP["mode"] == "past")
             single = PP["kind"] == "single"
-            make_broker = broker_settings("pp_" + PP["kind"], default_preset="etf" if single else "stock",
+            cb = not single and U.kind(universe) == "cb"
+            make_broker = broker_settings("pp_" + PP["kind"] + ("_cb" if cb else ""),
+                                          default_preset="etf" if single else "bond" if cb else "stock",
                                           default_cash=100_000 if single else 1_000_000, show_t1=single,
                                           show_dividend=single)   # 选股账户的分红处理跟随选股策略
             with ui.row().classes("w-full items-end gap-3"):
@@ -161,7 +163,7 @@ def _new_account_form(PP, run_accounts, redraw):
             if mode == "past":
                 start = PP["past"]
             elif kind == "selection":
-                start = StockStore().load_index(UNIVERSES[universe]["index"]).index[-1].date().isoformat()
+                start = U.load_benchmark(universe).index[-1].date().isoformat()
             else:
                 start = dt.date.today().isoformat()   # 先占位：下载数据后改成最新数据日
             acc = create_account(PP["name"].strip(), spec, broker, start, assets=assets, universe=universe)
@@ -316,8 +318,10 @@ def _account_view(PP, run_accounts, redraw):
             if len(nav) >= 2:
                 eq = nav.copy()
                 eq["drawdown"] = eq["value"] / eq["value"].cummax() - 1
-                bench = (t("sp.bench_label", name=p(UNIVERSES[acc.universe]["label"]))
-                         if acc.kind == "selection" else None)
+                bench = None
+                if acc.kind == "selection":
+                    bench = t("cb.bench_label") if U.kind(acc.universe) == "cb" else \
+                        t("sp.bench_label", name=p(UNIVERSES[acc.universe]["label"]))
                 with ui.card().classes("w-full p-2"):
                     plot(equity_chart(eq, lg, bench))
             else:

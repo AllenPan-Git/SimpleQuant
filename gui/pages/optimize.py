@@ -216,7 +216,7 @@ def page():
             prog.start(t("opt.progress", done=0, n=n))
 
             def work():
-                prices, skipped, patched = prepare_prices(by_id, pick, broker)
+                prices, skipped, patched = prepare_prices(by_id, pick, broker, spec)
                 ins, outs, cut = split_prices(prices, oos) if oos > 0 else (prices, None, None)
                 df = optimize(ins, spec, ax, broker, workers=int(O["workers"]),
                               progress=lambda d, n_: prog.set(d / n_, t("opt.progress", done=d, n=n_)))
@@ -249,7 +249,7 @@ def page():
             def progress(w, n, d, m):
                 prog.set(((w - 1) + d / m) / n, t("wf.progress", w=w, n=n))
             try:
-                prices, skipped, patched = await run.io_bound(prepare_prices, by_id, pick, broker)
+                prices, skipped, patched = await run.io_bound(prepare_prices, by_id, pick, broker, spec)
                 res = await run.io_bound(walk_forward, prices, spec, ax, is_int, broker, O["metric"], int(O["train"]),
                                          int(O["test"]), O["window"] == "anchored", int(O["workers"]), progress,
                                          O["stitch"])

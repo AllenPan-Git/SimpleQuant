@@ -37,7 +37,8 @@ REBALANCE_CHOICES = ["weekly", "monthly", 5, 10, 20, 40, 60]
 
 def selection_tunables(spec: dict, lang: str = "zh") -> list[Tunable]:
     """选股策略里可做网格搜索的数值参数（调仓频率是离散的，单独处理）"""
-    out = [Tunable("top_n", pick(L("持有股票数", "Number of stocks"), lang), int(spec["top_n"]), True, 1, 100)]
+    count = L("持有转债数", "Number of bonds") if spec.get("universe") == "cb" else L("持有股票数", "Number of stocks")
+    out = [Tunable("top_n", pick(count, lang), int(spec["top_n"]), True, 1, 100)]
     if spec.get("weighting", "manual") == "manual":
         if len(spec["factors"]) > 1:            # 只有一个因子时权重不影响排序
             for i, f in enumerate(spec["factors"]):

@@ -21,7 +21,8 @@
 2. run_selection：Backtrader 组合回测，T+1 开盘执行（cheat-on-open，开盘价已知）
    - 先卖出不在新名单里的持仓，再用释放的资金等额买入新名单里没持有的股票；继续入选的持仓不动（减少换手）
    - 停牌或开盘跌停 → 卖不出，之后每天开盘重试；停牌或开盘涨停 → 买不进，本期放弃
-   - 数量按不复权价取 100 股整手；手续费、印花税沿用 A 股成本模型
+   - 数量按不复权价取整手（股票 100 股、可转债 10 张）；手续费、印花税沿用 A 股成本模型
+   - 可转债强赎公告后、退市前（面板的 exit）：不论是否调仓日，持有的都在开盘卖出
    - 分红：默认后复权（分红全额再投资、不扣税）；"dividend": "cash" 时现金到账并在卖出时扣红利税，
      规则见 dividends.py
 """
@@ -72,6 +73,24 @@ class Schedule:
     skipped: list = field(default_factory=list)   # 可选股票不足而跳过的调仓日
 
 
+def effective_filters(panel, spec: dict) -> dict:
+    """选股条件补上默认值（股票、可转债的默认值不同）"""
+    if getattr(panel, "kind", "stock") == "cb":
+        from ..bonds.panel import cb_filters
+        return cb_filters(spec.get("filters"))
+    return {**DEFAULT_FILTERS, **(spec.get("filters") or {})}
+
+
+def eligible_mask(panel, filters: dict) -> pd.DataFrame:
+    """可选范围：成分股、正常交易、非 ST、上市天数，加上品种自己的条件（可转债的价格上限等；值为空表示不限）"""
+    mask = panel.eligible(bool(filters.get("exclude_st")), int(filters.get("min_list_days") or 0))
+    for k, fn in (getattr(panel, "extra_filters", None) or {}).items():
+        v = filters.get(k)
+        if v is not None and v != "":
+            mask = mask & fn(panel, float(v)).fillna(False).astype(bool)
+    return mask
+
+
 def build_schedule(panel, spec: dict, start=None, next_days=None, cache: dict | None = None) -> Schedule:
     """
     start：从这天起才调仓（之前的数据只用来预热因子，如 60 日波动率）
@@ -79,11 +98,11 @@ def build_schedule(panel, spec: dict, start=None, next_days=None, cache: dict | 
                有了它才能正确判断"今天是不是本月最后一个交易日"
     cache：同一面板上反复选股时共用（参数优化），因子只算一次
     """
-    filters = {**DEFAULT_FILTERS, **(spec.get("filters") or {})}
-    fkey = ("filters", bool(filters["exclude_st"]), int(filters["min_list_days"]))
+    filters = effective_filters(panel, spec)
+    fkey = ("filters",) + tuple(sorted((k, v) for k, v in filters.items()))
     sub = cache.setdefault(fkey, {}) if cache is not None else {}
     if "mask" not in sub:
-        sub["mask"] = panel.eligible(filters["exclude_st"], filters["min_list_days"])
+        sub["mask"] = eligible_mask(panel, filters)
     mask = sub["mask"]
     score = F.composite(panel, spec["factors"], mask, weighting=spec.get("weighting", "manual"),
                         neutral=spec.get("neutralize"), horizon=rebalance_horizon(spec.get("rebalance", "monthly")),
@@ -110,8 +129,8 @@ def build_schedule(panel, spec: dict, start=None, next_days=None, cache: dict | 
 
 # ---------------- Backtrader ----------------
 class SelectionFeed(bt.feeds.PandasData):
-    lines = ("can_buy", "can_sell", "ratio")          # ratio = 不复权价 / 后复权价
-    params = (("can_buy", "can_buy"), ("can_sell", "can_sell"), ("ratio", "ratio"),
+    lines = ("can_buy", "can_sell", "ratio", "exit")  # ratio = 不复权价 / 后复权价；exit = 当天开盘必须卖出
+    params = (("can_buy", "can_buy"), ("can_sell", "can_sell"), ("ratio", "ratio"), ("exit", "exit"),
               ("openinterest", -1), ("datetime", None), ("dtnums", None))
 
     def preload(self):
@@ -149,7 +168,8 @@ class SelectionFeed(bt.feeds.PandasData):
 
 class SelectionStrategy(bt.Strategy):
     params = (("schedule", None), ("position_pct", 95), ("lot_size", 100), ("cash_buffer", 0.01),
-              ("dividends", None))        # 现金分红模式：{日期: [(代码, 每股现金, 每股送股, 每股转增)]}
+              ("dividends", None),        # 现金分红模式：{日期: [(代码, 每股现金, 每股送股, 每股转增)]}
+              ("exit_next", ()))          # 下一个开盘必须卖出的代码（模拟盘的明日信号）
 
     def __init__(self):
         self.by_name = {d._name: d for d in self.datas}
@@ -198,9 +218,19 @@ class SelectionStrategy(bt.Strategy):
     def next_open(self):
         if self.div_events:
             self._dividends()
-        # 1. 重试之前卖不出的（按代码排序，保证每次重放的下单顺序一致）
         closing = set()
-        for d in sorted(self.retry_sell, key=lambda x: x._name):
+        # 0. 必须卖出的（可转债强赎公告后、退市前）：卖不出的之后每天重试
+        for d in sorted(self._held() - self.retry_sell, key=lambda x: x._name):
+            if d.exit[0] > 0:
+                if d.can_sell[0] > 0:
+                    self.close(data=d)
+                    closing.add(d)
+                    self.log("sel.exit_sell", name=d._name)
+                else:
+                    self.retry_sell.add(d)
+                    self.log("sel.sell_blocked", name=d._name)
+        # 1. 重试之前卖不出的（按代码排序，保证每次重放的下单顺序一致）
+        for d in sorted(self.retry_sell - closing, key=lambda x: x._name):
             if d.can_sell[0] > 0:
                 self.close(data=d)
                 self.retry_sell.discard(d)
@@ -308,6 +338,8 @@ def _feed_frame(panel, code: str, cash_dividend: bool = False) -> pd.DataFrame:
     df["ratio"] = panel["raw_close"][code] / df["close"]
     df["can_buy"] = panel.can_buy[code].astype(float)
     df["can_sell"] = panel.can_sell[code].astype(float)
+    exit_ = getattr(panel, "exit", None)
+    df["exit"] = exit_[code].astype(float) if exit_ is not None else 0.0
     # 上市前没有价格：用第一个有效值占位（此时 can_buy=0，不会被交易）
     df = df.bfill().ffill()
     df["volume"] = df["volume"].fillna(0)
@@ -338,6 +370,7 @@ def run_selection(panel, spec: dict, broker: BrokerConfig | None = None, schedul
     for c in codes:
         cerebro.adddata(SelectionFeed(dataname=_feed_frame(panel, c, c in div_codes), name=c, dtnums=dtnums))
     cerebro.addstrategy(SelectionStrategy, schedule=schedule, position_pct=spec.get("position_pct", 95),
+                        lot_size=getattr(panel, "lot_size", 100), exit_next=_exit_next(panel, next_days),
                         dividends=_dividend_events(panel, div_codes) if cash_div else None)
     cerebro.addanalyzer(EquityRecorder, _name="equity")
     strat = cerebro.run()[0]
@@ -359,6 +392,16 @@ def run_selection(panel, spec: dict, broker: BrokerConfig | None = None, schedul
                            pending=_selection_pending(strat), positions=_selection_positions(strat),
                            div_missing=sorted(set(codes) - div_codes) if cash_div else [],
                            div_patched=_patched_in(panel.div_patched, strat.div_applied) if cash_div else None)
+
+
+def _exit_next(panel, next_days) -> tuple:
+    """下一个交易日开盘必须卖出的代码（强赎公告在最后一天发布等）"""
+    dates = getattr(panel, "exit_dates", None) or {}
+    if not dates:
+        return ()
+    nxt = pd.DatetimeIndex(next_days)[0] if next_days is not None and len(next_days) else \
+        panel.calendar[-1] + pd.offsets.BDay(1)
+    return tuple(sorted(c for c, d in dates.items() if d <= nxt))
 
 
 def _patched_in(patched, applied: set) -> pd.DataFrame | None:
@@ -406,15 +449,19 @@ def _selection_pending(strat) -> list[dict]:
     out = [{"symbol": d._name, "side": "sell", "size": shares(d),
             "ref_price": float(d.close[0] * d.ratio[0]), "reason": ("sel.reason_retry", {})}
            for d in sorted(strat.retry_sell, key=lambda x: x._name) if d in held]
+    exiting = {d for d in held - strat.retry_sell if d._name in strat.p.exit_next}
+    out += [{"symbol": d._name, "side": "sell", "size": shares(d),
+             "ref_price": float(d.close[0] * d.ratio[0]), "reason": ("sel.reason_exit", {})}
+            for d in sorted(exiting, key=lambda x: x._name)]
     if strat.target is None:
         return out
     target = [strat.by_name[c] for c in strat.target]
-    for d in sorted(held - set(target) - strat.retry_sell, key=lambda x: x._name):
+    for d in sorted(held - set(target) - strat.retry_sell - exiting, key=lambda x: x._name):
         out.append({"symbol": d._name, "side": "sell", "size": shares(d),
                     "ref_price": float(d.close[0] * d.ratio[0]), "reason": ("sel.reason_dropped", {})})
     per_name = strat.broker.getvalue() * strat.p.position_pct / 100 / len(target)
     for d in target:
-        if d in held:
+        if d in held or d._name in strat.p.exit_next:
             continue
         raw_price = d.close[0] * d.ratio[0]
         lots = int(per_name / (raw_price * (1 + strat.p.cash_buffer)) / strat.p.lot_size)

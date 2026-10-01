@@ -99,6 +99,19 @@ TEXT.update({
 
     # ---- 数据页 ----
     "data.tab_download": L("在线下载", "Download"),
+    # ---- 利率与信用利差 ----
+    "rates.title": L("利率与信用利差", "Rates and credit spreads"),
+    "rates.note": L("来自中债收益率曲线（{year} 年起）：10 年期国债收益率、期限利差（10 年 − 1 年）、信用利差（3 年期 AAA 中短期票据 − 3 年期国债）。"
+                    "下载后可在策略的规则条件中使用（「利率/信用利差」分组），例如信用利差走阔时卖出。首次下载约 2–3 分钟，数据量很小。",
+                    "From the ChinaBond yield curves (since {year}): 10-year government yield, term spread (10Y − 1Y) and credit "
+                    "spread (3Y AAA medium-term notes − 3Y government). Once downloaded, they can be used in rule conditions "
+                    "(the \"Rates / credit spread\" group), e.g. sell when credit spreads widen. The first download takes 2–3 minutes and is small."),
+    "rates.status": L("已有 {start} ~ {end}；最新：10 年国债 {cgb}%，期限利差 {term} BP，信用利差 {credit} BP",
+                      "Have {start} ~ {end}; latest: 10Y {cgb}%, term spread {term} bp, credit spread {credit} bp"),
+    "rates.none": L("尚未下载", "Not downloaded yet"),
+    "rates.update": L("下载 / 更新利率数据", "Download / update rates"),
+    "rates.done": L("利率数据已更新", "Rates updated"),
+    "rates.need": L("规则用到了利率或信用利差，请先在「数据」页下载利率数据", "The rule uses rates or credit spreads; download rates on the Data page first"),
     "data.tab_csv": L("导入 CSV", "Import CSV"),
     "data.tab_library": L("本地数据库", "Local library"),
     "data.source": L("数据源", "Data source"),
@@ -454,12 +467,63 @@ TEXT.update({
     "nav.selection": L("5. 多因子选股", "5. Stock selection"),
     "nav.go_selection": L("前往多因子选股", "Go to Stock selection"),
     "home.s5": L("5. 多因子选股", "5. Multi-factor selection"),
-    "home.s5_body": L("在沪深300、中证500等指数成分股中，按价值、动量、低波动等因子评分选股；先以 IC 与分层回测检验因子有效性，再进行定期调仓回测。",
-                      "Score CSI 300 and CSI 500 constituents on value, momentum, low volatility and other factors; validate each factor with IC and quantile analysis, then backtest a periodically rebalanced portfolio."),
+    "home.s5_body": L("在沪深300、中证500等指数成分股或全部可转债中，按价值、动量、低波动、双低等因子评分选股；先以 IC 与分层回测检验因子有效性，再进行定期调仓回测。",
+                      "Score CSI 300 and CSI 500 constituents or all convertible bonds on value, momentum, low volatility, double-low and other factors; validate each factor with IC and quantile analysis, then backtest a periodically rebalanced portfolio."),
     "home.s5_note": L("采用历史成分股，避免幸存者偏差", "Uses historical index constituents to avoid survivorship bias"),
-    "sp.intro": L("在指数成分股中按因子评分，定期买入得分最高的一组股票。建议先在「因子研究」中确认因子有效，再于「选股回测」中组合使用。",
-                  "Score index constituents on factors and periodically buy the top-scoring group. Validate each factor in Factor research first, then combine factors in Backtest."),
+    "sp.intro": L("在指数成分股或全部可转债中按因子评分，定期买入得分最高的一组。建议先在「因子研究」中确认因子有效，再于「选股回测」中组合使用。",
+                  "Score index constituents or all convertible bonds on factors and periodically buy the top-scoring group. Validate each factor in Factor research first, then combine factors in Backtest."),
     "sp.universe": L("股票池", "Universe"),
+
+    # ---- 可转债（选股页的「可转债（全市场）」股票池） ----
+    "cb.total": L("可转债总数", "Convertible bonds"),
+    "cb.total_help": L("含已退市的转债（2007 年起），用于避免幸存者偏差", "Includes delisted bonds since 2007, to avoid survivorship bias"),
+    "cb.downloaded": L("已下载日线", "With daily data"),
+    "cb.downloaded_help": L("起始日之后仍在交易的转债", "Bonds still trading after the start date"),
+    "cb.trading": L("目前在交易", "Trading now"),
+    "cb.as_of": L("数据截至", "Data through"),
+    "cb.start_help": L("在此之前已退市的转债不下载。2018 年以前转债数量较少", "Bonds delisted before this date are skipped. There were few convertibles before 2018"),
+    "cb.workers_help": L("同时下载的连接数。新浪接口频繁访问会被暂时封禁，程序已自动限速，建议设为 3",
+                         "Number of simultaneous downloads. Requests to Sina are rate-limited automatically; 3 is recommended"),
+    "cb.download_note": L("数据来源：东方财富（转债列表、条款、纯债价值与转股价值）、新浪财经（日线）、中证指数公司（中证转债指数）。"
+                          "首次下载约 1000 只、约 40 MB，需 6–10 分钟；此后仅更新仍在交易的转债。",
+                          "Sources: Eastmoney (bond list, terms, bond floor and conversion value), Sina Finance (daily bars), "
+                          "China Securities Index (CSI Convertible Bond Index). The first download covers about 1,000 bonds "
+                          "(about 40 MB) and takes 6–10 minutes; later updates fetch only bonds still trading."),
+    "cb.step_list": L("正在获取转债列表…", "Fetching the bond list…"),
+    "cb.step_info": L("条款", "Terms"),
+    "cb.step_index": L("正在获取中证转债指数…", "Fetching the CSI Convertible Bond Index…"),
+    "cb.step_daily": L("日线", "Daily bars"),
+    "cb.download_done": L("可转债数据已更新", "Convertible bond data updated"),
+    "cb.rules": L("回测规则说明", "Backtest rules"),
+    "cb.rules_text": L(
+        "- **每手 10 张**，T+0；默认使用债券费率（佣金万分之 0.5，无印花税），可在下方修改\n"
+        "- **涨跌幅**：2022-08-01 起为 ±20%，上市首日为 +57.3% / −43.3%（相对面值 100 元）；此前无涨跌幅限制\n"
+        "- **强赎与到期**：发布强制赎回或到期赎回公告的转债，公告当日起不再入选，下一个交易日开盘卖出持仓；"
+        "因停牌、违约、正股退市等意外停止交易的，当时无法预知，持仓按最后价格保留、无法卖出（与实际一致）\n"
+        "- **付息**：转债按全价交易，付息日价格下跳。回测按条款中的票面利率计入税后利息（扣 20% 个人所得税），"
+        "与股票的后复权口径相同（利息再投资）\n"
+        "- **数据缺口**：个别转债缺少上市初期的新浪日线，这些交易日只用东方财富的收盘价计算因子，不进行交易\n"
+        "- **未模拟**：转股、回售、下修博弈；正股停牌、退市对转债的影响以实际成交价格体现\n"
+        "- 可转债开户有投资者适当性要求（2022 年起：前 20 个交易日日均资产不低于 10 万元，且具有 2 年以上证券交易经验）",
+        "- **Lot of 10 bonds**, T+0; bond commissions by default (0.005%, no stamp duty), editable below\n"
+        "- **Price limits**: ±20% from 2022-08-01, +57.3% / −43.3% of par on the first trading day; no limits before\n"
+        "- **Calls and maturity**: once a forced-redemption or maturity notice is published the bond is no longer "
+        "selected and holdings are sold at the next open; bonds that stop trading unexpectedly (suspension, default, "
+        "stock delisting) cannot be sold and stay at their last price, as in reality\n"
+        "- **Coupons**: convertibles trade at full price and drop on coupon dates; coupons from the bond terms are added "
+        "after 20% tax and reinvested, like back-adjusted stock prices\n"
+        "- **Data gaps**: a few bonds lack Sina bars for their first months; those days use Eastmoney closes for factors "
+        "only and are not traded\n"
+        "- **Not simulated**: conversion, put options and reset plays\n"
+        "- Trading convertibles requires investor suitability (since 2022: 100k CNY average assets and 2 years of "
+        "trading experience)"),
+    "cb.neutral_size_help": L("剔除因子中的发行规模成分，避免因子仅成为小规模转债的替代",
+                              "Removes issue-size effects so the factor is not merely a small-bond proxy"),
+    "cb.empty_no_limit": L("。清空表示不限", ". Leave empty for no limit"),
+    "cb.coupon_note": L("付息：按税后利息再投资计入（与股票后复权口径相同），详见「数据」标签页的回测规则说明。",
+                        "Coupons are reinvested after tax (like back-adjusted stock prices); see Backtest rules on the Data tab."),
+    "cb.top_n": L("持有转债数", "Number of bonds"),
+    "cb.bench_label": L("基准（中证转债指数）", "Benchmark (CSI Convertible Bond Index)"),
     "sp.tab_data": L("数据", "Data"),
     "sp.tab_research": L("因子研究", "Factor research"),
     "sp.tab_backtest": L("选股回测", "Backtest"),
@@ -502,6 +566,10 @@ p["volume"]  p["amount"]  p["turnover"]  p["pct_chg"]   # 成交量、成交额�
 p["pe"]  p["pb"]  p["ps"]                             # 估值（TTM / MRQ）
 p["roe"]  p["gross_margin"]  p["net_margin"]  p["np_yoy"]  p["rev_yoy"]  p["mcap"]
                                                      # 财务字段：需先在「数据」标签页下载财务数据
+# 可转债（股票池选「可转债（全市场）」时）：
+p["raw_close"]  p["premium"]  p["bond_premium"]  p["double_low"]   # 不复权价、转股溢价率(%)、纯债溢价率(%)、双低
+p["conv_value"]  p["bond_value"]  p["conv_price"]  p["stock_close"]  # 转股价值、纯债价值、转股价、正股价
+p["remain_years"]  p["issue_size"]                  # 剩余期限（年）、发行规模（亿元）
 
 x.shift(5)                       # 5 日前的值（仅可向前回看，请勿使用 shift(-n)）
 x.rolling(20, min_periods=15).mean() / .std() / .max()
@@ -514,6 +582,10 @@ p["volume"]  p["amount"]  p["turnover"]  p["pct_chg"]   # volume, value traded, 
 p["pe"]  p["pb"]  p["ps"]                             # valuation (TTM / MRQ)
 p["roe"]  p["gross_margin"]  p["net_margin"]  p["np_yoy"]  p["rev_yoy"]  p["mcap"]
                                                      # financial fields: download financial data on the Data tab first
+# Convertible bonds (universe "Convertible bonds (all)"):
+p["raw_close"]  p["premium"]  p["bond_premium"]  p["double_low"]   # raw price, conversion premium (%), premium over bond floor (%), double-low
+p["conv_value"]  p["bond_value"]  p["conv_price"]  p["stock_close"]  # conversion value, bond floor, conversion price, stock price
+p["remain_years"]  p["issue_size"]                  # years to maturity, issue size (100M CNY)
 
 x.shift(5)                       # value 5 days ago (look back only; never use shift(-n))
 x.rolling(20, min_periods=15).mean() / .std() / .max()

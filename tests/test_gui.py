@@ -728,6 +728,66 @@ async def test_selection_ai_and_ic_weighting(user: User, monkeypatch):
         assert ind.reindex(codes).nunique() >= 5                       # 每期分散在多个行业
 
 
+def _cb_ready():
+    from simplequant.stocks import universe
+    return universe.ready("cb")
+
+
+needs_cb = pytest.mark.skipif(not _cb_ready(), reason="可转债数据未下载")
+
+
+async def _open_cb(user: User, tab="bt"):
+    """切换到「可转债（全市场）」，从 2021 年开始"""
+    import datetime as dt
+    from gui.pages.selection import sp_state
+    SP = sp_state()
+    SP["ranges"]["cb"] = (dt.date(2021, 1, 4), dt.date(2100, 1, 1))
+    state.STATE["sp_tab"] = tab
+    await user.open("/selection")
+    assert await _wait(lambda: state.STATE.get("sp_panel_key") is not None, n=1200)
+    await settle()
+    state.STATE["sp_panel_key"] = None
+    user.find(marker="sp_universe").elements.pop().set_value("cb")
+    assert await _wait(lambda: (state.STATE.get("sp_panel_key") or (None,))[0] == "cb", n=1200), "转债面板没有载入"
+    await settle()
+    return SP
+
+
+@needs_cb
+async def test_selection_cb_backtest(user: User):
+    SP = await _open_cb(user)
+    assert [f["key"] for f in SP["factors"]] == ["cb_double_low"]      # 切换后默认「双低」
+    assert SP["excl_st"] is False and SP["min_list"] == 0
+    user.find(marker="cb_max_price").elements.pop().set_value(125)
+    await settle()
+    assert SP["cbf"]["max_price"] == 125
+    user.find(marker="sp_run").click()
+    assert await _wait(lambda: SP.get("result"), n=1200)
+    res, spec, _ = SP["result"]
+    assert spec["universe"] == "cb" and spec["filters"]["max_price"] == 125 and "dividend" not in spec
+    assert (res.orders["size"] % 10 == 0).all() and (res.orders["size"] % 100 != 0).any()
+    await user.should_see("中证转债指数")
+    # 切回股票池：股票的因子和条件还在
+    if _hs300_ready():
+        user.find(marker="sp_universe").elements.pop().set_value("hs300")
+        await settle()
+        assert SP["excl_st"] is True and "cb_double_low" not in [f["key"] for f in SP["factors"]]
+
+
+@needs_cb
+async def test_selection_cb_research_and_data_tab(user: User):
+    SP = await _open_cb(user, "res")
+    assert SP["res"]["fkey"].startswith("cb_") or SP["res"]["fkey"] in ("ret5", "ret20")
+    user.find(marker="sp_res_factor").elements.pop().set_value("cb_double_low")
+    user.find(marker="sp_analyze").click()
+    assert await _wait(lambda: SP.get("report"), n=1200)
+    await user.should_see("IC 均值")
+    state.STATE["sp_tab"] = "data"
+    await user.open("/selection")
+    await user.should_see("可转债总数")
+    await user.should_see("回测规则说明")
+
+
 @needs_stocks
 async def test_selection_walkforward(user: User):
     from gui.pages.selection import sp_state

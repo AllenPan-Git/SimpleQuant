@@ -19,6 +19,9 @@ GROUPS = {
     "momentum": L("动量/反转", "Momentum / reversal"),
     "risk": L("风险", "Risk"),
     "liquidity": L("流动性", "Liquidity"),
+    "cb_value": L("转债估值", "CB valuation"),
+    "cb_terms": L("转债规模与期限", "CB size & term"),
+    "cb_stock": L("正股", "Underlying stock"),
 }
 
 
@@ -84,6 +87,60 @@ FACTORS = {
                  .rolling(20, min_periods=15).mean() * 1e8,
                  "desc": L("每 1 亿元成交带来的价格变动；越大越不流动", "price impact per 100M CNY traded; higher = less liquid")},
 }
+
+
+# 价格类因子股票和可转债通用；其余只适用于股票（"assets" 未写时）
+BOTH = ("stock", "cb")
+for _k in ("ret5", "ret20", "ret60", "mom_120_20", "vol60", "amihud20"):
+    FACTORS[_k]["assets"] = BOTH
+
+FACTORS.update({
+    "cb_double_low": {"label": L("双低（价格 + 转股溢价率）", "Double-low (price + premium)"), "group": "cb_value",
+                      "direction": -1, "fn": _field("double_low"), "assets": ("cb",),
+                      "desc": L("不复权收盘价 + 转股溢价率（%），越低越好：价格低有债底保护，溢价率低跟涨正股。"
+                                "2018–2026 实测 20 日 IC −0.058（t = −3.3），五组年化收益从低到高单调",
+                                "raw close + conversion premium (%); lower = bond floor plus equity upside. 2018–2026: "
+                                "20-day IC −0.058 (t = −3.3), quintile returns perfectly monotonic")},
+    "cb_price": {"label": L("转债价格", "Bond price"), "group": "cb_value", "direction": -1,
+                 "fn": _field("raw_close"), "assets": ("cb",), "desc": L("不复权收盘价", "raw close")},
+    "cb_premium": {"label": L("转股溢价率（%）", "Conversion premium (%)"), "group": "cb_value", "direction": -1,
+                   "fn": _field("premium"), "assets": ("cb",),
+                   "desc": L("转债价格 / 转股价值 − 1；越低越接近正股", "price / conversion value − 1")},
+    "cb_bond_premium": {"label": L("纯债溢价率（%）", "Premium over bond floor (%)"), "group": "cb_value",
+                        "direction": -1, "fn": _field("bond_premium"), "assets": ("cb",),
+                        "desc": L("转债价格 / 纯债价值 − 1；越低下跌空间越小", "price / bond floor − 1")},
+    "cb_conv_value": {"label": L("转股价值", "Conversion value"), "group": "cb_value", "direction": 1,
+                      "fn": _field("conv_value"), "assets": ("cb",),
+                      "desc": L("100 / 转股价 × 正股价", "100 / conversion price × stock price")},
+    "cb_issue_size": {"label": L("发行规模（对数）", "Issue size (log)"), "group": "cb_terms", "direction": -1,
+                      "fn": lambda p: np.log(_field("issue_size")(p).where(_field("issue_size")(p) > 0)),
+                      "assets": ("cb",),
+                      "desc": L("发行时的规模；剩余规模只有部分转债有历史数据，因此用发行规模",
+                                "size at issue (remaining size history is incomplete)")},
+    "cb_remain_years": {"label": L("剩余期限（年）", "Years to maturity"), "group": "cb_terms", "direction": 1,
+                        "fn": _field("remain_years"), "assets": ("cb",)},
+    "cb_stock_ret20": {"label": L("正股 20 日涨幅", "Stock 20-day return"), "group": "cb_stock", "direction": 1,
+                       "fn": lambda p: _field("stock_close")(p) / _field("stock_close")(p).shift(20) - 1,
+                       "assets": ("cb",),
+                       "desc": L("正股价由转股价值 × 转股价 / 100 推出（不复权）",
+                                 "stock price implied by conversion value × conversion price / 100 (unadjusted)")},
+    "cb_stock_vol60": {"label": L("正股 60 日波动率", "Stock 60-day volatility"), "group": "cb_stock",
+                       "direction": -1, "assets": ("cb",),
+                       "fn": lambda p: _field("stock_close")(p).pct_change(fill_method=None)
+                       .rolling(60, min_periods=40).std(),
+                       "desc": L("正股波动大，转债的期权价值高；但 2018–2026 实测 IC 为负（−0.071，t = −3.0），默认越小越好",
+                                 "more volatility means more option value, yet 2018–2026 IC is negative (−0.071, t = −3.0); "
+                                 "lower is better by default")},
+})
+
+
+def factor_assets(key: str) -> tuple:
+    return FACTORS.get(key, {}).get("assets", ("stock",))
+
+
+def factors_for(kind: str) -> list[str]:
+    """适用于该品种（stock / cb）的因子"""
+    return [k for k in FACTORS if kind in factor_assets(k)]
 
 
 def compute(panel, key: str) -> pd.DataFrame:
@@ -152,7 +209,8 @@ def factor_zscores(panel, key: str, mask: pd.DataFrame, neutral: dict | None = N
     z = preprocess(compute(panel, key), mask)
     neutral = neutral or {}
     if neutral.get("industry") or neutral.get("size"):
-        size = compute(panel, "size").where(mask) if neutral.get("size") and key != "size" else None
+        size_key = getattr(panel, "size_factor", "size")
+        size = compute(panel, size_key).where(mask) if neutral.get("size") and key != size_key else None
         ind = panel.industry if neutral.get("industry") else None
         if ind is not None or size is not None:
             z = neutralize(z, ind, size)

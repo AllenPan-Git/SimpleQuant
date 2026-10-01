@@ -8,7 +8,7 @@ from nicegui import ui
 from simplequant import strategies
 from simplequant.data import library
 from simplequant.engine import BrokerConfig, COST_PRESETS
-from simplequant.rules import INDICATORS, required_columns
+from simplequant.rules import INDICATORS, required_columns, macro_columns
 from simplequant.strategies import TEMPLATES
 from gui import state
 from gui.common import t, p, lang
@@ -122,16 +122,35 @@ def load_prices(by_id: dict, pick: DataPick) -> dict:
     return shared.slice_prices({by_id[i].name: library.load(i) for i in pick.ids}, pick.date_range)
 
 
-def prepare_prices(by_id: dict, pick: DataPick, broker: BrokerConfig) -> tuple[dict, dict, dict]:
+def prepare_prices(by_id: dict, pick: DataPick, broker: BrokerConfig, spec: dict | None = None) -> tuple[dict, dict, dict]:
     """
     回测用的行情；现金分红模式下换成「不复权价 + 分红」计算的行情（可能要联网下载，放在后台线程调用）。
+    规则用到利率条件时并入利率数据。
     返回 (行情, 没能改用现金分红的 {名称: 原因}, 按复权价补上分红的 {名称: 日期})
     """
-    prices = load_prices(by_id, pick)
+    prices = with_rates(load_prices(by_id, pick), spec)
     if broker.dividend != "cash":
         return prices, {}, {}
     from simplequant.data import cash_dividend
-    return cash_dividend.prepare([(by_id[i].name, by_id[i], prices[by_id[i].name]) for i in pick.ids])
+    prices, skipped, patched = cash_dividend.prepare([(by_id[i].name, by_id[i], prices[by_id[i].name])
+                                                      for i in pick.ids])
+    return with_rates(prices, spec), skipped, patched
+
+
+def rates_needed(spec: dict | None) -> set:
+    return macro_columns(spec["rule"]) if spec and spec.get("kind") == "rule" else set()
+
+
+def with_rates(prices: dict, spec: dict | None) -> dict:
+    """规则用到利率 / 信用利差时，把它们并入各标的行情；本机没有利率数据时报错（请先在数据页下载）"""
+    cols = rates_needed(spec)
+    if not cols:
+        return prices
+    from simplequant.bonds.rates import RatesStore, attach
+    st = RatesStore()
+    if not st.ready():
+        raise ValueError(t("rates.need"))
+    return attach(prices, cols, st.load())
 
 
 def dividend_notices(skipped: dict, patched: dict):
@@ -256,7 +275,11 @@ def missing_factor_warnings(by_id: dict, ids: list, spec: dict) -> list[str]:
     """规则用到估值/换手因子，但所选数据没有对应列时的提示"""
     if spec.get("kind") != "rule":
         return []
-    need, out = required_columns(spec["rule"]), []
+    need, out = required_columns(spec["rule"]) - macro_columns(spec["rule"]), []
+    if macro_columns(spec["rule"]):
+        from simplequant.bonds.rates import RatesStore
+        if not RatesStore().ready():
+            out.append(t("rates.need"))
     for i in ids:
         lacking = sorted(need - set(library.load(i).columns))
         if lacking:

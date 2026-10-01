@@ -41,6 +41,8 @@ def coupon_events(info_row, calendar: pd.DatetimeIndex, last_trade) -> list[tupl
         pay = pd.Timestamp(value_date) + pd.DateOffset(years=k)
         if pay > last_trade:
             break
+        if pay <= calendar[0]:              # 面板开始之前的付息（复权因子从面板第一天起算）
+            continue
         i = calendar.searchsorted(pay)
         if i < len(calendar) and calendar[i] <= last_trade:
             out.append((calendar[i], rate * (1 - COUPON_TAX)))

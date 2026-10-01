@@ -188,7 +188,7 @@ def fetch_daily(code: str) -> pd.DataFrame:
     try:
         return pd.DataFrame(with_retry(get, retries=3, wait=2.0))
     except RuntimeError as e:
-        if "KeyError" in str(e) or "NoneType" in str(e):     # 新浪没有这只（如上市前就退市）
+        if isinstance(e.__cause__, (KeyError, TypeError, IndexError)):   # 新浪没有这只（返回内容解析不出）
             return pd.DataFrame()
         raise
 

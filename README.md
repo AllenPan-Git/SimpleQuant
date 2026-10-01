@@ -68,27 +68,29 @@ A 股交易规则：100 股整手、T+1（可关闭，适用于债券 / 跨境 E
 ## 安装
 
 ### 安装包（推荐，无需安装 Python）
-1. 在本仓库的 **Releases** 页面下载 `SimpleQuant-<版本>-安装程序.exe`。
+1. 在本仓库的 **Releases** 页面下载 `SimpleQuant-<版本>-Setup.exe`。
 2. 运行安装程序。程序安装到 `%LOCALAPPDATA%\Programs\SimpleQuant`，无需管理员权限，并创建开始菜单快捷方式（桌面快捷方式可选）。
 3. 首次运行时 Windows SmartScreen 可能提示「已保护你的电脑」，请点击「更多信息 → 仍要运行」。
 4. 在「01 数据」页下载所需数据（AKShare、BaoStock 均为免费数据源）。
 
 说明：
-- 数据保存在 `%LOCALAPPDATA%\SimpleQuant`（行情库、选股数据、模拟账户、保存的策略、AI 模型设置）。升级（覆盖安装新版本）及卸载均不会删除这些数据。
+- **自动更新**（0.1.1 起）：程序启动后在后台检查 GitHub Releases 上的新版本，通常只下载有变化的文件；下载完成后提示重启，重启时替换文件并自动重新打开。需要下载完整安装包（超过 30 MB）时先询问。更新文件经签名与 SHA256 校验，替换失败时保留原版本。可在「设置」页手动检查或关闭自动检查；无法连接 GitHub 时，可在 Releases 页面手动下载安装包覆盖安装。0.1.0 需手动安装一次新版本。
+- 数据保存在 `%LOCALAPPDATA%\SimpleQuant`（行情库、选股数据、模拟账户、保存的策略、AI 模型设置）。升级（自动更新或覆盖安装新版本）及卸载均不会删除这些数据。
 - 报错日志位于 `%LOCALAPPDATA%\SimpleQuant\logs\app.log`。
 - 命令行：`SimpleQuant.exe --paper` 不打开界面、直接推进全部模拟账户（定时任务即使用此命令）；`SimpleQuant.exe --run-script 选股.py` 运行导出的选股脚本。
 - 安装版不含 LiteLLM，AI 模型请使用 Claude、OpenAI 或兼容 OpenAI 协议的服务（DeepSeek、通义千问、Kimi、智谱、Gemini、本地 Ollama 等）。
 
 ### 从源码运行
 需要 Windows 与 Python 3.10 及以上版本（开发和测试使用 3.14）。
-- 双击 `启动.bat`：首次运行时自动创建虚拟环境并安装依赖，之后打开桌面窗口。
+- 双击 `start.bat`：首次运行时自动创建虚拟环境并安装依赖，之后打开桌面窗口。
 - 或手动执行：`python -m venv .venv`，`.venv\Scripts\pip install -r requirements.txt`，`.venv\Scripts\python main.py`（加 `--browser` 在浏览器中打开）。
 - 源码版的数据保存在项目目录下的 `data_cache`、`user_strategies`、`user_factors`，与安装版相互独立。
 
 ### 打包
 1. 安装打包工具：`.venv\Scripts\pip install pyinstaller`；制作安装包另需 [Inno Setup 6](https://jrsoftware.org/isinfo.php)（`winget install JRSoftware.InnoSetup`）。
 2. 修改 `simplequant/__init__.py` 中的版本号 `__version__`。
-3. 双击 `打包.bat`：先生成 `dist\SimpleQuant\`（PyInstaller，配置见 `SimpleQuant.spec`），已安装 Inno Setup 时再生成 `dist\SimpleQuant-<版本>-安装程序.exe`（脚本见 `installer/SimpleQuant.iss`）。
+3. 双击 `build.bat`：先生成 `dist\SimpleQuant\`（PyInstaller，配置见 `SimpleQuant.spec`），已安装 Inno Setup 时再生成 `dist\SimpleQuant-<版本>-Setup.exe`（脚本见 `installer/SimpleQuant.iss`）。
+   发布新版本则使用 `tools/release.py`：打包、生成更新清单（每个文件的 SHA256，Ed25519 签名）与补丁包、打标签并上传为 GitHub Releases 草稿，用法见文件开头。签名私钥只保存在发布者本机，程序内置对应的公钥。
 4. 图标 `gui/static/icon.ico` 由 `tools/make_icon.py` 生成；README 中的横幅与截图由 `tools/readme_assets.py` 生成（均需要 Microsoft Edge）。
 
 ## 功能详解
@@ -170,8 +172,9 @@ simplequant/stocks/        多因子选股：数据下载、宽表、因子、�
 simplequant/paper/         模拟盘：账户、重放与账本、交易日历、定时任务
 simplequant/export/        导出：Python 脚本、聚宽 / 掘金 / QMT
 simplequant/llm/           大模型接入：预设与配置、Claude / OpenAI / LiteLLM 适配、自然语言转规则
+simplequant/update/        自动更新：检查与下载、更新清单与签名校验、替换文件的脚本
 installer/                 安装包脚本（Inno Setup）
-tools/                     图标、README 图片、界面预览等辅助脚本
+tools/                     发布脚本（release.py）、图标、README 图片、界面预览等辅助脚本
 tests/                     pytest
 ```
 

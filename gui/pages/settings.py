@@ -1,11 +1,11 @@
-"""AI 模型设置"""
+"""AI 模型设置；关于 SimpleQuant（版本、检查更新）"""
 
 from nicegui import run, ui
 
-from simplequant import llm, __version__
-from simplequant.paths import DATA_ROOT
+from simplequant import llm
 from simplequant.llm import LLMConfig, PRESETS, PROVIDERS, JSON_MODES
 from gui.common import t, p
+from gui import update
 from gui.layout import frame, page_title
 from gui.widgets import notice
 
@@ -117,6 +117,4 @@ def page():
         fill()
 
         ui.separator().classes("q-my-md")
-        ui.label(t("set.about")).classes("font-semibold")
-        ui.label(t("set.version", v=__version__)).mark("version")
-        ui.label(t("set.data_dir", path=str(DATA_ROOT))).classes("sq-muted text-xs")
+        update.about()

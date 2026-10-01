@@ -1,10 +1,13 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-PyInstaller 打包配置：双击 打包.bat，或 .venv\Scripts\pyinstaller SimpleQuant.spec --noconfirm
+PyInstaller 打包配置：双击 build.bat，或 .venv\Scripts\pyinstaller SimpleQuant.spec --noconfirm
 输出 dist\SimpleQuant\（整个文件夹一起分发，运行其中的 SimpleQuant.exe）
 
 - 单文件夹模式（onedir）：启动快，不用每次解压
-- simplequant / gui / ui 同时带上 .py 源码：导出 Python 脚本时用 inspect.getsource 读取策略基类等源码
+- simplequant / gui / ui 只以 .py 源码形式放在 _internal 里（不进 exe 内的 PYZ）：
+  导出 Python 脚本时用 inspect.getsource 读取策略基类等源码；自动更新时只改了自己代码的版本只需下载这几个 .py，
+  exe 只在依赖库变化时才变（PYZ 在 exe 里，约 40 MB）。打包时要固定 PYTHONHASHSEED、SOURCE_DATE_EPOCH（build.bat、
+  tools/release.py 已设置），否则 exe 里的时间戳、base_library.zip 里的文件顺序每次不同
 - 不打包：tests、tools 等（只收集程序实际 import 的模块）；排除 streamlit、pytest、LiteLLM（体积太大，界面里会提示改用 OpenAI 兼容接口）、torch 等无关的大库
 """
 
@@ -22,6 +25,7 @@ ROOT = Path(SPECPATH)
 datas = [
     (str(ROOT / "gui" / "static"), "gui/static"),
     (str(ROOT / "simplequant" / "_build_info.json"), "simplequant"),
+    (str(ROOT / "simplequant" / "update" / "apply_update.ps1"), "simplequant/update"),   # 自动更新替换文件的脚本
 ]
 for pkg in ("nicegui", "akshare", "mootdx", "plotly", "baostock"):
     datas += collect_data_files(pkg)
@@ -49,7 +53,7 @@ a = Analysis(
     runtime_hooks=[],
     excludes=excludes,
     noarchive=False,
-    module_collection_mode={"simplequant": "pyz+py", "gui": "pyz+py", "ui": "pyz+py"},
+    module_collection_mode={"simplequant": "py", "gui": "py", "ui": "py"},
 )
 pyz = PYZ(a.pure)
 exe = EXE(

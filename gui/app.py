@@ -41,8 +41,21 @@ def register():
         ui.page(route)(ROUTES[route])
 
 
-def run(native: bool = True, port: int = 0, show: bool = True):
+def _start_update_check():
+    """启动后台检查更新：先读上次更新的结果；开启了自动检查时，等界面打开后再联网"""
+    import threading
+    from gui.update import auto_check
+    from simplequant.update.client import UPDATER
+    UPDATER.startup()
+    if auto_check():
+        threading.Timer(5, UPDATER.check_async).start()
+
+
+def run(native: bool = True, port: int = 0, show: bool = True, check_updates: bool = True):
+    """check_updates=False：界面测试、截图用的服务器不联网检查更新"""
     register()
+    if check_updates:
+        app.on_startup(_start_update_check)
     # 桌面窗口（pywebview）默认会静默取消所有下载；打开后点下载会弹出「另存为」对话框
     app.native.settings["ALLOW_DOWNLOADS"] = True
     ui.run(

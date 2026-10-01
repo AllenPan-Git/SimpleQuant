@@ -42,4 +42,4 @@ def seed():
                 data="510300", strategy="双均线交叉")
 
 
-run(native=False, port=int(sys.argv[2]) if len(sys.argv) > 2 else 8766, show=False)
+run(native=False, port=int(sys.argv[2]) if len(sys.argv) > 2 else 8766, show=False, check_updates=False)

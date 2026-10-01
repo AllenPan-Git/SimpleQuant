@@ -769,6 +769,30 @@ async def test_settings_preset_and_save(user: User, monkeypatch, tmp_path):
     assert cfg.provider == "openai" and cfg.model == "deepseek-chat" and cfg.api_key == "sk-test"
 
 
+async def test_settings_update_section_and_banner(user: User, monkeypatch):
+    """设置页：版本、检查更新；安装版下载好新版本后，其他页面顶部显示提示条，「稍后」可隐藏"""
+    from simplequant.update.client import UPDATER, Status
+    monkeypatch.setattr(UPDATER, "status", Status(state="latest"))
+    checks, applied = [], []
+    monkeypatch.setattr(UPDATER, "check_async", lambda: checks.append(1))
+    await user.open("/settings")
+    await user.should_see(marker="version")
+    await user.should_see("当前已是最新版本")
+    user.find(marker="update_check").click()
+    assert checks
+
+    monkeypatch.setattr(UPDATER, "frozen", True)
+    monkeypatch.setattr(UPDATER, "status", Status(state="ready", version="9.9.9", notes="- 修复"))
+    monkeypatch.setattr(UPDATER, "apply", lambda: applied.append(1) or False)
+    await user.open("/")
+    await user.should_see("新版本 9.9.9 已下载完成")
+    user.find(marker="update_restart").click()
+    assert applied
+    user.find(marker="update_later").click()
+    await settle()
+    await user.should_not_see(marker="update_restart")
+
+
 # ---------------- 模拟盘 ----------------
 @pytest.fixture
 def paper_dir(tmp_path, monkeypatch):

@@ -6,7 +6,7 @@ from html import escape
 from nicegui import app, ui
 
 from simplequant.i18n import LANGS, tr
-from gui import theme, state
+from gui import theme, state, update
 from gui.common import t, lang, set_lang, dark, set_dark
 
 # (路由, 文字键, 图标)：全部页面（注册路由、页面标题用）
@@ -134,6 +134,7 @@ def frame(route: str):
                 .classes("sq-muted").tooltip(t("gui.theme"))
 
     with ui.column().classes("sq-main w-full max-w-[1200px] mx-auto px-8 pt-8 pb-24 gap-5"):
+        update.banner(route)     # 新版本提示、上次更新的结果
         yield
 
 

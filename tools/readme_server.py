@@ -78,4 +78,4 @@ def seed():
                 data="510300", strategy=name)
 
 
-run(native=False, port=PORT, show=False)
+run(native=False, port=PORT, show=False, check_updates=False)

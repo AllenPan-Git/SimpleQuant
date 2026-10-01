@@ -141,12 +141,15 @@ def page():
         with ui.card().classes("w-full"):
             with ui.row().classes("w-full items-start gap-4"):
                 def on_universe(e):
+                    if e.value == SP["universe"]:      # 载入策略时由程序同步下拉框，不必再载入一次
+                        return
                     old = U.kind(SP["universe"])
                     SP["universe"] = e.value
                     switch_kind(SP, old, U.kind(e.value))
                     reload_all()
-                ui.select({u: p(UNIVERSES[u]["label"]) for u in UNIVERSES}, label=t("sp.universe"),
-                          value=SP["universe"], on_change=on_universe).props(DENSE).classes("w-48").mark("sp_universe")
+                uni_sel = ui.select({u: p(UNIVERSES[u]["label"]) for u in UNIVERSES}, label=t("sp.universe"),
+                                    value=SP["universe"], on_change=on_universe).props(DENSE).classes("w-48") \
+                    .mark("sp_universe")
                 start_in = ui.input(t("data.start")).props("outlined dense type=date").classes("w-44") \
                     .mark("sp_start")
                 end_in = ui.input(t("data.end")).props("outlined dense type=date").classes("w-44").mark("sp_end")
@@ -275,6 +278,7 @@ def page():
                     build(SP, ctx)
 
         def reload_all():
+            uni_sel.value = SP["universe"]        # 载入的策略换了股票池时，下拉框跟着变
             set_range_inputs()
             data_box.clear()
             with data_box:
@@ -934,7 +938,7 @@ def _backtest_form(SP, ctx, rebuild):
             def load_saved():
                 apply_spec(SP, saved[pick_saved.value], pick_saved.value)
                 rebuild()
-            ui.button(t("strat.load"), on_click=load_saved).props("outline no-caps")
+            ui.button(t("strat.load"), on_click=load_saved).props("outline no-caps").mark("sp_load_saved")
 
     # ---- 因子 ----
     with section(t("sp.factor_setup"), "functions"):

@@ -775,6 +775,23 @@ async def test_selection_cb_backtest(user: User):
 
 
 @needs_cb
+@needs_stocks
+async def test_selection_load_saved_cb_strategy_switches_universe(user: User):
+    """在沪深300下载入可转债策略：股票池下拉框、面板、因子和条件都换成可转债的"""
+    strategies.save_strategy("转债双低", {
+        "kind": "selection", "universe": "cb", "factors": [{"key": "cb_double_low", "weight": 1, "direction": -1}],
+        "top_n": 15, "rebalance": "monthly", "position_pct": 95,
+        "filters": {"exclude_st": False, "min_list_days": 0, "max_price": 120.0, "min_amount": None}})
+    SP = await _open_selection(user)
+    user.find(marker="sp_load_saved").click()
+    assert await _wait(lambda: (state.STATE.get("sp_panel_key") or (None,))[0] == "cb", n=1200)
+    await settle()
+    assert user.find(marker="sp_universe").elements.pop().value == "cb"
+    assert SP["top_n"] == 15 and SP["cbf"]["max_price"] == 120 and SP["cbf"]["min_amount"] is None
+    assert [f["key"] for f in SP["factors"]] == ["cb_double_low"]
+
+
+@needs_cb
 async def test_selection_cb_research_and_data_tab(user: User):
     SP = await _open_cb(user, "res")
     assert SP["res"]["fkey"].startswith("cb_") or SP["res"]["fkey"] in ("ret5", "ret20")

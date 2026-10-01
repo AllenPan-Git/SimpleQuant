@@ -13,6 +13,7 @@ import pprint
 import re
 
 from .. import strategies
+from ..engine.market import t0_names
 from ..i18n import L, pick
 from ..rules.schema import required_columns
 from . import signal_core
@@ -362,6 +363,7 @@ def platform_script(platform: str, spec: dict, items: list[dict], broker: dict, 
             + _settings(spec, items, platform, start, end, broker)
             + CORE_TITLE + _core_source()
             + '\nT_PLUS_1 = BROKER.get("t_plus_1", True)\n'
+            + f'T0_NAMES = {list(t0_names(it["name"] for it in items))!r}\n'
             + ADAPTERS[platform])
 
 

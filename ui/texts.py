@@ -204,9 +204,14 @@ TEXT.update({
     "bt.costs": L("资金与交易成本", "Capital & trading costs"),
     "bt.cash": L("初始资金（元）", "Initial capital (CNY)"),
     "bt.cost_preset": L("费率预设", "Cost preset"),
-    "bt.t1": L("T+1（当日买入，次日方可卖出）", "T+1 (shares bought today can be sold from the next day)"),
-    "bt.t1_help": L("股票及大多数 ETF 实行 T+1；债券 ETF、跨境 ETF、黄金 ETF 等实行 T+0",
-                    "Stocks and most ETFs are T+1; bond, cross-border and gold ETFs are T+0"),
+    "bt.t1": L("T+1（按品种执行）", "T+1 (by product type)"),
+    "bt.t1_help": L("开启时，股票及境内股票 ETF 当日买入、次日方可卖出；债券 ETF、可转债、货币 ETF、黄金 ETF、商品期货 ETF、"
+                    "跨境 ETF 实行 T+0，不受此限制。品种根据代码和名称自动判断。关闭时全部按 T+0 处理",
+                    "When on, stocks and domestic equity ETFs bought today can only be sold from the next day; bond, "
+                    "convertible, money-market, gold, commodity-futures and cross-border ETFs are T+0 and exempt. "
+                    "The product type is inferred from the code and name. When off, everything is treated as T+0"),
+    "bt.t0_assets": L("以下标的实行 T+0，当日买入当日即可卖出：{names}",
+                      "These assets are T+0 and can be sold on the day they are bought: {names}"),
     "bt.dividend": L("分红处理", "Dividends"),
     "bt.div_reinvest": L("分红再投资", "Reinvest"),
     "bt.div_cash": L("现金分红", "Cash"),

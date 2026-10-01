@@ -19,6 +19,7 @@ NAN = float("nan")
 LOT = 100
 CASH_BUFFER = 0.01
 T_PLUS_1 = True       # 当天开盘买入的，当天收盘出现卖出信号也不能卖（次日再卖）
+T0_NAMES = []         # 实行 T+0 的标的（债券 ETF、可转债等），不受 T+1 限制
 
 
 # ============================== 指标（与 Backtrader 逐项一致） ==============================
@@ -272,7 +273,9 @@ class _Orders(object):
 
     def can_sell(self, name):
         """T+1：上一次运行时下的买单在最新这根 K 线开盘成交，这根 K 线收盘产生的卖出信号当天不能执行"""
-        return not T_PLUS_1 or self.state.get("bought_at", {}).get(name) != self.bars(name) - 1
+        if not T_PLUS_1 or name in T0_NAMES:
+            return True
+        return self.state.get("bought_at", {}).get(name) != self.bars(name) - 1
 
     def target(self, name, pct, reason):
         """把持仓调整到总资产的 pct（0~1）；下了单返回 True"""
@@ -466,6 +469,32 @@ def _run_template(spec, hist, o, state):
                 state["pending_target"] = best
         else:
             o.target(best, pct, "strongest %s %.2f%% / 动量最强" % (best, scores[best] * 100))
+    elif key == "fixed_weight":
+        total, first = p.get("position_pct", 95) / 100.0, p.get("weight", 60) / 100.0
+        rest = (1 - first) / (len(names) - 1)
+        targets = dict((n, total * (first if i == 0 else rest)) for i, n in enumerate(names))
+
+        def weight(n):
+            return o.shares(n) * o.close(n) / o.value
+
+        if state.get("top_up"):                              # 上一根 K 线卖出的资金已到账，补足低配的
+            state["top_up"] = False
+            for n in names:
+                if weight(n) < targets[n]:
+                    o.target(n, targets[n], "underweight, add to %.1f%% / 低配，增至目标比例" % (targets[n] * 100))
+        state["counter"] = state.get("counter", 0) + 1
+        if (state["counter"] - 1) % int(p.get("rebalance_bars", 20)) != 0:
+            return
+        drift = dict((n, weight(n) - targets[n]) for n in names)
+        if max(abs(x) for x in drift.values()) * 100 <= p.get("band", 5):
+            return
+        for n in names:
+            if drift[n] > 0 and o.target(n, targets[n], "overweight, trim to %.1f%% / 超配，减至目标比例"
+                                                        % (targets[n] * 100)):
+                state["top_up"] = True
+        for n in names:
+            if drift[n] < 0:
+                o.target(n, targets[n], "underweight, add to %.1f%% / 低配，增至目标比例" % (targets[n] * 100))
     else:
         raise ValueError("unsupported template / 不支持的模板: " + str(key))
 

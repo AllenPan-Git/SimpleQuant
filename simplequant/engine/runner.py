@@ -13,6 +13,7 @@ from ..data.base import EXTRA_COLUMNS
 from ..data.cash_dividend import has_columns, events_of
 from .base_strategy import ORDER_COLUMNS, TRADE_COLUMNS
 from .commission import AShareCommission
+from .market import t0_names
 from .results import EquityRecorder, BacktestResult, compute_metrics, build_benchmark
 
 
@@ -23,7 +24,7 @@ class BrokerConfig:
     min_commission: float = 5.0
     stamp_duty: float = 0.0
     slippage: float = 0.0005
-    t_plus_1: bool = True
+    t_plus_1: bool = True          # 按品种执行 T+1（债券 ETF、可转债等 T+0 品种除外）；False = 全部按 T+0
     risk_free: float = 0.02
     dividend: str = "reinvest"     # reinvest 分红再投资（后复权）/ cash 现金分红（行情由 data/cash_dividend.prepare 换好）
 
@@ -56,6 +57,9 @@ def build_cerebro(prices: dict[str, pd.DataFrame], strategy_cls, strategy_params
     broker = broker or BrokerConfig()
     params = dict(strategy_params or {})
     params["t_plus_1"] = broker.t_plus_1
+    t0 = t0_names(prices) if broker.t_plus_1 else ()
+    if t0:
+        params["t0_names"] = t0
     if trade_start is not None:
         params["trade_start"] = pd.Timestamp(trade_start).date()
 
@@ -109,6 +113,7 @@ def run_backtest(prices: dict[str, pd.DataFrame], strategy_cls, strategy_params:
         panels = collect_panels(strat)
     return BacktestResult(equity=equity, orders=orders, trades=trades, metrics=metrics,
                           logs=strat.logs, prices=prices, lot_too_big=sorted(strat.lot_too_big),
+                          t0=list(getattr(strat.p, "t0_names", ())),
                           pending=_pending_orders(strat), positions=_positions(strat), panels=panels)
 
 

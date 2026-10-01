@@ -23,7 +23,9 @@ POPULAR = {
     "510300": L("沪深300ETF", "CSI 300 ETF"), "510500": L("中证500ETF", "CSI 500 ETF"),
     "159915": L("创业板ETF", "ChiNext ETF"), "588000": L("科创50ETF", "STAR 50 ETF"),
     "510050": L("上证50ETF", "SSE 50 ETF"), "512100": L("中证1000ETF", "CSI 1000 ETF"),
+    "511010": L("国债ETF", "Treasury ETF"), "511260": L("十年国债ETF", "10Y Treasury ETF"),
     "511130": L("30年国债ETF", "30Y Treasury ETF"), "511090": L("30年国债ETF(鹏扬)", "30Y Treasury ETF (Pengyang)"),
+    "511360": L("短融ETF", "Short-term financing bond ETF"), "511380": L("可转债ETF", "Convertible bond ETF"),
     "518880": L("黄金ETF", "Gold ETF"), "513100": L("纳指ETF", "Nasdaq 100 ETF"),
 }
 ADJUST = {"hfq": "adj.hfq", "qfq": "adj.qfq", "": "adj.none"}

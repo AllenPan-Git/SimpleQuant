@@ -19,6 +19,7 @@ from pathlib import Path
 from .. import strategies
 from ..engine import base_strategy as base_module
 from ..engine.commission import AShareCommission
+from ..engine.market import t0_names
 from ..i18n import pick
 from ..rules import INDICATORS, default_line
 from ..strategies import templates as tpl_module
@@ -272,7 +273,8 @@ def run(prices: dict):
     for name, df in prices.items():
         extras = {c: c for c in EXTRA if c in df.columns}
         cerebro.adddata(Feed(dataname=df, name=name, datetime=None, openinterest=-1, **extras), name=name)
-    cerebro.addstrategy(Strategy, t_plus_1=BROKER["t_plus_1"], **STRATEGY_PARAMS)
+    t0 = tuple(n for n in T0_NAMES if n in prices) if BROKER["t_plus_1"] else ()
+    cerebro.addstrategy(Strategy, t_plus_1=BROKER["t_plus_1"], **({"t0_names": t0} if t0 else {}), **STRATEGY_PARAMS)
     cerebro.addanalyzer(Equity, _name="equity")
     return cerebro.run()[0]
 
@@ -314,7 +316,7 @@ def _header(title: str, spec: dict, lang: str) -> str:
     pip install backtrader pandas akshare baostock
     python {{filename}}
 
-规则与 SimpleQuant 回测一致：信号在 K 线收盘产生、下一根开盘成交；100 股整手；T+1；佣金最低 5 元、卖出印花税；滑点。
+规则与 SimpleQuant 回测一致：信号在 K 线收盘产生、下一根开盘成交；100 股整手；T+1（债券 ETF、可转债等 T+0 品种除外）；佣金最低 5 元、卖出印花税；滑点。
 """
 
 import math
@@ -337,7 +339,9 @@ def single_asset_script(spec: dict, data: list[dict], broker: dict, title: str =
     parts = [_header(title, spec, lang).replace("{filename}", filename)]
     parts.append("# ============================== 设置 ==============================\n"
                  f"DATA = {pprint.pformat(data, width=110, sort_dicts=False)}\n\n"
-                 f"BROKER = {pprint.pformat(broker, width=110, sort_dicts=False)}\n")
+                 f"BROKER = {pprint.pformat(broker, width=110, sort_dicts=False)}\n"
+                 "# 实行 T+0 的标的（债券 ETF、可转债等），不受 T+1 限制\n"
+                 f"T0_NAMES = {list(t0_names(d['name'] for d in data))!r}\n")
     parts.append(DATA_CODE)
     parts.append("\n# ============================== 交易成本 ==============================\n"
                  + inspect.getsource(AShareCommission) + "\n")

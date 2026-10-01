@@ -127,6 +127,51 @@ class MomentumRotation(BaseStrategy):
             self.order_target_pct(best, pct, ("reason.rot_best", {"v": scores[best] * 100}))
 
 
+class FixedWeight(BaseStrategy):
+    """
+    定比再平衡（如股债 60/40）
+    第一个标的占 weight%，其余标的平分剩下的比例，合计投入 position_pct 的资金。
+    每隔 rebalance_bars 根 K 线检查一次，任一标的实际比例偏离目标超过 band 个百分点时全部调回目标：
+    先卖出超配的、用现有资金买入低配的，下一根 K 线卖出的资金到账后再补足。
+    """
+    params = (("weight", 60), ("rebalance_bars", 20), ("band", 5), ("position_pct", 95))
+
+    def __init__(self):
+        super().__init__()
+        self.counter = 0
+        self.top_up = False
+
+    def targets(self) -> dict:
+        total = self.p.position_pct / 100
+        first = self.p.weight / 100
+        rest = (1 - first) / (len(self.datas) - 1)
+        return {d: total * (first if i == 0 else rest) for i, d in enumerate(self.datas)}
+
+    def weight_of(self, d) -> float:
+        return self.getposition(d).size * d.close[0] / self.broker.getvalue()
+
+    def next(self):
+        targets = self.targets()
+        if self.top_up and not any(self.has_pending(d) for d in self.datas):
+            self.top_up = False
+            for d, w in targets.items():
+                if self.weight_of(d) < w:
+                    self.order_target_pct(d, w, ("reason.fw_buy", {"w": w * 100}))
+
+        self.counter += 1
+        if (self.counter - 1) % int(self.p.rebalance_bars) != 0:
+            return
+        drift = {d: self.weight_of(d) - w for d, w in targets.items()}
+        if max(abs(x) for x in drift.values()) * 100 <= self.p.band:
+            return
+        for d, x in drift.items():
+            if x > 0 and self.order_target_pct(d, targets[d], ("reason.fw_sell", {"w": targets[d] * 100})) is not None:
+                self.top_up = True
+        for d, x in drift.items():
+            if x < 0:
+                self.order_target_pct(d, targets[d], ("reason.fw_buy", {"w": targets[d] * 100}))
+
+
 register(Template(
     "buy_hold", L("买入持有", "Buy & hold"),
     L("第一根 K 线建仓后一直持有，一般用作对比基准。", "Buys on the first bar and holds. Mostly used as a baseline."),
@@ -166,5 +211,20 @@ register(Template(
     MomentumRotation, [
         Param("period", L("动量回看周期（K线数）", "Lookback (bars)"), 20, 2, 250, 1),
         Param("rebalance_bars", L("调仓间隔（K线数）", "Rebalance every (bars)"), 5, 1, 60, 1),
+        PCT,
+    ], min_assets=2))
+register(Template(
+    "fixed_weight", L("定比再平衡", "Fixed-weight rebalancing"),
+    L("按固定比例持有多个标的（如股票 ETF 与债券 ETF 60/40），定期检查，偏离超过阈值时调回目标比例。"
+      "第一个标的占设定比例，其余标的平分剩余部分。至少需要 2 个标的。",
+      "Holds several assets at fixed weights (e.g. 60/40 equity and bond ETFs) and periodically rebalances "
+      "when any weight drifts beyond the band. The first asset gets the set weight; the rest share the remainder "
+      "equally. Needs at least 2 assets."),
+    FixedWeight, [
+        Param("weight", L("第一个标的的比例(%)", "Weight of the first asset (%)"), 60, 0, 100, 5),
+        Param("rebalance_bars", L("检查间隔（K线数）", "Check every (bars)"), 20, 1, 250, 1),
+        Param("band", L("偏离阈值（百分点）", "Drift band (percentage points)"), 5, 0, 30, 1,
+              L("任一标的实际比例与目标相差超过该值时再平衡；0 表示每次检查都调回目标",
+                "Rebalance when any weight is off target by more than this; 0 rebalances at every check")),
         PCT,
     ], min_assets=2))

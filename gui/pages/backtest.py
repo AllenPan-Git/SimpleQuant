@@ -228,6 +228,9 @@ def _results(BT: dict, exp_menu):
             if any(BT.get("div_notes", ({}, {}))):
                 with ui.column().classes("w-full pt-4 gap-2"):
                     dividend_notices(*BT["div_notes"])
+            if res.t0:
+                with ui.column().classes("w-full pt-4"):
+                    notice(t("bt.t0_assets", names=", ".join(res.t0)), "swap_horiz")
             if res.lot_too_big:
                 with ui.column().classes("w-full pt-4"):
                     notice(t("bt.lot_too_big", names=", ".join(res.lot_too_big)), "savings", "warning")

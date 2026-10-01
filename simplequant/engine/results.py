@@ -36,6 +36,7 @@ class BacktestResult:
     logs: list = field(default_factory=list)
     prices: dict = field(default_factory=dict)   # 名称 -> 行情 DataFrame（画 K 线用）
     lot_too_big: list = field(default_factory=list)   # 因资金不足一手而没能买入的标的
+    t0: list = field(default_factory=list)            # 按 T+0 交易的标的
     pending: list = field(default_factory=list)       # 最后一根 K 线上未成交的委托（下一个开盘执行）
     positions: list = field(default_factory=list)     # 结束时的持仓
     panels: dict = field(default_factory=dict)        # 标的名 -> 指标栏（交互式策略图用，见 engine/panels.py）

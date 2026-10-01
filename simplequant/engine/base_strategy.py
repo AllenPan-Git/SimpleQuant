@@ -2,7 +2,7 @@
 策略基类
 在 Backtrader 订单通知的基础上增加：
 - 按目标仓位下单，并按 100 股整手取整
-- T+1：当天买入的持仓当天不能卖出
+- T+1：当天买入的持仓当天不能卖出；t0_names 里的标的（债券 ETF、可转债等，见 market.py）不受限制
 - 订单、成交、平仓交易和日志都记录下来，供结果页展示
 - 现金分红模式（行情带 div_* 列，见 data/cash_dividend.py）：除息日开盘前缩减持仓、现金到账，卖出时扣红利税
 
@@ -19,6 +19,7 @@ TRADE_COLUMNS = ["symbol", "open_time", "close_time", "bars", "pnl", "pnl_net"]
 class BaseStrategy(bt.Strategy):
     params = (
         ("t_plus_1", True),
+        ("t0_names", ()),        # 实行 T+0 的标的名称
         ("lot_size", 100),
         ("cash_buffer", 0.01),   # 买入时预留 1% 资金，覆盖滑点、手续费和开盘跳空
         ("trade_start", None),   # 这天之前只计算指标、不下单（模拟盘/回测的预热期）
@@ -45,7 +46,7 @@ class BaseStrategy(bt.Strategy):
         self.logs.append((d.datetime.datetime(0), key, kw))
 
     def can_sell(self, data) -> bool:
-        if not self.p.t_plus_1:
+        if not self.p.t_plus_1 or data._name in self.p.t0_names:
             return True
         return self._buy_date.get(data) != data.datetime.date(0)
 

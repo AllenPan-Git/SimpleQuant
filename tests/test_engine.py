@@ -23,7 +23,9 @@ def test_every_template_runs(key):
     res = run_backtest(datas, cls, params, BrokerConfig())
     assert len(res.equity) == 400
     assert res.metrics["final_value"] > 0
-    if key != "buy_hold":
+    if key == "fixed_weight":              # 再平衡只减仓、不清仓：没有完整交易，但有卖出
+        assert (res.orders["side"] == "sell").any()
+    elif key != "buy_hold":
         assert res.metrics["trades"] > 0, key
     assert (res.orders["size"] % 100 == 0).all() or key == "momentum_rotation"
 

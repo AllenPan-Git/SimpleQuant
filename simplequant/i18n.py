@@ -93,6 +93,8 @@ TEXT = {
     "reason.rot_all_neg": L("所有标的动量为负，清仓避险", "all momentum negative, going to cash"),
     "reason.rot_switch": L("轮动切换至 {name}", "rotating into {name}"),
     "reason.rot_best": L("动量最强 {v:.2f}%", "strongest momentum {v:.2f}%"),
+    "reason.fw_sell": L("超配，减至目标比例 {w:.1f}%", "overweight, trimming to target {w:.1f}%"),
+    "reason.fw_buy": L("低配，增至目标比例 {w:.1f}%", "underweight, adding to target {w:.1f}%"),
     "reason.rule_buy": L("满足买入规则", "buy rule met"),
     "reason.rule_sell": L("满足卖出规则", "sell rule met"),
 

@@ -1,0 +1,4 @@
+# Windows 批处理与安装脚本保持 CRLF，否则 cmd / Inno Setup 可能解析出错
+*.bat text eol=crlf
+*.iss text eol=crlf
+*.isl text eol=crlf

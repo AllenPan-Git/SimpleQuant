@@ -1,0 +1,22 @@
+# Python / 工具
+.venv/
+__pycache__/
+.pytest_cache/
+*.log
+
+# 打包输出（PyInstaller、安装包）；打包时写入的本机源码路径
+build/
+dist/
+simplequant/_build_info.json
+
+# 本机数据：行情库、选股数据、模拟账户、界面偏好（数据源条款一般不允许二次分发）
+data_cache/
+# 用户自己保存的策略和自定义因子
+user_strategies/
+user_factors/
+
+# 图标预览的输出（tools/icon_preview.py）
+tools/icon_preview/
+
+# 个人进度记录，不公开
+进度与待办.md

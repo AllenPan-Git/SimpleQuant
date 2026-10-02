@@ -281,7 +281,7 @@ def _results(BT: dict, exp_menu):
         tab_o = ui.tab("o", t("bt.tab_orders"))
         tab_t = ui.tab("t", t("bt.tab_trades"))
         tab_l = ui.tab("l", t("bt.tab_logs"))
-        tab_n = ui.tab("n", t("nat.tab"))
+        tab_n = ui.tab("n", t("nat.tab")).mark("native_tab")
     with ui.tab_panels(tabs, value=tab_o).classes("w-full bg-transparent"):
         with ui.tab_panel(tab_o).classes("px-0 gap-2"):
             if res.orders.empty:

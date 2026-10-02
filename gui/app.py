@@ -56,6 +56,8 @@ def run(native: bool = True, port: int = 0, show: bool = True, check_updates: bo
     register()
     if check_updates:
         app.on_startup(_start_update_check)
+    from gui import uitest
+    uitest.install()             # 只有设置了 SIMPLEQUANT_UI_SCRIPT 才生效（打包后的自动测试）
     # 桌面窗口（pywebview）默认会静默取消所有下载；打开后点下载会弹出「另存为」对话框
     app.native.settings["ALLOW_DOWNLOADS"] = True
     ui.run(

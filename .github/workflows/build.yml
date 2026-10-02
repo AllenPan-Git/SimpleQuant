@@ -73,12 +73,22 @@ jobs:
         run: test "$(python -c 'from simplequant.system import TARGET; print(TARGET)')" = "${{ matrix.target }}"
       - name: Build
         run: PYTHON=python sh tools/build_unix.sh > step.log 2>&1 || { tail -80 step.log; eval "$SHOW_TAIL"; exit 1; }
+      - name: Gatekeeper (macOS)
+        # 模拟从网上下载（加隔离标记）：记录 Gatekeeper 的判定（未公证，应为 rejected），再验证 README 里的放行命令能去掉标记
+        if: runner.os == 'macOS'
+        run: |
+          APP=dist/macos/SimpleQuant.app
+          xattr -w com.apple.quarantine "0083;$(printf %x $(date +%s));Safari;" "$APP"
+          { echo "quarantined:"; spctl --assess --type execute -v "$APP" 2>&1 || true; } | tee gatekeeper-${{ matrix.target }}.txt
+          xattr -dr com.apple.quarantine "$APP"
+          if xattr -p com.apple.quarantine "$APP" 2>/dev/null; then echo "::error::quarantine still set"; exit 1; fi
+          echo "after xattr -dr: quarantine removed" | tee -a gatekeeper-${{ matrix.target }}.txt
       - name: Smoke test (macOS)
         if: runner.os == 'macOS'
-        run: python tools/smoke_test.py dist/macos/SimpleQuant.app/Contents/MacOS/SimpleQuant --screenshot screenshot-${{ matrix.target }}.png > step.log 2>&1 || { tail -80 step.log; eval "$SHOW_TAIL"; exit 1; }
+        run: python tools/smoke_test.py dist/macos/SimpleQuant.app/Contents/MacOS/SimpleQuant --screenshot screenshot-${{ matrix.target }}.png --ui tools/ui_walkthrough.py --ui-out ui-${{ matrix.target }} > step.log 2>&1 || { tail -80 step.log; eval "$SHOW_TAIL"; exit 1; }
       - name: Smoke test (Linux)
         if: runner.os == 'Linux'
-        run: xvfb-run -a -s "-screen 0 1600x1000x24" python tools/smoke_test.py dist/linux/SimpleQuant/SimpleQuant --screenshot screenshot-${{ matrix.target }}.png > step.log 2>&1 || { tail -80 step.log; eval "$SHOW_TAIL"; exit 1; }
+        run: xvfb-run -a -s "-screen 0 1600x1000x24" python tools/smoke_test.py dist/linux/SimpleQuant/SimpleQuant --screenshot screenshot-${{ matrix.target }}.png --ui tools/ui_walkthrough.py --ui-out ui-${{ matrix.target }} > step.log 2>&1 || { tail -80 step.log; eval "$SHOW_TAIL"; exit 1; }
       - name: Manifest and patches
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -92,5 +102,7 @@ jobs:
             dist/*/*.tar.gz
             dist/release/*/*/manifest-*.json
             screenshot-*.png
+            gatekeeper-*.txt
+            ui-*/
           if-no-files-found: warn
           retention-days: 14

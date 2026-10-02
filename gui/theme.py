@@ -33,7 +33,8 @@ CSS = f"""
   --sq-muted: #77716A; --sq-faint: #A39B8F; --sq-border: #D9D2C6; --sq-border2: #E8E2D8; --sq-shadow: #ECE6DC;
   --sq-red: {RED}; --sq-red-soft: rgba(180, 35, 24, .07); --sq-up: {RED}; --sq-down: {GREEN}; --sq-gold: {GOLD};
   --sq-serif: 'SQ Serif', 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'STSong', 'SimSun', Georgia, serif;
-  --sq-sans: 'Segoe UI Variable Text', 'Segoe UI', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', system-ui, sans-serif;
+  --sq-sans: 'Segoe UI Variable Text', 'Segoe UI', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Hiragino Sans GB',
+    'Noto Sans CJK SC', 'Source Han Sans SC', 'WenQuanYi Micro Hei', system-ui, sans-serif;
   --sq-fig: Georgia, 'Times New Roman', serif;
   --sq-mono: 'JetBrains Mono', 'Cascadia Mono', Consolas, monospace;
 }}

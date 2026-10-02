@@ -14,6 +14,7 @@ from simplequant.engine import BrokerConfig
 from simplequant.export import selection_script
 from simplequant.export import run_script
 from simplequant.paper import schedule
+from simplequant.paths import PROJECT_DIR as ROOT
 
 
 def test_run_script_writes_log_and_returns_code(tmp_path):
@@ -89,6 +90,30 @@ def test_migrate_not_offered_in_source_mode():
 
 
 def test_task_command(monkeypatch):
+    monkeypatch.setattr(schedule, "SYSTEM", "windows")
     assert schedule.task_command() == f'"{schedule.BAT}"'
     monkeypatch.setattr(schedule, "FROZEN", True)
     assert schedule.task_command() == f'"{sys.executable}" --paper'
+
+
+def test_system_paths(monkeypatch, tmp_path):
+    from simplequant import system
+    monkeypatch.setattr(system.Path, "home", lambda: tmp_path)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    assert system.user_data_dir("windows") == tmp_path / "local" / "SimpleQuant"
+    assert system.user_data_dir("macos") == tmp_path / "Library" / "Application Support" / "SimpleQuant"
+    assert system.user_data_dir("linux") == tmp_path / ".local" / "share" / "SimpleQuant"
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    assert system.user_data_dir("linux") == tmp_path / "xdg" / "SimpleQuant"
+    exe = tmp_path / "SimpleQuant.app" / "Contents" / "MacOS" / "SimpleQuant"
+    assert system.app_dir(str(exe), "macos") == (tmp_path / "SimpleQuant.app").resolve()
+    assert system.app_dir(str(tmp_path / "SimpleQuant" / "SimpleQuant"), "linux") == (tmp_path / "SimpleQuant").resolve()
+    assert system.venv_python("/home/u/sq", "linux") == "/home/u/sq/.venv/bin/python"
+    assert system.venv_python("D:\\p\\", "windows") == "D:\\p\\.venv\\Scripts\\python.exe"
+
+
+def test_unix_scripts_use_lf():
+    for name in ("start.sh", "paper_daily.sh"):
+        data = (ROOT / name).read_bytes()
+        assert data.startswith(b"#!/bin/sh") and b"\r\n" not in data

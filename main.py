@@ -2,7 +2,7 @@
 SimpleQuant 桌面版入口（NiceGUI；打包成 exe 时也用这个文件）
     python main.py                     打开桌面窗口
     python main.py --browser           在浏览器里打开（开发、测试用）
-    python main.py --paper             不开界面，更新数据并推进所有模拟账户（供 Windows 定时任务调用）
+    python main.py --paper             不开界面，更新数据并推进所有模拟账户（供定时任务调用）
     python main.py --run-script x.py   运行导出的选股脚本（输出同时写入 x.log）
 """
 
@@ -33,6 +33,33 @@ def _ensure_streams():
             setattr(sys, name, f)
 
 
+def _native_ok() -> bool:
+    """
+    桌面窗口需要的系统组件是否齐全。Windows（WebView2）和 macOS（WebKit）自带；
+    Linux 需要 GTK + WebKit2（python3-gi、gir1.2-webkit2-4.1）或 Qt（pip install "pywebview[qt]"），都没有时改用浏览器
+    """
+    if sys.platform in ("win32", "darwin"):
+        return True
+    import importlib.util
+    try:
+        import gi
+        for ver in ("4.1", "4.0"):
+            try:
+                gi.require_version("WebKit2", ver)
+                return True
+            except ValueError:
+                pass
+    except ImportError:
+        pass
+    if not importlib.util.find_spec("qtpy"):
+        return False
+    try:        # 打包版用的是这个；真正导入一次，缺系统库（如 libxcb-cursor0）时这里就会报错
+        import qtpy.QtWebEngineWidgets  # noqa: F401
+        return True
+    except Exception:  # noqa: BLE001 - qtpy 找不到 Qt 绑定、缺动态库等
+        return False
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="SimpleQuant")
     ap.add_argument("--browser", action="store_true", help="open in a browser tab instead of a desktop window")
@@ -56,7 +83,16 @@ def main(argv=None) -> int:
             print(f"缺少依赖 {e.name}，请先安装：pip install -r requirements.txt / missing dependency: {e.name}")
             return 1
         raise
-    run(native=not args.browser, port=args.port)
+    native = not args.browser
+    if getattr(sys, "frozen", False) and sys.platform.startswith("linux"):
+        # 打包版的 Linux 窗口是 Qt WebEngine（Chromium）。Ubuntu 24.04 起限制了它的沙箱所需的用户命名空间，
+        # 不关掉会直接打不开；窗口里只加载本机的界面，不浏览外部网页
+        os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
+    if native and not _native_ok():
+        print("未找到桌面窗口组件（GTK WebKit2 或 Qt），改在浏览器中打开；关闭本终端即退出。\n"
+              "No desktop window backend (GTK WebKit2 or Qt) found; opening in the browser instead.", flush=True)
+        native = False
+    run(native=native, port=args.port)
     return 0
 
 

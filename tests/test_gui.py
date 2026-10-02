@@ -222,7 +222,8 @@ async def test_strategy_template_save_and_load(user: User):
     assert state.strategy()["name"] == "我的均线"
 
 
-async def test_strategy_rule_builder(user: User):
+async def test_strategy_rule_builder(user: User, lib_dir):
+    _save_prices()                                         # 回测页有数据时才显示「运行」按钮
     await user.open("/strategy")
     user.find(marker="mode").elements.pop().set_value("rule")
     await settle()
@@ -859,6 +860,7 @@ async def test_settings_update_section_and_banner(user: User, monkeypatch):
     assert checks
 
     monkeypatch.setattr(UPDATER, "frozen", True)
+    monkeypatch.setattr(UPDATER, "system", "windows")          # macOS / Linux 还要检查程序目录能否写入
     monkeypatch.setattr(UPDATER, "status", Status(state="ready", version="9.9.9", notes="- 修复"))
     monkeypatch.setattr(UPDATER, "apply", lambda: applied.append(1) or False)
     await user.open("/")

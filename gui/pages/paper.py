@@ -340,7 +340,8 @@ def _account_view(PP, run_accounts, redraw):
 
 
 def _schedule_box(PP):
-    with ui.expansion(t("pp.schedule"), icon="schedule").classes("w-full q-card"):
+    with ui.expansion(t("pp.schedule", tool=t(f"pp.sched.{schedule.backend()}")), icon="schedule") \
+            .classes("w-full q-card"):
         ui.label(t("pp.schedule_note")).classes("sq-muted text-sm")
 
         @ui.refreshable
@@ -354,12 +355,12 @@ def _schedule_box(PP):
 
                 def create():
                     ok, msg = schedule.create_task(at.value or "19:00")
-                    ui.notify(msg, type="positive" if ok else "negative", multi_line=True)
+                    ui.notify(msg or t("pp.task_saved"), type="positive" if ok else "negative", multi_line=True)
                     box.refresh()
 
                 def delete():
                     ok, msg = schedule.delete_task()
-                    ui.notify(msg, type="positive" if ok else "negative", multi_line=True)
+                    ui.notify(msg or t("pp.task_removed"), type="positive" if ok else "negative", multi_line=True)
                     box.refresh()
                 ui.button(t("pp.task_create") if not exists else t("pp.task_update"), icon="alarm_add",
                           on_click=create).props("outline no-caps")

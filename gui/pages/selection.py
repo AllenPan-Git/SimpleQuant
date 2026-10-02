@@ -1,7 +1,6 @@
 """第 5 页：多因子选股（数据 / 因子研究 / 自定义因子 / 选股回测 / 滚动优化）"""
 
 import datetime as dt
-import os
 import subprocess
 import sys
 import time
@@ -20,6 +19,7 @@ from simplequant.stocks import (StockStore, UNIVERSES, FACTORS, GROUPS, REBALANC
                                 factor_correlation, sample_dates)
 from simplequant.stocks import custom_factors, universe as U, factors_for
 from simplequant.bonds.panel import CB_FILTERS, CB_DEFAULT_FILTERS
+from simplequant.system import open_folder
 from simplequant.stocks.walkforward import (walk_forward_selection, selection_tunables, selection_grid,
                                             REBALANCE_CHOICES, TARGET_METRICS as WF_TARGETS, MAX_COMBOS as WF_MAX)
 from gui import state, history
@@ -1289,7 +1289,7 @@ def run_script_dialog():
                     with ui.row().classes("w-full items-center gap-3 no-wrap"):
                         notice(t("exp.run_done") + f" `{folder}`", "check_circle")
                         ui.button(t("exp.open_folder"), icon="folder_open",
-                                  on_click=lambda: os.startfile(folder)).props("outline no-caps")  # noqa: S606
+                                  on_click=lambda: open_folder(folder)).props("outline no-caps")
                 else:
                     notice(t("exp.run_failed"), "error", "error")
 

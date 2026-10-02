@@ -2,3 +2,4 @@
 *.bat text eol=crlf
 *.iss text eol=crlf
 *.isl text eol=crlf
+*.sh text eol=lf

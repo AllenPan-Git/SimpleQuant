@@ -7,7 +7,7 @@
 
 <p align="center"><b>简体中文</b> · <a href="README.en.md">English</a></p>
 
-<p align="center">Windows 桌面程序 · 回测引擎 Backtrader · GPLv3 开源</p>
+<p align="center">Windows / macOS / Linux 桌面程序 · 回测引擎 Backtrader · GPLv3 开源</p>
 
 SimpleQuant 是面向 A 股的低代码量化回测工具，覆盖股票、ETF（含债券 ETF）与可转债。通过点选即可完成「准备数据 → 搭建策略 → 回测 → 参数优化 → 模拟盘」的完整流程；需要时也可以直接编写 Python 策略、进行多因子选股（股票或可转债），或将策略导出到聚宽、掘金、QMT 复核。
 
@@ -50,7 +50,7 @@ A 股交易规则：100 股整手、按品种执行 T+1（股票与境内股票 
 <img src="docs/images/optimize-zh.png" alt="参数优化">
 
 ### 05 · 模拟盘
-以已保存的策略开设模拟账户，无需券商账户。每个交易日收盘后更新数据，以**与回测相同的代码**推进账户，并给出下一交易日开盘需执行的交易；可创建 Windows 定时任务自动运行。
+以已保存的策略开设模拟账户，无需券商账户。每个交易日收盘后更新数据，以**与回测相同的代码**推进账户，并给出下一交易日开盘需执行的交易；可设置定时任务每日自动运行（Windows、macOS、Linux 均支持）。
 
 <img src="docs/images/paper-zh.png" alt="模拟盘">
 
@@ -67,31 +67,55 @@ A 股交易规则：100 股整手、按品种执行 T+1（股票与境内股票 
 
 ## 安装
 
-### 安装包（推荐，无需安装 Python）
-1. 在本仓库的 **Releases** 页面下载 `SimpleQuant-<版本>-Setup.exe`。
-2. 运行安装程序。程序安装到 `%LOCALAPPDATA%\Programs\SimpleQuant`，无需管理员权限，并创建开始菜单快捷方式（桌面快捷方式可选）。
-3. 首次运行时 Windows SmartScreen 可能提示「已保护你的电脑」，请点击「更多信息 → 仍要运行」。
-4. 在「01 数据」页下载所需数据（AKShare、BaoStock 均为免费数据源）。
+支持 Windows 10 / 11（64 位）、macOS 11 及以上（Apple 芯片与 Intel 芯片）、Linux（x86_64）。在本仓库的 **Releases** 页面下载对应的文件：
 
-说明：
-- **自动更新**（0.1.1 起）：程序启动后在后台检查 GitHub Releases 上的新版本，通常只下载有变化的文件；下载完成后提示重启，重启时替换文件并自动重新打开。需要下载完整安装包（超过 30 MB）时先询问。更新文件经签名与 SHA256 校验，替换失败时保留原版本。可在「设置」页手动检查或关闭自动检查；无法连接 GitHub 时，可在 Releases 页面手动下载安装包覆盖安装。0.1.0 需手动安装一次新版本。
-- 数据保存在 `%LOCALAPPDATA%\SimpleQuant`（行情库、选股数据、模拟账户、保存的策略、AI 模型设置）。升级（自动更新或覆盖安装新版本）及卸载均不会删除这些数据。
-- 报错日志位于 `%LOCALAPPDATA%\SimpleQuant\logs\app.log`。
-- 命令行：`SimpleQuant.exe --paper` 不打开界面、直接推进全部模拟账户（定时任务即使用此命令）；`SimpleQuant.exe --run-script 选股.py` 运行导出的选股脚本。
+| 系统 | 文件 |
+|---|---|
+| Windows | `SimpleQuant-<版本>-Setup.exe` |
+| macOS（Apple 芯片：M1 及以后） | `SimpleQuant-<版本>-macos-arm64.dmg` |
+| macOS（Intel 芯片） | `SimpleQuant-<版本>-macos-x86_64.dmg` |
+| Linux | `SimpleQuant-<版本>-linux-x86_64.tar.gz` |
+
+安装后，在「01 数据」页下载所需数据（AKShare、BaoStock 均为免费数据源）。
+
+### Windows
+1. 运行安装程序。程序安装到 `%LOCALAPPDATA%\Programs\SimpleQuant`，无需管理员权限，并创建开始菜单快捷方式（桌面快捷方式可选）。
+2. 首次运行时 Windows SmartScreen 可能提示「已保护你的电脑」，请点击「更多信息 → 仍要运行」。
+
+### macOS
+1. 打开 dmg，将 SimpleQuant 拖入「应用程序」文件夹。
+2. 本程序未经 Apple 公证（公证需要付费的开发者账号），首次打开时系统会阻止运行。放行方法（任选其一，只需一次）：
+   - 打开「系统设置 → 隐私与安全性」，在页面下方找到关于 SimpleQuant 的提示，点击「仍要打开」；
+   - 或在终端运行：`xattr -dr com.apple.quarantine /Applications/SimpleQuant.app`（提示「已损坏，无法打开」时也用此方法）。
+3. 如不希望运行未经公证的程序，也可以从源码运行（见下文），步骤同样简单。
+
+### Linux
+1. 解压后运行：`tar -xzf SimpleQuant-<版本>-linux-x86_64.tar.gz`，然后执行 `SimpleQuant/SimpleQuant`。建议解压到用户目录下（自动更新需要能写入程序所在的文件夹）。
+2. 界面所需的 Qt 组件已内置。较精简的发行版如提示缺少系统库，Debian / Ubuntu 可安装：`sudo apt install libxcb-cursor0 libxkbcommon-x11-0 libegl1`。
+
+### 说明
+- **自动更新**（Windows 0.1.1 起；macOS、Linux 自首个版本起）：程序启动后在后台检查 GitHub Releases 上的新版本，通常只下载有变化的文件；下载完成后提示重启，重启时替换文件并自动重新打开。需要下载完整安装包（超过 30 MB）时先询问。更新文件经签名与 SHA256 校验，替换失败时保留原版本。可在「设置」页手动检查或关闭自动检查；无法连接 GitHub 时，可在 Releases 页面手动下载新版本。Windows 0.1.0 需手动安装一次新版本。
+- **数据目录**（行情库、选股数据、模拟账户、保存的策略、AI 模型设置）：Windows 为 `%LOCALAPPDATA%\SimpleQuant`，macOS 为 `~/Library/Application Support/SimpleQuant`，Linux 为 `~/.local/share/SimpleQuant`（设置了 `XDG_DATA_HOME` 时位于其下）。升级与卸载均不会删除这些数据。报错日志位于数据目录下的 `logs/app.log`。
+- **模拟盘每日自动运行**：在「模拟盘」页一键设置。Windows 使用任务计划程序，macOS 使用 launchd，Linux 使用 systemd 用户定时器（没有 systemd 时使用 crontab）。
+- **命令行**：`SimpleQuant --paper` 不打开界面、直接推进全部模拟账户（定时任务即使用此命令）；`SimpleQuant --run-script 选股.py` 运行导出的选股脚本。macOS 上的可执行文件为 `/Applications/SimpleQuant.app/Contents/MacOS/SimpleQuant`。
 - 安装版不含 LiteLLM，AI 模型请使用 Claude、OpenAI 或兼容 OpenAI 协议的服务（DeepSeek、通义千问、Kimi、智谱、Gemini、本地 Ollama 等）。
 
 ### 从源码运行
-需要 Windows 与 Python 3.10 及以上版本（开发和测试使用 3.14）。
-- 双击 `start.bat`：首次运行时自动创建虚拟环境并安装依赖，之后打开桌面窗口。
-- 或手动执行：`python -m venv .venv`，`.venv\Scripts\pip install -r requirements.txt`，`.venv\Scripts\python main.py`（加 `--browser` 在浏览器中打开）。
+需要 Python 3.10 及以上版本（开发和测试使用 3.14）。
+- **Windows**：双击 `start.bat`：首次运行时自动创建虚拟环境并安装依赖，之后打开桌面窗口。
+- **macOS / Linux**：在终端进入项目目录，运行 `sh start.sh`，首次运行同样自动完成安装。
+  - macOS 系统自带的 Python 版本过低，请从 [python.org](https://www.python.org/downloads/) 或 Homebrew（`brew install python`）安装。
+  - Linux 的桌面窗口使用系统的 GTK WebKit，Debian / Ubuntu 需安装：`sudo apt install python3-venv python3-gi gir1.2-webkit2-4.1`（`start.sh` 检测到后会让虚拟环境使用它）。缺少时程序自动改为在浏览器中打开。
+- 也可手动执行：`python -m venv .venv`，安装依赖 `pip install -r requirements.txt`，运行 `python main.py`（加 `--browser` 在浏览器中打开）。
 - 源码版的数据保存在项目目录下的 `data_cache`、`user_strategies`、`user_factors`，与安装版相互独立。
 
 ### 打包
-1. 安装打包工具：`.venv\Scripts\pip install pyinstaller`；制作安装包另需 [Inno Setup 6](https://jrsoftware.org/isinfo.php)（`winget install JRSoftware.InnoSetup`）。
+PyInstaller 不能跨系统打包，各系统的版本需在该系统上生成，输出分别位于 `dist/windows`、`dist/macos`、`dist/linux`。
+1. 安装打包工具：`pip install pyinstaller pillow`；Windows 制作安装包另需 [Inno Setup 6](https://jrsoftware.org/isinfo.php)（`winget install JRSoftware.InnoSetup`），Linux 另需 `pip install "pywebview[qt]"`（安装版的窗口使用内置的 Qt）。
 2. 修改 `simplequant/__init__.py` 中的版本号 `__version__`。
-3. 双击 `build.bat`：先生成 `dist\SimpleQuant\`（PyInstaller，配置见 `SimpleQuant.spec`），已安装 Inno Setup 时再生成 `dist\SimpleQuant-<版本>-Setup.exe`（脚本见 `installer/SimpleQuant.iss`）。
-   发布新版本则使用 `tools/release.py`：打包、生成更新清单（每个文件的 SHA256，Ed25519 签名）与补丁包、打标签并上传为 GitHub Releases 草稿，用法见文件开头。签名私钥只保存在发布者本机，程序内置对应的公钥。
-4. 图标 `gui/static/icon.ico` 由 `tools/make_icon.py` 生成；README 中的横幅与截图由 `tools/readme_assets.py` 生成（均需要 Microsoft Edge）。
+3. Windows：双击 `build.bat`，生成 `dist\windows\SimpleQuant\` 与安装包 `SimpleQuant-<版本>-Setup.exe`（配置见 `SimpleQuant.spec`、`installer/SimpleQuant.iss`）。macOS / Linux：运行 `sh tools/build_unix.sh`，生成 `.app` 与 `.dmg`，或程序文件夹与 `.tar.gz`。
+4. 发布新版本使用 `tools/release.py`：在本机打包 Windows 版，生成更新清单（每个文件的 SHA256，Ed25519 签名）与补丁包，打标签并上传为 GitHub Releases 草稿；标签同时触发 GitHub Actions（`.github/workflows/build.yml`）在 macOS 与 Linux 上测试、打包并上传，`release.py` 等待完成后为这些平台的清单签名。用法见文件开头。签名私钥只保存在发布者本机，程序内置对应的公钥。
+5. 图标 `gui/static/icon.ico` 由 `tools/make_icon.py` 生成；README 中的横幅与截图由 `tools/readme_assets.py` 生成（均需要 Microsoft Edge）。
 
 ## 功能详解
 
@@ -143,7 +167,7 @@ A 股交易规则：100 股整手、按品种执行 T+1（股票与境内股票 
 - 仅使用「此刻应已发布」的完整日线，避免使用盘中未走完的 K 线；错过的交易日在下次运行时自动补齐；交易日历包含节假日。
 - 单标的账户可选「现金分红」，信号股数按真实价格计算；选股账户跟随选股策略的分红设置。
 - 今日信号与持仓可导出 CSV，用于在券商端手动下单；数据修订导致重放与账本不一致时会给出提示。
-- 定时任务：周一至周五，默认 19:00（BaoStock 当日数据通常在 18:40 前发布）；源码版运行 `paper_daily.bat`，安装版运行 `SimpleQuant.exe --paper`。
+- 定时任务：周一至周五，默认 19:00（BaoStock 当日数据通常在 18:40 前发布）；源码版运行 `paper_daily.bat`（macOS / Linux 为 `paper_daily.sh`），安装版运行 `SimpleQuant --paper`。
 </details>
 
 <details>
@@ -189,7 +213,8 @@ simplequant/export/        导出：Python 脚本、聚宽 / 掘金 / QMT
 simplequant/llm/           大模型接入：预设与配置、Claude / OpenAI / LiteLLM 适配、自然语言转规则
 simplequant/update/        自动更新：检查与下载、更新清单与签名校验、替换文件的脚本
 installer/                 安装包脚本（Inno Setup）
-tools/                     发布脚本（release.py）、图标、README 图片、界面预览等辅助脚本
+tools/                     发布（release.py）、macOS / Linux 打包（build_unix.sh、smoke_test.py）、图标、README 图片等辅助脚本
+.github/workflows/         GitHub Actions：macOS / Linux 的测试与打包
 tests/                     pytest
 ```
 
@@ -197,7 +222,8 @@ tests/                     pytest
 - **新增模板**：在 `simplequant/strategies/templates.py` 中继承 `_PerAsset` 或 `BaseStrategy`，以 `register(Template(...))` 注册，界面自动生成参数表单。
 - **新增指标**：在 `rules/schema.py` 的 `INDICATORS` 中添加说明，并在 `strategies/rule_strategy.py` 的 `_build_line` 中实现。
 - **界面文字**：界面文字位于 `ui/texts.py`，核心文字（指标名、日志、错误）位于 `simplequant/i18n.py`，均写作 `L("中文", "English")`；测试会检查每个用到的键都有中英文。
-- **测试**：`.venv\Scripts\python -m pytest -q tests`
+- **系统差异**：数据目录、程序目录、打开文件夹等集中在 `simplequant/system.py`；定时任务见 `simplequant/paper/schedule.py`，自动更新替换文件的脚本为 `simplequant/update/apply_update.ps1`（Windows）与 `apply_update.sh`（macOS / Linux）。
+- **测试**：`.venv\Scripts\python -m pytest -q tests`（macOS / Linux：`.venv/bin/python -m pytest -q tests`）
 </details>
 
 ## 许可证

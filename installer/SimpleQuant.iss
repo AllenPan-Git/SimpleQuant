@@ -1,5 +1,5 @@
 ﻿; SimpleQuant 安装包（Inno Setup 6）
-; 由 build.bat、tools\release.py 调用：先用 PyInstaller 生成 dist\SimpleQuant\，再编译本脚本，输出 dist\SimpleQuant-<版本>-Setup.exe
+; 由 build.bat、tools\release.py 调用：先用 PyInstaller 生成 dist\windows\SimpleQuant\，再编译本脚本，输出 dist\windows\SimpleQuant-<版本>-Setup.exe
 ;   （文件名只用英文：GitHub Releases 会删掉文件名里的中文）
 ;   ISCC.exe /DAppVersion=0.1.0 installer\SimpleQuant.iss
 ;
@@ -27,7 +27,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 SetupIconFile=..\gui\static\icon.ico
 UninstallDisplayIcon={app}\SimpleQuant.exe
 UninstallDisplayName=SimpleQuant
-OutputDir=..\dist
+OutputDir=..\dist\windows
 OutputBaseFilename=SimpleQuant-{#AppVersion}-Setup
 Compression=lzma2/max
 SolidCompression=yes
@@ -51,7 +51,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Type: filesandordirs; Name: "{app}\_internal"
 
 [Files]
-Source: "..\dist\SimpleQuant\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\dist\windows\SimpleQuant\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\_internal"

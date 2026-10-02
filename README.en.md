@@ -7,7 +7,7 @@
 
 <p align="center"><a href="README.md">简体中文</a> · <b>English</b></p>
 
-<p align="center">Windows desktop app · Backtrader engine · Open source under GPLv3</p>
+<p align="center">Desktop app for Windows / macOS / Linux · Backtrader engine · Open source under GPLv3</p>
 
 SimpleQuant is a low-code quant backtesting tool for China A-shares, covering stocks, ETFs (including bond ETFs) and convertible bonds. You can go from data to strategy, backtest, parameter optimization and paper trading without writing code. If you prefer, you can also write Python strategies, run multi-factor selection (stocks or convertibles), or export strategies to JoinQuant, MyQuant (掘金) and QMT for cross-checking.
 
@@ -50,7 +50,7 @@ Grid search over any numeric parameter (up to 3 parameters and 500 combinations,
 <img src="docs/images/optimize-en.png" alt="Optimization">
 
 ### 05 · Paper trading
-Open a simulated account for any saved strategy — no brokerage account needed. After each trading day's close it updates data, advances the account with **the same code as the backtest**, and lists the trades for the next open. A Windows scheduled task can run it automatically.
+Open a simulated account for any saved strategy — no brokerage account needed. After each trading day's close it updates data, advances the account with **the same code as the backtest**, and lists the trades for the next open. A scheduled task (Windows Task Scheduler, macOS launchd or a Linux systemd timer) can run it automatically.
 
 <img src="docs/images/paper-en.png" alt="Paper trading">
 
@@ -67,31 +67,55 @@ The interface is available in **Chinese and English**, with light and dark theme
 
 ## Installation
 
-### Installer (recommended; no Python needed)
-1. Download `SimpleQuant-<version>-Setup.exe` from this repository's **Releases** page.
-2. Run it. SimpleQuant installs to `%LOCALAPPDATA%\Programs\SimpleQuant` without administrator rights and adds a Start menu shortcut (desktop shortcut optional).
-3. On first launch, Windows SmartScreen may say "Windows protected your PC": click "More info → Run anyway".
-4. Download the data you need on the "01 Data" page (AKShare and BaoStock are free).
+SimpleQuant runs on Windows 10 / 11 (64-bit), macOS 11 or later (Apple silicon and Intel) and Linux (x86_64). Download the file for your system from this repository's **Releases** page:
 
-Notes:
-- **Automatic updates** (from 0.1.1): after startup SimpleQuant checks GitHub Releases in the background and usually downloads only the files that changed. When the download is ready it asks you to restart; the files are replaced and the app reopens. If the full installer is needed (over 30 MB) it asks first. Updates are verified by signature and SHA256, and a failed replacement keeps the previous version. Check manually or turn off automatic checks on the Settings page; if GitHub cannot be reached, download the installer from Releases and install over the old version. Version 0.1.0 needs one manual install of a newer version.
-- Data is stored in `%LOCALAPPDATA%\SimpleQuant` (market data, stock data, paper accounts, saved strategies, AI settings). Upgrading (automatically or by installing a newer version over the old one) and uninstalling leave it untouched.
-- The error log is at `%LOCALAPPDATA%\SimpleQuant\logs\app.log`.
-- Command line: `SimpleQuant.exe --paper` advances all paper accounts without opening the window (the scheduled task uses this); `SimpleQuant.exe --run-script picks.py` runs an exported selection script.
+| System | File |
+|---|---|
+| Windows | `SimpleQuant-<version>-Setup.exe` |
+| macOS (Apple silicon: M1 and later) | `SimpleQuant-<version>-macos-arm64.dmg` |
+| macOS (Intel) | `SimpleQuant-<version>-macos-x86_64.dmg` |
+| Linux | `SimpleQuant-<version>-linux-x86_64.tar.gz` |
+
+After installing, download the data you need on the "01 Data" page (AKShare and BaoStock are free).
+
+### Windows
+1. Run the installer. SimpleQuant installs to `%LOCALAPPDATA%\Programs\SimpleQuant` without administrator rights and adds a Start menu shortcut (desktop shortcut optional).
+2. On first launch, Windows SmartScreen may say "Windows protected your PC": click "More info → Run anyway".
+
+### macOS
+1. Open the dmg and drag SimpleQuant into the Applications folder.
+2. The app is not notarized by Apple (notarization requires a paid developer account), so macOS blocks it on first launch. Allow it once, either way:
+   - open System Settings → Privacy & Security, find the message about SimpleQuant near the bottom and click "Open Anyway"; or
+   - run `xattr -dr com.apple.quarantine /Applications/SimpleQuant.app` in Terminal (also use this if macOS says the app "is damaged").
+3. If you prefer not to run an unnotarized app, run from source instead (see below); it is just as simple.
+
+### Linux
+1. Extract and run: `tar -xzf SimpleQuant-<version>-linux-x86_64.tar.gz`, then `SimpleQuant/SimpleQuant`. Extract it somewhere in your home folder: automatic updates need write access to the program folder.
+2. The Qt components for the window are included. If a minimal distribution reports missing system libraries, on Debian / Ubuntu install `sudo apt install libxcb-cursor0 libxkbcommon-x11-0 libegl1`.
+
+### Notes
+- **Automatic updates** (Windows from 0.1.1; macOS and Linux from their first release): after startup SimpleQuant checks GitHub Releases in the background and usually downloads only the files that changed. When the download is ready it asks you to restart; the files are replaced and the app reopens. If the full package is needed (over 30 MB) it asks first. Updates are verified by signature and SHA256, and a failed replacement keeps the previous version. Check manually or turn off automatic checks on the Settings page; if GitHub cannot be reached, download the new version from Releases. Windows 0.1.0 needs one manual install of a newer version.
+- **Data folder** (market data, stock data, paper accounts, saved strategies, AI settings): `%LOCALAPPDATA%\SimpleQuant` on Windows, `~/Library/Application Support/SimpleQuant` on macOS, `~/.local/share/SimpleQuant` on Linux (under `XDG_DATA_HOME` if set). Upgrading and uninstalling leave it untouched. The error log is `logs/app.log` in the data folder.
+- **Daily paper-trading runs**: set them up with one click on the Paper Trading page. Windows uses Task Scheduler, macOS launchd, Linux a systemd user timer (crontab when systemd is not available).
+- **Command line**: `SimpleQuant --paper` advances all paper accounts without opening the window (the scheduled run uses this); `SimpleQuant --run-script picks.py` runs an exported selection script. On macOS the executable is `/Applications/SimpleQuant.app/Contents/MacOS/SimpleQuant`.
 - The installed version does not include LiteLLM; for AI features use Claude, OpenAI or an OpenAI-compatible service (DeepSeek, Qwen, Kimi, Zhipu, Gemini, local Ollama, etc.).
 
 ### Run from source
-Requires Windows and Python 3.10 or later (developed and tested on 3.14).
-- Double-click `start.bat`: the first run creates a virtual environment and installs dependencies, then opens the desktop window.
-- Or manually: `python -m venv .venv`, `.venv\Scripts\pip install -r requirements.txt`, `.venv\Scripts\python main.py` (add `--browser` to open in a browser).
+Requires Python 3.10 or later (developed and tested on 3.14).
+- **Windows**: double-click `start.bat`. The first run creates a virtual environment and installs dependencies, then opens the desktop window.
+- **macOS / Linux**: in a terminal, go to the project folder and run `sh start.sh`; the first run sets everything up the same way.
+  - The Python that ships with macOS is too old; install one from [python.org](https://www.python.org/downloads/) or Homebrew (`brew install python`).
+  - On Linux the desktop window uses the system's GTK WebKit. On Debian / Ubuntu install `sudo apt install python3-venv python3-gi gir1.2-webkit2-4.1` (`start.sh` detects it and lets the virtual environment use it). Without it, SimpleQuant opens in your browser instead.
+- Or manually: `python -m venv .venv`, install dependencies with `pip install -r requirements.txt`, run `python main.py` (add `--browser` to open in a browser).
 - The source version keeps its data in `data_cache`, `user_strategies` and `user_factors` inside the project folder, separate from the installed version.
 
 ### Build
-1. Install the build tools: `.venv\Scripts\pip install pyinstaller`; the installer also needs [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`winget install JRSoftware.InnoSetup`).
+PyInstaller cannot cross-compile, so each system's version is built on that system. Output goes to `dist/windows`, `dist/macos` and `dist/linux`.
+1. Install the build tools: `pip install pyinstaller pillow`. The Windows installer also needs [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`winget install JRSoftware.InnoSetup`); Linux also needs `pip install "pywebview[qt]"` (the packaged app's window uses the bundled Qt).
 2. Set the version `__version__` in `simplequant/__init__.py`.
-3. Double-click `build.bat`: it builds `dist\SimpleQuant\` (PyInstaller, see `SimpleQuant.spec`) and, if Inno Setup is installed, `dist\SimpleQuant-<version>-Setup.exe` (see `installer/SimpleQuant.iss`).
-   To publish a release, use `tools/release.py`: it builds, writes the update manifest (SHA256 of every file, Ed25519-signed) and patch packages, tags the commit and uploads a draft GitHub release; see the top of the file. The signing key stays on the publisher's machine; the app contains only the public key.
-4. The icon `gui/static/icon.ico` is generated by `tools/make_icon.py`; the README banners and screenshots by `tools/readme_assets.py` (both need Microsoft Edge).
+3. Windows: double-click `build.bat` to build `dist\windows\SimpleQuant\` and the installer `SimpleQuant-<version>-Setup.exe` (see `SimpleQuant.spec` and `installer/SimpleQuant.iss`). macOS / Linux: run `sh tools/build_unix.sh` to build the `.app` and `.dmg`, or the program folder and `.tar.gz`.
+4. To publish a release, use `tools/release.py`. It builds the Windows version locally, writes the update manifest (SHA256 of every file, Ed25519-signed) and patch packages, tags the commit and uploads a draft GitHub release. The tag also triggers GitHub Actions (`.github/workflows/build.yml`), which tests, builds and uploads the macOS and Linux versions; `release.py` waits for them and signs their manifests. See the top of the file. The signing key stays on the publisher's machine; the app contains only the public key.
+5. The icon `gui/static/icon.ico` is generated by `tools/make_icon.py`; the README banners and screenshots by `tools/readme_assets.py` (both need Microsoft Edge).
 
 ## Features in detail
 
@@ -143,7 +167,7 @@ Requires Windows and Python 3.10 or later (developed and tested on 3.14).
 - Uses only complete daily bars that "should have been published by now", so unfinished intraday bars are never used; missed trading days are caught up on the next run; the trading calendar includes holidays.
 - Single-asset accounts can use cash dividends, with signal share counts based on actual prices; selection accounts follow the selection strategy's dividend setting.
 - Signals and positions export to CSV for manual orders at a broker; you are warned if revised data makes the replay differ from the ledger.
-- Scheduled task: Monday to Friday, 19:00 by default (BaoStock usually publishes the day's data by 18:40); the source version runs `paper_daily.bat`, the installed version `SimpleQuant.exe --paper`.
+- Scheduled task: Monday to Friday, 19:00 by default (BaoStock usually publishes the day's data by 18:40); the source version runs `paper_daily.bat` (`paper_daily.sh` on macOS / Linux), the installed version `SimpleQuant --paper`.
 </details>
 
 <details>
@@ -189,7 +213,8 @@ simplequant/export/        export: Python scripts, JoinQuant / MyQuant / QMT
 simplequant/llm/           LLM access: presets and config, Claude / OpenAI / LiteLLM adapters, natural language to rules
 simplequant/update/        automatic updates: check and download, signed manifest verification, file replacement script
 installer/                 installer script (Inno Setup)
-tools/                     release script (release.py), icon, README images, UI preview and other helper scripts
+tools/                     release (release.py), macOS / Linux builds (build_unix.sh, smoke_test.py), icon, README images and other helper scripts
+.github/workflows/         GitHub Actions: macOS / Linux tests and builds
 tests/                     pytest
 ```
 
@@ -197,7 +222,8 @@ tests/                     pytest
 - **New template**: subclass `_PerAsset` or `BaseStrategy` in `simplequant/strategies/templates.py` and register it with `register(Template(...))`; the UI builds the parameter form automatically.
 - **New indicator**: describe it in `INDICATORS` in `rules/schema.py` and implement it in `_build_line` in `strategies/rule_strategy.py`.
 - **UI strings**: UI text lives in `ui/texts.py` and core text (indicator names, logs, errors) in `simplequant/i18n.py`, written as `L("中文", "English")`; tests check that every key in use has both languages.
-- **Tests**: `.venv\Scripts\python -m pytest -q tests`
+- **Platform differences**: data folder, program folder, opening folders etc. live in `simplequant/system.py`; scheduled runs in `simplequant/paper/schedule.py`; the update scripts are `simplequant/update/apply_update.ps1` (Windows) and `apply_update.sh` (macOS / Linux).
+- **Tests**: `.venv\Scripts\python -m pytest -q tests` (macOS / Linux: `.venv/bin/python -m pytest -q tests`)
 </details>
 
 ## License

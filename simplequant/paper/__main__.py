@@ -1,6 +1,6 @@
 """
 命令行：更新数据并推进所有模拟账户（供定时任务调用）
-    .venv\\Scripts\\python -m simplequant.paper
+    .venv\\Scripts\\python -m simplequant.paper        （macOS / Linux：.venv/bin/python -m simplequant.paper）
 日志追加写入 data_cache/paper/daily.log
 """
 

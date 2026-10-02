@@ -5,6 +5,9 @@
   → 有对应当前版本的补丁包、且补丁包含全部需要的文件：下载补丁包（只含变化的文件）；否则下载完整安装包
   → 校验 SHA256 → 补丁解压到 updates/<版本>/staging 并逐个校验 → 写 ready.json，状态 ready
   → 用户点「重启并更新」：apply() 启动 apply_update.ps1，程序退出；脚本等程序退出后替换文件，再重新打开程序
+macOS / Linux 不同（清单是 manifest-<平台>.json，例如 manifest-macos-arm64.json）：下载完就在 updates/<版本>/app 拼出完整的新程序目录
+  （补丁：复制当前程序目录、换上补丁里的文件、按清单重建符号链接，macOS 再重新 ad-hoc 签名；完整包：解压 .tar.gz），
+  apply_update.sh 等程序退出后把旧目录换成新目录，出错换回来
   → 下次启动：startup() 读取脚本写的 result.json，显示结果并清理
 
 需要下载的内容超过 AUTO_DOWNLOAD_MB 时不自动下载（用户可能在用流量），等用户点「下载更新」。
@@ -16,6 +19,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tarfile
 import threading
 import time
 import zipfile
@@ -26,12 +30,14 @@ import requests
 
 from simplequant import __version__
 from simplequant.paths import DATA_ROOT, FROZEN
+from simplequant.system import SYSTEM, TARGET, app_dir as _app_dir
 from simplequant import update as cfg
 from simplequant.update import manifest as mf
 
 UPDATE_DIR = DATA_ROOT / "updates"
-APP_DIR = Path(sys.executable).resolve().parent      # 安装目录（只在打包版里有意义）
+APP_DIR = _app_dir()      # 安装目录（只在打包版里有意义；macOS 是 SimpleQuant.app）
 SCRIPT = Path(__file__).with_name("apply_update.ps1")
+SH_SCRIPT = Path(__file__).with_name("apply_update.sh")
 AUTO_DOWNLOAD_MB = 30
 TIMEOUT = (10, 30)        # 连接、读取超时（秒）
 RETRIES = 4
@@ -63,8 +69,11 @@ class Status:
 
 class Updater:
     def __init__(self, app_dir: Path = APP_DIR, work: Path = UPDATE_DIR, frozen: bool = FROZEN,
-                 current: str = __version__, sources: list[str] | None = None, public_key: str | None = None):
+                 current: str = __version__, sources: list[str] | None = None, public_key: str | None = None,
+                 system: str = SYSTEM, target: str | None = None):
         self.app_dir, self.work, self.frozen, self.current = Path(app_dir), Path(work), frozen, current
+        self.system = system
+        self.target = target or (TARGET if system == SYSTEM else system)   # 测试里模拟别的系统时用系统名
         self.sources = sources if sources is not None else cfg.SOURCES
         self.public_key = cfg.PUBLIC_KEY if public_key is None else public_key
         self.status = Status()
@@ -76,8 +85,16 @@ class Updater:
     # ---------- 状态 ----------
     @property
     def installable(self) -> bool:
-        """能否自动安装（打包版才能）"""
-        return self.frozen
+        """能否自动安装（打包版才能；macOS / Linux 还要能改程序目录和它所在的文件夹，例如不是用 root 装到 /opt 的）"""
+        if not self.frozen:
+            return False
+        if self.system == "windows":
+            return True
+        return os.access(self.app_dir, os.W_OK) and os.access(self.app_dir.parent, os.W_OK)
+
+    @property
+    def unix(self) -> bool:
+        return self.system != "windows"
 
     @property
     def busy(self) -> bool:
@@ -121,13 +138,15 @@ class Updater:
             try:
                 plan = json.loads(ready.read_text(encoding="utf-8"))
                 newer = mf.parse_version(plan["version"]) > mf.parse_version(self.current)
-                present = Path(plan["installer"] if plan["mode"] == "installer" else plan["staging"]).exists()
+                key = {"installer": "installer", "swap": "new_dir"}.get(plan["mode"], "staging")
+                present = Path(plan[key]).exists()
             except (OSError, ValueError, KeyError):
                 newer = present = False
             if newer and present and self.frozen:
                 self._plan = plan
                 self._set(state="ready", version=plan["version"], notes=plan.get("notes", ""),
-                          full=plan["mode"] == "installer", page=plan.get("page", cfg.RELEASES_PAGE))
+                          full=bool(plan.get("full", plan["mode"] == "installer")),
+                          page=plan.get("page", cfg.RELEASES_PAGE))
             else:
                 self._clean(everything=True)
 
@@ -190,10 +209,11 @@ class Updater:
 
     def _manifest(self, rel: dict) -> dict:
         urls = rel["assets"]
-        if mf.MANIFEST not in urls or mf.SIGNATURE not in urls:
+        name, sig_name = mf.manifest_name(self.target), mf.signature_name(self.target)
+        if name not in urls or sig_name not in urls:
             raise UpdateError("other", "release has no manifest")
-        data = self._get(urls[mf.MANIFEST]).content
-        sig = self._get(urls[mf.SIGNATURE]).text
+        data = self._get(urls[name]).content
+        sig = self._get(urls[sig_name]).text
         try:
             m = mf.load_verified(data, sig, self.public_key)
         except mf.ManifestError as e:
@@ -219,12 +239,12 @@ class Updater:
             asset, full = patch, False
             removed = [r for r in patch.get("removed", []) if (self.app_dir / r).exists()]
         else:
-            asset, full, removed = m.get("installer"), True, []
+            asset, full, removed = m.get("archive" if self.unix else "installer"), True, []
             if not asset or asset["name"] not in rel["assets"]:
                 raise UpdateError("other", "release has no installer")
         return {"version": m["version"], "notes": rel["notes"], "page": rel["page"], "asset": asset,
                 "url": rel["assets"][asset["name"]], "full": full, "need": need, "removed": removed,
-                "files": {r: files[r][0] for r in need}}
+                "files": {r: files[r][0] for r in need}, "all_files": files, "links": m.get("links", {})}
 
     # ---------- 下载 ----------
     def download_async(self) -> bool:
@@ -249,7 +269,10 @@ class Updater:
                  "app_dir": str(self.app_dir), "work": str(self.work),
                  "result": str(self.work / "result.json"), "log": str(self.work / "update.log"),
                  "uninstall_key": UNINSTALL_KEY}
-        if plan["full"]:
+        if self.unix:
+            ready.update(mode="swap", new_dir=str(self._build_app(plan, dest, vdir)), full=plan["full"])
+            dest.unlink()
+        elif plan["full"]:
             ready.update(mode="installer", installer=str(dest), sha256=asset["sha256"])
         else:
             staging = vdir / "staging"
@@ -268,6 +291,74 @@ class Updater:
         (self.work / "ready.json").write_text(json.dumps(ready, ensure_ascii=False, indent=1), encoding="utf-8")
         self._plan = ready
         self._set(state="ready")
+
+    def _build_app(self, plan: dict, archive: Path, vdir: Path) -> Path:
+        """macOS / Linux：在 vdir/app 下拼出完整的新程序目录（名字与当前程序目录相同），并校验"""
+        new = vdir / "app" / self.app_dir.name
+        shutil.rmtree(new.parent, ignore_errors=True)
+        new.parent.mkdir(parents=True)
+        if plan["full"]:
+            tmp = vdir / "extract"
+            shutil.rmtree(tmp, ignore_errors=True)
+            with tarfile.open(archive) as tf:
+                if hasattr(tarfile, "data_filter"):
+                    tf.extractall(tmp, filter="data")        # 拒绝绝对路径、指出目录的链接等
+                else:
+                    tf.extractall(tmp)  # noqa: S202 - 老版本 Python；压缩包的 SHA256 已校验
+            tops = list(tmp.iterdir())
+            if len(tops) != 1 or not tops[0].is_dir():
+                raise UpdateError("verify", "archive layout")
+            tops[0].rename(new)
+            shutil.rmtree(tmp, ignore_errors=True)
+            check = plan["all_files"]
+        else:
+            shutil.copytree(self.app_dir, new, symlinks=True)
+            with zipfile.ZipFile(archive) as z:
+                for r in plan["files"]:
+                    target = new / r
+                    if target.is_symlink() or target.is_file():
+                        target.unlink()
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    info = z.getinfo(r)
+                    with z.open(info) as src, open(target, "wb") as out:
+                        shutil.copyfileobj(src, out)
+                    if mode := (info.external_attr >> 16) & 0o777:      # 在 macOS / Linux 上打的包带权限位
+                        target.chmod(mode)
+            for r in plan["removed"]:
+                p = new / r
+                if p.is_symlink() or p.is_file():
+                    p.unlink()
+            self._sync_links(new, plan["links"])
+            check = {r: plan["all_files"][r] for r in plan["files"]}
+        for r, (sha, _) in check.items():
+            p = new / r
+            if not p.is_file() or mf.sha256_file(p) != sha:
+                raise UpdateError("verify", r)
+        if self.system == "macos" and not plan["full"] and shutil.which("codesign"):
+            # 换了文件后 .app 的签名失效，Apple 芯片上会打不开；重新做 ad-hoc 签名（不需要开发者账号）。
+            # 补丁里的二进制文件本身已签好，不加 --deep，只重签主程序和资源清单
+            r = subprocess.run(["codesign", "--force", "-s", "-", str(new)], capture_output=True)
+            if r.returncode != 0:
+                raise UpdateError("other", "codesign: " + r.stderr.decode(errors="replace")[-300:])
+        return new
+
+    @staticmethod
+    def _sync_links(root: Path, links: dict[str, str]):
+        """按清单重建符号链接：指向不同或清单里没有的旧链接删掉，缺的建上"""
+        current = mf.links_tree(root)
+        for r, target in current.items():
+            if links.get(r) != target:
+                (root / r).unlink()
+        for r, target in links.items():
+            p = root / r
+            if p.is_symlink():
+                continue
+            if p.is_dir():
+                shutil.rmtree(p)
+            elif p.exists():
+                p.unlink()
+            p.parent.mkdir(parents=True, exist_ok=True)
+            os.symlink(target, p)
 
     def _fetch(self, url: str, dest: Path, size: int):
         """下载到 dest.part，断线后从断点继续（HTTP Range），最多重试 RETRIES 次"""
@@ -307,6 +398,8 @@ class Updater:
         """启动更新脚本（之后调用方应立即退出程序）；没有准备好的更新时返回 False"""
         if self.status.state != "ready" or not self._plan or not self.installable:
             return False
+        if self.unix:
+            return self._apply_unix()
         plan = dict(self._plan, pid=os.getpid())
         script = self.work / SCRIPT.name
         shutil.copyfile(SCRIPT, script)                      # 安装目录里的脚本可能被替换，用副本
@@ -314,12 +407,22 @@ class Updater:
         plan_file.write_text(json.dumps(plan, ensure_ascii=False, indent=1), encoding="utf-8")
         cmd = ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
                "-WindowStyle", "Hidden", "-File", str(script), "-Plan", str(plan_file)]
-        flags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
         kw = dict(stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, cwd=str(self.work))
         try:   # 脱离可能存在的作业对象，程序退出时脚本不会被一起结束
-            subprocess.Popen(cmd, creationflags=flags | subprocess.CREATE_BREAKAWAY_FROM_JOB, **kw)
+            subprocess.Popen(cmd, creationflags=flags | getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0), **kw)
         except OSError:
             subprocess.Popen(cmd, creationflags=flags, **kw)
+        return True
+
+    def _apply_unix(self) -> bool:
+        """apply_update.sh 参数：程序进程号、系统、程序目录、新程序目录、工作目录、版本"""
+        script = self.work / SH_SCRIPT.name
+        shutil.copyfile(SH_SCRIPT, script)
+        cmd = ["/bin/sh", str(script), str(os.getpid()), self.system, str(self.app_dir), self._plan["new_dir"],
+               str(self.work), self._plan["version"]]
+        subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         cwd=str(self.work), start_new_session=True)     # 新会话：程序退出时脚本不会被一起结束
         return True
 
 

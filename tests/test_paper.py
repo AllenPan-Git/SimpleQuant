@@ -202,6 +202,7 @@ def test_next_trading_days_skips_holidays_and_falls_back():
 
 def test_schedule_commands(monkeypatch):
     from simplequant.paper import schedule
+    monkeypatch.setattr(schedule, "SYSTEM", "windows")
     calls = []
 
     class R:
@@ -213,6 +214,85 @@ def test_schedule_commands(monkeypatch):
     assert str(schedule.BAT) in args[args.index("/TR") + 1]
     schedule.delete_task()
     assert calls[-1][:2] == ["schtasks", "/Delete"]
+
+
+class _FakeRun:
+    """记录 subprocess.run 的调用；crontab 内容存在 self.cron"""
+
+    def __init__(self, ok=lambda args: True):
+        self.calls, self.cron, self.ok = [], None, ok
+
+    def __call__(self, args, **kw):
+        self.calls.append(args)
+        out = ""
+        if args[:2] == ["crontab", "-l"]:
+            ok = self.cron is not None
+            out = self.cron or ""
+        elif args[:2] == ["crontab", "-"]:
+            self.cron, ok = kw["input"], True
+        else:
+            ok = self.ok(args)
+
+        class R:
+            returncode, stdout, stderr = (0 if ok else 1), out, ""
+        return R()
+
+
+def test_schedule_launchd(monkeypatch, tmp_path):
+    import plistlib
+    from simplequant.paper import schedule
+    monkeypatch.setattr(schedule, "SYSTEM", "macos")
+    monkeypatch.setattr(schedule.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(schedule.os, "getuid", lambda: 501, raising=False)
+    fake = _FakeRun()
+    monkeypatch.setattr(schedule.subprocess, "run", fake)
+    assert schedule.backend() == "launchd" and not schedule.task_exists()
+    assert schedule.create_task("18:45") == (True, "")
+    plist = plistlib.loads((tmp_path / "Library/LaunchAgents/com.simplequant.paperdaily.plist").read_bytes())
+    assert plist["ProgramArguments"] == ["/bin/sh", str(schedule.SH)]
+    assert plist["StartCalendarInterval"][0] == {"Weekday": 1, "Hour": 18, "Minute": 45}
+    assert len(plist["StartCalendarInterval"]) == 5
+    assert ["launchctl", "bootstrap", "gui/501"] == fake.calls[-1][:3]
+    assert schedule.task_exists()
+    schedule.delete_task()
+    assert not schedule.task_exists()
+
+
+def test_schedule_systemd(monkeypatch, tmp_path):
+    from simplequant.paper import schedule
+    monkeypatch.setattr(schedule, "SYSTEM", "linux")
+    monkeypatch.setattr(schedule.shutil, "which", lambda name: "/usr/bin/" + name)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setattr(schedule, "FROZEN", True)
+    monkeypatch.setattr(schedule.sys, "executable", "/opt/Simple Quant%/SimpleQuant")
+    fake = _FakeRun()
+    monkeypatch.setattr(schedule.subprocess, "run", fake)
+    assert schedule.backend() == "systemd"
+    assert schedule.create_task("19:05") == (True, "")
+    d = tmp_path / "systemd" / "user"
+    assert 'ExecStart="/opt/Simple Quant%%/SimpleQuant" "--paper"' in (d / "simplequant-paper.service").read_text()
+    assert "OnCalendar=Mon..Fri *-*-* 19:05:00" in (d / "simplequant-paper.timer").read_text()
+    assert ["systemctl", "--user", "enable", "simplequant-paper.timer"] in fake.calls
+    schedule.delete_task()
+    assert not (d / "simplequant-paper.timer").exists()
+
+
+def test_schedule_cron_fallback(monkeypatch):
+    from simplequant.paper import schedule
+    monkeypatch.setattr(schedule, "SYSTEM", "linux")
+    monkeypatch.setattr(schedule.shutil, "which", lambda name: "/usr/bin/" + name)
+    fake = _FakeRun(ok=lambda args: args[0] != "systemctl")       # 没有 systemd 用户实例
+    fake.cron = "0 1 * * * other-job\n"
+    monkeypatch.setattr(schedule.subprocess, "run", fake)
+    assert schedule.backend() == "cron" and not schedule.task_exists()
+    assert schedule.create_task("19:00")[0] and schedule.create_task("19:30")[0]     # 第二次替换，不重复
+    lines = fake.cron.splitlines()
+    assert lines[0] == "0 1 * * * other-job" and len(lines) == 2
+    assert lines[1].startswith("30 19 * * 1-5 /bin/sh ") and lines[1].endswith(schedule.CRON_MARK)
+    assert schedule.task_exists()
+    schedule.delete_task()
+    assert fake.cron.splitlines() == ["0 1 * * * other-job"]
+    assert not schedule.create_task("7pm")[0]
 
 
 def _fake_cash_div_setup(monkeypatch, fund_div):

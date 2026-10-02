@@ -8,7 +8,9 @@ mootdx
 nicegui             # 界面（main.py）
 pywebview           # NiceGUI 原生窗口模式
 plotly>=6
+matplotlib          # 回测图的原生 Backtrader 绘图
 pytest
+pytest-asyncio      # 界面测试（nicegui.testing）
 
 # AI 功能（自然语言写策略 / 解读结果），按需安装其中之一即可
 anthropic>=1.0      # Claude

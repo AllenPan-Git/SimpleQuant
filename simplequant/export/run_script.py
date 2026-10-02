@@ -1,7 +1,7 @@
 """
 运行导出的选股脚本（打包版没有 Python 环境，由 SimpleQuant 自己执行）
 
-    SimpleQuant.exe --run-script 选股.py        （源码版：python main.py --run-script 选股.py）
+    SimpleQuant --run-script 选股.py        （源码版：python main.py --run-script 选股.py）
 
 输出同时写入脚本旁边的 <脚本名>.log（打包成窗口程序后没有控制台，日志是唯一能看到输出的地方）；
 界面里的「运行选股脚本」用子进程调用这个入口，并实时显示日志。

@@ -1,12 +1,16 @@
 """
-自动更新：签名、清单、客户端（本机模拟的 GitHub 服务器）、替换文件的 PowerShell 脚本
+自动更新：签名、清单、客户端（本机模拟的 GitHub 服务器）、替换文件的 PowerShell 脚本；
+macOS / Linux 的整体替换方式（客户端部分在任何系统上都能测，apply_update.sh 只在 macOS / Linux 上测）
 """
 
 import hashlib
+import io
 import json
+import os
 import shutil
 import subprocess
 import sys
+import tarfile
 import threading
 import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -178,7 +182,8 @@ def installed(tmp_path):
 
 
 def _updater(srv, app, tmp_path, **kw) -> Updater:
-    kw = {"frozen": True, "current": "1.0.0", "sources": [f"{srv.url}/latest"], **kw}
+    kw = {"frozen": True, "current": "1.0.0", "sources": [f"{srv.url}/latest"], "system": "windows", **kw}
+    kw.setdefault("target", kw["system"])              # 测试发布的清单按系统名命名（manifest-linux.json）
     return Updater(app_dir=app, work=tmp_path / "work", public_key=PUB, **kw)
 
 
@@ -243,7 +248,7 @@ def test_bad_signature_is_rejected(server, installed, tmp_path):
 
 def test_network_error_and_background_status(installed, tmp_path):
     u = Updater(app_dir=installed, work=tmp_path / "work", frozen=True, current="1.0.0",
-                sources=["http://127.0.0.1:9/latest"], public_key=PUB)
+                sources=["http://127.0.0.1:9/latest"], public_key=PUB, system="windows")
     assert u.check_async()
     for _ in range(100):
         if not u.busy:
@@ -361,7 +366,7 @@ def test_script_refuses_bad_hash(server, installed, tmp_path):
 # ---------------- 打包配置 ----------------
 def test_packaging_config_for_updates():
     spec = (ROOT / "SimpleQuant.spec").read_text(encoding="utf-8")
-    assert "apply_update.ps1" in spec
+    assert "apply_update.ps1" in spec and "apply_update.sh" in spec
     assert '"simplequant": "py"' in spec                       # 自己的代码不进 exe，补丁才小
     iss = (ROOT / "installer" / "SimpleQuant.iss").read_text(encoding="utf-8-sig")
     assert "[UninstallDelete]" in iss and "-Setup" in iss
@@ -370,3 +375,191 @@ def test_packaging_config_for_updates():
     import release
     for k, v in release.BUILD_ENV.items():
         assert f"set {k}={v}" in bat
+
+
+# ---------------- macOS / Linux：拼出新程序目录、整体替换 ----------------
+def _can_symlink(tmp_path: Path) -> bool:
+    try:
+        os.symlink("x", tmp_path / "symlink-probe")
+        return True
+    except OSError:                 # Windows 没开开发者模式时不能建符号链接
+        return False
+
+
+def _publish_unix(srv, tmp_path, system="linux", links=None, version="1.1.0"):
+    """发布 NEW 的 macOS / Linux 版：manifest-<系统>.json、从 1.0.0 的补丁、整个目录的 .tar.gz"""
+    build = tmp_path / f"build-{version}" / "app"
+    _write_tree(build, NEW)
+    for r, target in (links or {}).items():
+        os.symlink(target, build / r)
+    files = mf.hash_tree(build)
+    old_files = {r: [hashlib.sha256(d).hexdigest(), len(d)] for r, d in OLD.items()}
+    changed, removed = mf.diff(old_files, files)
+    z = io.BytesIO()
+    with zipfile.ZipFile(z, "w", zipfile.ZIP_DEFLATED) as zf:
+        for r in changed:
+            zf.write(build / r, r)
+    t = io.BytesIO()
+    with tarfile.open(fileobj=t, mode="w:gz") as tf:
+        tf.add(build, arcname="app")
+    patch, archive = f"SimpleQuant-{version}-{system}-from-1.0.0.zip", f"SimpleQuant-{version}-{system}.tar.gz"
+    srv.files[patch], srv.files[archive] = z.getvalue(), t.getvalue()
+    m = {"app": "SimpleQuant", "version": version, "files": files, "links": mf.links_tree(build),
+         "archive": {"name": archive, "size": len(t.getvalue()), "sha256": hashlib.sha256(t.getvalue()).hexdigest()},
+         "patches": {"1.0.0": {"name": patch, "size": len(z.getvalue()),
+                               "sha256": hashlib.sha256(z.getvalue()).hexdigest(),
+                               "files": changed, "removed": removed}}}
+    data, sig = _signed(m)
+    srv.files[mf.manifest_name(system)], srv.files[mf.signature_name(system)] = data, sig.encode()
+    srv.latest = {"tag_name": f"v{version}", "body": "", "html_url": f"{srv.url}/page",
+                  "assets": [{"name": n, "browser_download_url": f"{srv.url}/dl/{n}"} for n in srv.files]}
+    return build
+
+
+def test_manifest_names_and_links():
+    assert mf.manifest_name("windows") == "manifest.json" and mf.signature_name("windows") == "manifest.json.sig"
+    assert mf.manifest_name("macos") == "manifest-macos.json"
+    assert mf.safe_link("Contents/Frameworks/lib.dylib", "../Resources/lib.dylib")
+    for rel, target in [("a/b", "/etc/passwd"), ("a/b", "../../x"), ("x", ".."), ("../a", "b"), ("a", "C:/x")]:
+        assert not mf.safe_link(rel, target)
+
+
+def test_unix_patch_builds_new_tree(server, installed, tmp_path):
+    links = {"_internal/link.py": "a.py"} if _can_symlink(tmp_path) else {}
+    build = _publish_unix(server, tmp_path, links=links)
+    u = _updater(server, installed, tmp_path, system="linux")
+    u.check()
+    assert u.status.state == "ready" and not u.status.full
+    plan = json.loads((tmp_path / "work" / "ready.json").read_text(encoding="utf-8"))
+    new = Path(plan["new_dir"])
+    assert plan["mode"] == "swap" and new.name == installed.name
+    assert mf.hash_tree(new) == mf.hash_tree(build) and mf.links_tree(new) == mf.links_tree(build)
+    assert mf.hash_tree(installed) != mf.hash_tree(build)           # 当前程序目录不动
+    assert not any(n.endswith(".tar.gz") for n, _ in server.requests)
+    u2 = _updater(server, installed, tmp_path, system="linux")
+    u2.startup()
+    assert u2.status.state == "ready" and u2.status.version == "1.1.0"
+
+
+def test_unix_falls_back_to_archive(server, installed, tmp_path):
+    build = _publish_unix(server, tmp_path, system="macos")
+    (installed / "SimpleQuant.exe").write_bytes(b"corrupted")
+    u = _updater(server, installed, tmp_path, system="macos")
+    u.check()
+    assert u.status.state == "ready" and u.status.full
+    plan = json.loads((tmp_path / "work" / "ready.json").read_text(encoding="utf-8"))
+    assert mf.hash_tree(Path(plan["new_dir"])) == mf.hash_tree(build)
+    assert not (tmp_path / "work" / "1.1.0" / "extract").exists()
+
+
+def test_unix_apply_starts_shell_script(server, installed, tmp_path, monkeypatch):
+    _publish_unix(server, tmp_path)
+    u = _updater(server, installed, tmp_path, system="linux")
+    u.check()
+    calls = []
+    monkeypatch.setattr(client.subprocess, "Popen", lambda cmd, **kw: calls.append((cmd, kw)))
+    assert u.apply()
+    cmd, kw = calls[0]
+    assert cmd[0] == "/bin/sh" and cmd[1].endswith("apply_update.sh") and cmd[3:5] == ["linux", str(installed)]
+    assert kw["start_new_session"] and (tmp_path / "work" / "apply_update.sh").exists()
+
+
+def test_shell_script_is_ascii_and_lf():
+    data = client.SH_SCRIPT.read_bytes()
+    data.decode("ascii")
+    assert b"\r\n" not in data
+
+
+needs_sh = pytest.mark.skipif(sys.platform == "win32" or not shutil.which("sh"), reason="macOS / Linux")
+
+
+def _fake_app(root: Path, marker: Path, content: bytes):
+    root.mkdir(parents=True)
+    (root / "data.txt").write_bytes(content)
+    exe = root / "SimpleQuant"
+    exe.write_text(f"#!/bin/sh\necho started > '{marker}'\n")
+    exe.chmod(0o755)
+
+
+def _dead_pid() -> int:
+    p = subprocess.Popen([sys.executable, "-c", "pass"])
+    p.wait()
+    return p.pid
+
+
+@needs_sh
+def test_shell_script_swaps_and_restarts(tmp_path):
+    app, work = tmp_path / "程序 目录" / "app", tmp_path / "work"
+    new = work / "1.1.0" / "app" / "app"
+    marker = tmp_path / "restarted"
+    _fake_app(app, marker, b"old")
+    _fake_app(new, marker, b"new")
+    r = subprocess.run(["/bin/sh", str(client.SH_SCRIPT), str(_dead_pid()), "linux", str(app), str(new), str(work),
+                        "1.1.0"], timeout=60)
+    assert r.returncode == 0
+    res = json.loads((work / "result.json").read_text(encoding="utf-8"))
+    assert res == {"ok": True, "version": "1.1.0", "message": ""}
+    assert (app / "data.txt").read_bytes() == b"new" and not new.exists()
+    assert not Path(str(app) + ".update-backup").exists()
+    for _ in range(50):
+        if marker.exists():
+            break
+        threading.Event().wait(0.1)
+    assert marker.exists()
+
+
+@needs_sh
+def test_shell_script_keeps_old_version_when_new_is_missing(tmp_path):
+    app, work = tmp_path / "app", tmp_path / "work"
+    work.mkdir()
+    _fake_app(app, tmp_path / "restarted", b"old")
+    r = subprocess.run(["/bin/sh", str(client.SH_SCRIPT), str(_dead_pid()), "linux", str(app),
+                        str(tmp_path / "missing"), str(work), "1.1.0"], timeout=60)
+    assert r.returncode != 0
+    assert not json.loads((work / "result.json").read_text(encoding="utf-8"))["ok"]
+    assert (app / "data.txt").read_bytes() == b"old"
+
+
+# ---------------- 发布脚本：macOS / Linux 清单 ----------------
+def _release():
+    sys.path.insert(0, str(ROOT / "tools"))
+    import release
+    return release
+
+
+def test_release_patches_and_unix_manifest_checks(tmp_path):
+    release = _release()
+    app = tmp_path / "app"
+    _write_tree(app, NEW)
+    files = mf.hash_tree(app)
+    old = {r: [hashlib.sha256(d).hexdigest(), len(d)] for r, d in OLD.items()}
+    out = tmp_path / "out"
+    out.mkdir()
+    patches = release.make_patches("1.1.0", app, files, {"1.0.0": old}, out, "linux-x86_64")
+    p = patches["1.0.0"]
+    assert p["name"] == "SimpleQuant-1.1.0-linux-x86_64-from-1.0.0.zip" and p["removed"] == ["_internal/old.py"]
+    with zipfile.ZipFile(out / p["name"]) as z:
+        assert sorted(z.namelist()) == ["_internal/a.py", "_internal/pkg/new.py"]
+    assert release.make_patches("1.1.0", app, files, {"1.0.0": old}, out)["1.0.0"]["name"] == \
+        "SimpleQuant-1.1.0-from-1.0.0.zip"                       # Windows 的文件名与以前相同
+
+    archive = {"name": "SimpleQuant-1.1.0-linux-x86_64.tar.gz", "size": 10, "sha256": "00"}
+    m = {"app": "SimpleQuant", "version": "1.1.0", "files": files, "links": {}, "archive": archive,
+         "patches": patches}
+    assets = {archive["name"]: {"size": 10}, p["name"]: {"size": p["size"]}}
+    release.check_unix_manifest(m, "1.1.0", "linux-x86_64", assets)
+    for bad_m, bad_assets in [(dict(m, version="1.0.9"), assets),
+                              (m, {archive["name"]: {"size": 10}}),                       # 补丁包没上传
+                              (m, {**assets, archive["name"]: {"size": 11}}),             # 大小不一致
+                              (dict(m, links={"a": "/etc/passwd"}), assets)]:
+        with pytest.raises(SystemExit):
+            release.check_unix_manifest(bad_m, "1.1.0", "linux-x86_64", bad_assets)
+
+
+def test_release_targets_match_workflow():
+    release = _release()
+    wf = (ROOT / ".github" / "workflows" / "build.yml").read_text(encoding="utf-8")
+    for t in release.UNIX_TARGETS:
+        assert f"target: {t}" in wf
+    notes = release.release_notes("1.2.3", "SimpleQuant-1.2.3-Setup.exe")
+    assert all(f"SimpleQuant-1.2.3-{t}" in notes for t in release.UNIX_TARGETS)

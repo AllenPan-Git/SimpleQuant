@@ -25,6 +25,7 @@ from ..rules import INDICATORS, default_line
 from ..strategies import templates as tpl_module
 from ..strategies.factors import KDJ, OBV
 from ..strategies.registry import TEMPLATES
+from ..system import venv_python
 
 
 def _module_body(module) -> str:
@@ -382,7 +383,7 @@ def selection_script(spec: dict, broker: dict, start: str, project_dir: str, tit
                      lang: str = "zh", exe: str | None = None) -> str:
     """
     多因子选股：生成调用 SimpleQuant 引擎的脚本
-    :param exe: 打包版 SimpleQuant.exe 的路径；给出时说明改为用 exe 运行（exe 自带引擎，不需要装 Python）
+    :param exe: 打包版 SimpleQuant 可执行文件的路径；给出时说明改为用它运行（自带引擎，不需要装 Python）
     """
     from ..stocks import FACTORS
     needs_fin = any(FACTORS.get(f["key"], {}).get("requires_fin") for f in spec["factors"]) or \
@@ -393,8 +394,8 @@ def selection_script(spec: dict, broker: dict, start: str, project_dir: str, tit
     - 命令行："{exe}" --run-script 本文件.py'''
     else:
         how = f'''请用 SimpleQuant 的 Python 环境执行：
-    "{project_dir}\\.venv\\Scripts\\python.exe" 本文件.py
-（打包版 SimpleQuant.exe 也能运行：选股页「导出」菜单 →「运行选股脚本」）'''
+    "{venv_python(project_dir)}" 本文件.py
+（打包版 SimpleQuant 也能运行：选股页「导出」菜单 →「运行选股脚本」）'''
     return f'''r"""
 {title}
 由 SimpleQuant 导出于 {dt.datetime.now():%Y-%m-%d %H:%M}

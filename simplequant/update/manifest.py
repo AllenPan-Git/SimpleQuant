@@ -8,16 +8,31 @@ manifest.json：
      "patches": {"0.1.0": {"name": "SimpleQuant-0.1.1-from-0.1.0.zip", "sha256": ..., "size": ...,
                            "files": [补丁里的文件], "removed": [新版本不再需要的文件]}}}
 manifest.json.sig：对 manifest.json 原始字节的 Ed25519 签名（十六进制）
+
+macOS / Linux 每个平台一份：manifest-macos-arm64.json、manifest-linux-x86_64.json 等（Windows 沿用 manifest.json，旧版本客户端读的就是它）。
+与 Windows 的区别：没有 installer，改为 "archive"（整个程序目录的 .tar.gz，补丁用不上时整体替换）；
+"links" 记录程序目录里的符号链接 {相对路径: 链接目标}（macOS 的 .app 里有），补丁更新时据此重建。
 """
 
 import hashlib
 import json
+import os
+import posixpath
 from pathlib import Path, PurePosixPath
 
 from simplequant.update import ed25519
 
 MANIFEST = "manifest.json"
 SIGNATURE = "manifest.json.sig"
+
+
+def manifest_name(target: str = "windows") -> str:
+    """target：windows、macos-arm64、linux-x86_64……（system.target）"""
+    return MANIFEST if target == "windows" else f"manifest-{target}.json"
+
+
+def signature_name(target: str = "windows") -> str:
+    return manifest_name(target) + ".sig"
 
 
 class ManifestError(Exception):
@@ -41,11 +56,36 @@ def sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def hash_tree(root: Path) -> dict[str, list]:
-    """{相对路径（/ 分隔）: [sha256, 字节数]}"""
+def scan_tree(root: Path) -> tuple[list[Path], dict[str, str]]:
+    """(普通文件, {符号链接的相对路径: 链接目标})；不进入链接指向的目录"""
     root = Path(root)
-    return {p.relative_to(root).as_posix(): [sha256_file(p), p.stat().st_size]
-            for p in sorted(root.rglob("*")) if p.is_file()}
+    files, links = [], {}
+    for dirpath, dirnames, filenames in os.walk(root):
+        for name in dirnames + filenames:
+            p = Path(dirpath, name)
+            if p.is_symlink():
+                links[p.relative_to(root).as_posix()] = os.readlink(p).replace("\\", "/")
+            elif name in filenames:
+                files.append(p)
+    return sorted(files), dict(sorted(links.items()))
+
+
+def hash_tree(root: Path) -> dict[str, list]:
+    """{相对路径（/ 分隔）: [sha256, 字节数]}（符号链接不算，见 links_tree）"""
+    root = Path(root)
+    return {p.relative_to(root).as_posix(): [sha256_file(p), p.stat().st_size] for p in scan_tree(root)[0]}
+
+
+def links_tree(root: Path) -> dict[str, str]:
+    return scan_tree(root)[1]
+
+
+def safe_link(rel: str, target: str) -> bool:
+    """链接本身在程序目录内，目标是相对路径且不指出程序目录"""
+    if not safe_path(rel) or not target or target.startswith("/") or ":" in target or "\\" in target:
+        return False
+    resolved = posixpath.normpath(posixpath.join(posixpath.dirname(rel), target))
+    return resolved != ".." and not resolved.startswith("../")
 
 
 def safe_path(rel: str) -> bool:
@@ -84,6 +124,7 @@ def load_verified(data: bytes, signature: str, public_hex: str) -> dict:
         assert all(safe_path(r) for r in files)
         for p in m.get("patches", {}).values():
             assert all(safe_path(r) for r in p["files"] + p.get("removed", []))
+        assert all(safe_link(r, t) for r, t in m.get("links", {}).items())
     except (ValueError, KeyError, TypeError, AssertionError) as e:
         raise ManifestError(f"format: {e}") from e
     return m

@@ -71,7 +71,8 @@ def render(prices: dict[str, pd.DataFrame], strategy_cls, params: dict | None = 
         raise ValueError(f"{n} bars is too many to read; pick a range under {MAX_BARS} / "
                          f"区间内有 {n} 根 K 线，图会挤成一团，请缩小到 {MAX_BARS} 根以内")
 
-    matplotlib.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "PingFang SC", "Noto Sans CJK SC",
+    matplotlib.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "PingFang SC", "Hiragino Sans GB",
+                                              "Noto Sans CJK SC", "Source Han Sans SC", "WenQuanYi Micro Hei",
                                               "DejaVu Sans"]
     matplotlib.rcParams["axes.unicode_minus"] = False
 

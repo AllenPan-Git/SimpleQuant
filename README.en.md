@@ -9,7 +9,7 @@
 
 <p align="center">Windows desktop app · Backtrader engine · Open source under GPLv3</p>
 
-SimpleQuant is a low-code quant backtesting tool for China A-shares. You can go from data to strategy, backtest, parameter optimization and paper trading without writing code. If you prefer, you can also write Python strategies, run multi-factor stock selection, or export strategies to JoinQuant, MyQuant (掘金) and QMT for cross-checking.
+SimpleQuant is a low-code quant backtesting tool for China A-shares, covering stocks, ETFs (including bond ETFs) and convertible bonds. You can go from data to strategy, backtest, parameter optimization and paper trading without writing code. If you prefer, you can also write Python strategies, run multi-factor selection (stocks or convertibles), or export strategies to JoinQuant, MyQuant (掘金) and QMT for cross-checking.
 
 > **Disclaimer**: This software is for learning and research only and is not investment advice. Backtest and paper-trading results do not guarantee future returns; any live trading based on them is at your own risk.
 
@@ -30,19 +30,19 @@ The step bar at the top of the app follows these two workflows, and each step su
 <img src="docs/images/home-en.png" alt="Home">
 
 ### 01 · Data
-Download into a local library with one click: AKShare daily bars (Eastmoney, with ETFs falling back to Sina when Eastmoney is unreachable), BaoStock 5–60 minute bars and stock daily bars (with PE, PB, PS and turnover), and local TDX (通达信) 1/5-minute bars. You can also import CSV files (bars, or snapshot/tick data with a `last` column, resampled to N-second/N-minute bars).
+Download into a local library with one click: AKShare daily bars (Eastmoney, with ETFs falling back to Sina when Eastmoney is unreachable), BaoStock 5–60 minute bars and stock daily bars (with PE, PB, PS and turnover), and local TDX (通达信) 1/5-minute bars. You can also import CSV files (bars, or snapshot/tick data with a `last` column, resampled to N-second/N-minute bars). ChinaBond yield curves (10-year government yield, term spread, credit spread) can be downloaded for use in timing rules.
 
 ### 02 · Strategy
 Four ways to build a strategy:
-- **Templates**: buy & hold, moving-average cross, RSI, Bollinger bands, momentum rotation and more — just tune the parameters.
-- **Rule builder**: combine indicators such as MA, EMA, MACD, RSI, KDJ, Bollinger bands, ATR, volume ratio, valuation and position return with crosses above/below and comparisons; stop-losses supported.
+- **Templates**: buy & hold, moving-average cross, RSI, Bollinger bands, momentum rotation (e.g. stocks vs. bonds), fixed-weight rebalancing (e.g. 60/40) and more — just tune the parameters.
+- **Rule builder**: combine indicators such as MA, EMA, MACD, RSI, KDJ, Bollinger bands, ATR, volume ratio, valuation, rates and credit spreads, and position return with crosses above/below and comparisons; stop-losses supported.
 - **Describe it in words (AI)**: e.g. "buy when MACD crosses up and RSI is below 70; sell on a cross down or an 8% loss". A large language model turns this into rules (rules only, never code) and lists anything it cannot express.
 - **Write Python**: write a strategy class; board lots, T+1 and trading costs still apply, and its parameters can be optimized.
 
 ### 03 · Backtest
 Multiple assets (capital split equally), custom date range and costs, and a choice of dividend handling (reinvest, or cash dividends with dividend tax). The report opens with a plain-language summary, followed by return, CAGR, Sharpe, drawdown, win rate and profit factor, plus the equity curve, trades on the price chart, P&L per trade and the full fill list; the native Backtrader chart is also available.
 
-A-share rules: 100-share board lots, T+1 (can be turned off for bond/cross-border ETFs), stamp duty on sells, minimum commission and slippage. Signals form at a bar's close and fill at the next bar's open.
+A-share rules: 100-share board lots, T+1 by product type (stocks and domestic equity ETFs are T+1; bond, money-market, gold, commodity and cross-border ETFs and convertibles are T+0, detected from the code and name), stamp duty on sells, minimum commission and slippage. Signals form at a bar's close and fill at the next bar's open.
 
 ### 04 · Optimize
 Grid search over any numeric parameter (up to 3 parameters and 500 combinations, run in parallel), with a heatmap of how results vary; the earlier part of the data picks parameters and the later part checks them out of sample, with an overfitting warning. Walk-forward optimization stitches together a fully out-of-sample equity curve.
@@ -55,7 +55,7 @@ Open a simulated account for any saved strategy — no brokerage account needed.
 <img src="docs/images/paper-en.png" alt="Paper trading">
 
 ### Multi-factor stock selection
-Using free BaoStock data, score the **historical constituents** of the CSI 300 and CSI 500 by value, momentum, low volatility, quality, growth and other factors, and rebalance on a schedule. Includes factor research (Rank IC, quantile backtests, factor correlation), industry/size neutralization, IC/ICIR weighting, custom factors and walk-forward optimization; selection strategies can be paper traded as well.
+Using free BaoStock data, score the **historical constituents** of the CSI 300 and CSI 500 by value, momentum, low volatility, quality, growth and other factors, and rebalance on a schedule; or pick from **all convertible bonds** (including delisted ones) by double-low, premium and other factors. Includes factor research (Rank IC, quantile backtests, factor correlation), industry/size neutralization, IC/ICIR weighting, custom factors and walk-forward optimization; selection strategies can be paper traded as well.
 
 <img src="docs/images/selection-en.png" alt="Stock selection">
 
@@ -110,6 +110,18 @@ Requires Windows and Python 3.10 or later (developed and tested on 3.14).
 </details>
 
 <details>
+<summary><b>Convertible-bond selection</b></summary>
+
+- **Data**: Eastmoney (bond list including delisted bonds, terms, daily bond floor / conversion value / conversion price), Sina (daily bars), China Securities Index (CSI Convertible Bond Index as the benchmark). The first download covers about 1,000 bonds (about 40 MB, 6–10 minutes); later updates fetch only bonds still trading.
+- **Factors**: double-low (price + conversion premium), price, conversion premium, premium over bond floor, conversion value, issue size, years to maturity, underlying-stock 20-day return and 60-day volatility; price/volume factors (returns, momentum, volatility, Amihud) are shared with stocks. Over 2018–2026, double-low has a 20-day Rank IC of about −0.06 (t ≈ −3.3) with monotonic quintile returns.
+- **Filters**: max price, minimum 20-day average turnover, minimum years to maturity, max conversion premium.
+- **Trading rules**: lots of 10 bonds, T+0; ±20% price limits from 2022-08-01, +57.3% / −43.3% of par on the first day; convertibles trade at full price, and coupons are added after 20% tax as an adjustment factor.
+- **Calls and maturity**: once a forced-redemption or maturity notice is published the bond is no longer selected and holdings are sold at the next open; bonds that stop trading unexpectedly (suspension, default, stock delisting) cannot be sold and stay at their last price, as in reality.
+- Industry neutralization uses the underlying stock's industry; size neutralization uses issue size. Factor research, backtests, walk-forward, paper trading, Python script export and natural-language selection all work; export to JoinQuant / MyQuant / QMT is not supported, and conversion, puts and reset plays are not simulated.
+- Trading convertibles requires investor suitability (since 2022: 100k CNY average assets over the previous 20 trading days and 2 years of trading experience).
+</details>
+
+<details>
 <summary><b>Backtest charts</b></summary>
 
 - **Interactive strategy chart**: mirrors the native Backtrader chart but supports zoom, pan and linked hover: P&L per trade, price (with indicators and trades), volume and indicator panels share one time axis; quick ranges 1M/3M/6M/1Y/All; non-trading days removed. Rule strategies plot the indicator lines actually used by the rules, plus threshold reference lines.
@@ -140,13 +152,13 @@ Requires Windows and Python 3.10 or later (developed and tested on 3.14).
 - **Timing → Python script**: a standalone `.py` (needs only `backtrader pandas akshare baostock`) with the data setup, strategy and costs; tests ensure every fill matches the SimpleQuant backtest.
 - **Timing → JoinQuant / MyQuant / QMT**: embeds a platform-independent signal core, `simplequant/export/signal_core.py` (pure numpy, Python 3.6 compatible, indicators and warm-up checked item by item against Backtrader), plus a thin adapter per platform. Same timing as SimpleQuant: signals at the previous close, fills at the next open. Verified on JoinQuant: trade dates match SimpleQuant.
 - **Selection → export**: a Python script (update data → backtest → save the latest picks to `picks.csv`; can be scheduled); "computed on the platform" versions for JoinQuant / MyQuant / QMT (the platform's own data, same algorithm) and "follow SimpleQuant's list" versions (each period's picks written into the file). Verified on JoinQuant: fills match one for one.
-- JoinQuant and MyQuant backtests only need a free account; QMT requires a brokerage account. Not yet supported: valuation/turnover factors in timing rules, and minute bars.
+- JoinQuant and MyQuant backtests only need a free account; QMT requires a brokerage account. Not yet supported: valuation/turnover/rates factors in timing rules, minute bars, and convertible-bond selection (rates conditions can't be exported as Python scripts either).
 </details>
 
 <details>
 <summary><b>Timing indicators</b></summary>
 
-Price: close/open/high/low, N-day high/low; trend: MA, EMA, MACD, MA slope, BIAS, DMI/ADX, N-day return; oscillators: RSI, KDJ, CCI, Williams %R; volume: volume, average volume, volume ratio, OBV; volatility: Bollinger bands, ATR, return volatility; valuation/turnover: turnover, PE (TTM), PB, PS (TTM) (needs BaoStock stock daily bars); position: position return (take-profit/stop-loss). KDJ and OBV follow the formulas used by Chinese trading software and are checked value by value against independent implementations.
+Price: close/open/high/low, N-day high/low; trend: MA, EMA, MACD, MA slope, BIAS, DMI/ADX, N-day return; oscillators: RSI, KDJ, CCI, Williams %R; volume: volume, average volume, volume ratio, OBV; volatility: Bollinger bands, ATR, return volatility; valuation/turnover: turnover, PE (TTM), PB, PS (TTM) (needs BaoStock stock daily bars); rates/credit: 10-year government yield, term spread (10Y − 1Y), credit spread (3Y AAA medium-term notes − 3Y government) from the ChinaBond curves, downloaded on the Data page first; position: position return (take-profit/stop-loss). KDJ and OBV follow the formulas used by Chinese trading software and are checked value by value against independent implementations.
 </details>
 
 <details>
@@ -155,6 +167,8 @@ Price: close/open/high/low, N-day high/low; trend: MA, EMA, MACD, MA slope, BIAS
 - AKShare ETF daily bars come from Eastmoney. If Eastmoney is unreachable, ETFs switch to Sina prices plus Sina's cumulative dividends to rebuild adjusted prices (matching Eastmoney's back-adjusted prices day by day); adjusted stock prices still require Eastmoney.
 - Eastmoney's back-adjustment is additive (adjusted price = raw price + cumulative dividends), which slightly understates long-run returns compared with proportional adjustment; BaoStock uses proportional adjustment. Keep this in mind when comparing results across sources.
 - BaoStock publishes the day's bars after the close (by 18:40 in our tests).
+- Convertibles: Sina bars are unadjusted with volume in bonds; a few bonds lack bars for their first months (those days use Eastmoney closes for factors only and are not traded). Eastmoney's rating is the latest one, which would introduce look-ahead bias in backtests, so it is not offered as a filter.
+- Rates: the ChinaBond curves can be queried about a year at a time; there is no corporate-bond curve, so the credit spread uses AAA medium-term notes. Curves are published in the evening, so daily strategies use the same day's value (fills happen at the next open) and minute strategies use the previous day's.
 </details>
 
 <details>
@@ -168,7 +182,8 @@ simplequant/data/          data sources (akshare / baostock / tdx_local / csv), 
 simplequant/engine/        backtest runner, A-share cost model, strategy base (lots / T+1 / dividends), metrics, optimization, walk-forward
 simplequant/strategies/    templates, rule strategies, code strategies
 simplequant/rules/         rule JSON schema, validation and descriptions
-simplequant/stocks/        stock selection: downloads, panels, factors, research, selection backtest, dividends
+simplequant/stocks/        stock selection: downloads, panels, factors, research, selection backtest, dividends, universe entry point
+simplequant/bonds/          convertible-bond data and panels, rates and credit spreads
 simplequant/paper/         paper trading: accounts, replay and ledger, trading calendar, scheduled task
 simplequant/export/        export: Python scripts, JoinQuant / MyQuant / QMT
 simplequant/llm/           LLM access: presets and config, Claude / OpenAI / LiteLLM adapters, natural language to rules

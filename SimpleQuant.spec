@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""
+r"""
 PyInstaller 打包配置（Windows / macOS / Linux 共用；PyInstaller 不能交叉编译，各系统在自己的机器上打包）
     Windows：双击 build.bat → dist\windows\SimpleQuant\（运行其中的 SimpleQuant.exe）
     macOS / Linux：sh tools/build_unix.sh（GitHub Actions 里也用它）→ dist/macos/SimpleQuant.app、dist/linux/SimpleQuant/
@@ -48,7 +48,14 @@ import py_mini_racer
 _arm = platform.machine().lower() in ("arm64", "aarch64")
 MINI_RACER = ("mini_racer.dll" if WINDOWS else
               ("armlib" if _arm else "lib") + "mini_racer" + (".dylib" if MACOS else ".glibc.so"))
-binaries = [(str(Path(py_mini_racer.__file__).with_name(MINI_RACER)), ".")]
+_mr = Path(py_mini_racer.__file__).parent
+print("py_mini_racer:", _mr, sorted(f.name for f in _mr.iterdir()))
+if (_mr / MINI_RACER).exists():
+    binaries = [(str(_mr / MINI_RACER), ".")]
+else:
+    # 其他版本的包（如新的 mini-racer）文件名不同、按自己目录查找：整个目录的非 .py 文件原样带上
+    binaries = [(str(f), "py_mini_racer") for f in _mr.iterdir()
+                if f.is_file() and f.suffix not in (".py", ".pyc")]
 
 hiddenimports = (
     collect_submodules("simplequant") + collect_submodules("gui") + ["ui.shared", "ui.charts", "ui.texts"]
@@ -130,8 +137,8 @@ exe = EXE(
     console=False,
     icon=str(ICON) if ICON.exists() and not LINUX else None,
 )
-# Linux：去掉动态库里的调试符号（pyarrow 等没去），能小几十 MB；macOS 上 strip 会破坏签名，Windows 不需要
-coll = COLLECT(exe, a.binaries, a.datas, strip=LINUX, upx=False, name="SimpleQuant")
+# 不 strip：Ubuntu 22.04 的 strip 会弄坏 numpy 自带的 OpenBLAS（ELF load command not page-aligned），macOS 上还会破坏签名
+coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="SimpleQuant")
 
 if MACOS:
     app = BUNDLE(

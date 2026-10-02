@@ -123,8 +123,11 @@ def ui_walkthrough(exe: str, script: Path, out: Path, timeout: float = 1200):
         raise SystemExit("界面自动测试没有产生结果")
     import json
     results = json.loads(res.read_text(encoding="utf-8"))
-    for r in results:
-        print(f"  [{r['status']:4}] {r['step']}  {r['note']}  ({r['sec']} 秒)")
+    lines = [f"[{r['status']}] {r['step']}  {r['note']}  ({r['sec']} 秒)" for r in results]
+    for line in lines:
+        print("  " + line)
+    if os.environ.get("GITHUB_ACTIONS"):      # 每步结果写成公开注释：完整日志要登录才能看，注释不用
+        print("::notice title=UI walkthrough::" + "%0A".join(x.replace("%", "%25") for x in lines))
     if any(r["status"] == "FAIL" for r in results):
         print((out / "steps.log").read_text(encoding="utf-8", errors="replace")[-4000:])
         raise SystemExit("界面自动测试有失败的步骤")

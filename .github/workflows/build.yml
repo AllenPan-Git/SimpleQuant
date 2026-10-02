@@ -83,12 +83,13 @@ jobs:
           xattr -dr com.apple.quarantine "$APP"
           if xattr -p com.apple.quarantine "$APP" 2>/dev/null; then echo "::error::quarantine still set"; exit 1; fi
           echo "after xattr -dr: quarantine removed" | tee -a gatekeeper-${{ matrix.target }}.txt
+          echo "::notice title=Gatekeeper::$(awk 1 ORS='%0A' gatekeeper-${{ matrix.target }}.txt)"
       - name: Smoke test (macOS)
         if: runner.os == 'macOS'
-        run: python tools/smoke_test.py dist/macos/SimpleQuant.app/Contents/MacOS/SimpleQuant --screenshot screenshot-${{ matrix.target }}.png --ui tools/ui_walkthrough.py --ui-out ui-${{ matrix.target }} > step.log 2>&1 || { tail -80 step.log; eval "$SHOW_TAIL"; exit 1; }
+        run: python tools/smoke_test.py dist/macos/SimpleQuant.app/Contents/MacOS/SimpleQuant --screenshot screenshot-${{ matrix.target }}.png --ui tools/ui_walkthrough.py --ui-out ui-${{ matrix.target }} > step.log 2>&1 || { tail -80 step.log; eval "$SHOW_TAIL"; exit 1; }; grep "^::notice" step.log || true
       - name: Smoke test (Linux)
         if: runner.os == 'Linux'
-        run: xvfb-run -a -s "-screen 0 1600x1000x24" python tools/smoke_test.py dist/linux/SimpleQuant/SimpleQuant --screenshot screenshot-${{ matrix.target }}.png --ui tools/ui_walkthrough.py --ui-out ui-${{ matrix.target }} > step.log 2>&1 || { tail -80 step.log; eval "$SHOW_TAIL"; exit 1; }
+        run: xvfb-run -a -s "-screen 0 1600x1000x24" python tools/smoke_test.py dist/linux/SimpleQuant/SimpleQuant --screenshot screenshot-${{ matrix.target }}.png --ui tools/ui_walkthrough.py --ui-out ui-${{ matrix.target }} > step.log 2>&1 || { tail -80 step.log; eval "$SHOW_TAIL"; exit 1; }; grep "^::notice" step.log || true
       - name: Manifest and patches
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

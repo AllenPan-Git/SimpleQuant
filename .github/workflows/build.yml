@@ -19,6 +19,8 @@ permissions:
 
 env:
   PYTHON_VERSION: "3.14"
+  # 失败时把日志最后 80 行写成一条 error 注释：公开仓库的完整日志要登录才能下载，注释不用
+  SHOW_TAIL: 'echo "::error title=log tail::$(tail -80 step.log | sed -e "s/%/%25/g" | awk 1 ORS="%0A")"' 
   LINUX_APT: >-
     xvfb imagemagick fonts-noto-cjk libxcb-cursor0 libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0
     libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-xinerama0 libxcb-shape0 libegl1 libnss3
@@ -32,15 +34,15 @@ jobs:
         os: [ubuntu-22.04, macos-14]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
       - name: Install
         run: python -m pip install -r requirements.txt
       - name: Test
-        run: python -m pytest -q -p no:cacheprovider
+        run: python -m pytest -q -p no:cacheprovider > step.log 2>&1 || { tail -80 step.log; eval "$SHOW_TAIL"; exit 1; }
 
   build:
     strategy:
@@ -55,8 +57,8 @@ jobs:
             target: linux-x86_64
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -70,18 +72,18 @@ jobs:
       - name: Check target
         run: test "$(python -c 'from simplequant.system import TARGET; print(TARGET)')" = "${{ matrix.target }}"
       - name: Build
-        run: PYTHON=python sh tools/build_unix.sh
+        run: PYTHON=python sh tools/build_unix.sh > step.log 2>&1 || { tail -80 step.log; eval "$SHOW_TAIL"; exit 1; }
       - name: Smoke test (macOS)
         if: runner.os == 'macOS'
-        run: python tools/smoke_test.py dist/macos/SimpleQuant.app/Contents/MacOS/SimpleQuant --screenshot screenshot-${{ matrix.target }}.png
+        run: python tools/smoke_test.py dist/macos/SimpleQuant.app/Contents/MacOS/SimpleQuant --screenshot screenshot-${{ matrix.target }}.png > step.log 2>&1 || { tail -80 step.log; eval "$SHOW_TAIL"; exit 1; }
       - name: Smoke test (Linux)
         if: runner.os == 'Linux'
-        run: xvfb-run -a -s "-screen 0 1600x1000x24" python tools/smoke_test.py dist/linux/SimpleQuant/SimpleQuant --screenshot screenshot-${{ matrix.target }}.png
+        run: xvfb-run -a -s "-screen 0 1600x1000x24" python tools/smoke_test.py dist/linux/SimpleQuant/SimpleQuant --screenshot screenshot-${{ matrix.target }}.png > step.log 2>&1 || { tail -80 step.log; eval "$SHOW_TAIL"; exit 1; }
       - name: Manifest and patches
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python tools/release.py ci ${{ startsWith(github.ref, 'refs/tags/v') && '--upload' || '' }}
-      - uses: actions/upload-artifact@v4
+        run: python tools/release.py ci ${{ startsWith(github.ref, 'refs/tags/v') && '--upload' || '' }} > step.log 2>&1 || { tail -80 step.log; eval "$SHOW_TAIL"; exit 1; }
+      - uses: actions/upload-artifact@v5
         if: always()
         with:
           name: SimpleQuant-${{ matrix.target }}

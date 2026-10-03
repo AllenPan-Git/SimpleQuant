@@ -76,8 +76,10 @@ SHOTS = {
               {"zh": (None, "每日自动运行", 0, -24), "en": (None, "Run automatically every day", 0, -24)}),
     "selection": ("/selection", [{"zh": "开始回测", "en": "Run backtest"}],
                   {"zh": ("回测结果", "每期选股", 32, -16), "en": ("Results", "Picks per period", 32, -16)}),
+    "allocation": ("/allocation", [],
+                   {"zh": ("参考配置", "权重与贡献", 32, -16), "en": ("Reference allocation", "Weights and contributions", 32, -16)}),
 }
-WAIT = {"/selection": 30, "/optimize": 8}
+WAIT = {"/selection": 30, "/optimize": 8, "/allocation": 8}
 CLICK_WAIT = {"/optimize": 45, "/selection": 40, "/paper": 3}
 
 

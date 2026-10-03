@@ -9,7 +9,7 @@
 
 <p align="center">Desktop app for Windows / macOS / Linux · Backtrader engine · Open source under GPLv3</p>
 
-SimpleQuant is a low-code quant backtesting tool for China A-shares, covering stocks, ETFs (including bond ETFs) and convertible bonds. You can go from data to strategy, backtest, parameter optimization and paper trading without writing code. If you prefer, you can also write Python strategies, run multi-factor selection (stocks or convertibles), or export strategies to JoinQuant, MyQuant (掘金) and QMT for cross-checking.
+SimpleQuant is a low-code quant backtesting tool for China A-shares, covering stocks, ETFs (including bond ETFs) and convertible bonds. You can go from data to strategy, backtest, parameter optimization and paper trading without writing code. If you prefer, you can also write Python strategies, run multi-factor selection (stocks or convertibles), build an allocation across asset classes from a risk assessment, or export strategies to JoinQuant, MyQuant (掘金) and QMT for cross-checking.
 
 > **Disclaimer**: This software is for learning and research only and is not investment advice. Backtest and paper-trading results do not guarantee future returns; any live trading based on them is at your own risk.
 
@@ -18,14 +18,15 @@ SimpleQuant is a low-code quant backtesting tool for China A-shares, covering st
   <img src="docs/images/backtest-en.png" alt="Backtest report">
 </picture>
 
-## Two workflows
+## Three workflows
 
-The step bar at the top of the app follows these two workflows, and each step suggests what to do next.
+The step bar at the top of the app follows these three workflows, and each step suggests what to do next.
 
 | Workflow | Steps |
 |---|---|
 | **Timing** | 01 Data — 02 Strategy — 03 Backtest — 04 Optimize — 05 Paper |
 | **Stock selection** | 01 Data — 02 Selection — 03 Paper |
+| **Allocation** | 01 Data — 02 Allocation |
 
 <img src="docs/images/home-en.png" alt="Home">
 
@@ -40,17 +41,17 @@ Four ways to build a strategy:
 - **Write Python**: write a strategy class; board lots, T+1 and trading costs still apply, and its parameters can be optimized.
 
 ### 03 · Backtest
-Multiple assets (capital split equally), custom date range and costs, and a choice of dividend handling (reinvest, or cash dividends with dividend tax). The report opens with a plain-language summary, followed by return, CAGR, Sharpe, drawdown, win rate and profit factor, plus the equity curve, trades on the price chart, P&L per trade and the full fill list; the native Backtrader chart is also available.
+Multiple assets (capital split equally), custom date range and costs, and a choice of dividend handling (reinvest, or cash dividends with dividend tax). The report opens with a plain-language summary, followed by return, CAGR, Sharpe, drawdown, win rate and profit factor, plus the equity curve, trades on the price chart, P&L per trade and the full fill list; the native Backtrader chart is also available. The report also includes a **credibility assessment**: whether there are enough trades, whether returns are concentrated in a few trades, and a bootstrap range of returns.
 
 A-share rules: 100-share board lots, T+1 by product type (stocks and domestic equity ETFs are T+1; bond, money-market, gold, commodity and cross-border ETFs and convertibles are T+0, detected from the code and name), stamp duty on sells, minimum commission and slippage. Signals form at a bar's close and fill at the next bar's open.
 
 ### 04 · Optimize
-Grid search over any numeric parameter (up to 3 parameters and 500 combinations, run in parallel), with a heatmap of how results vary; the earlier part of the data picks parameters and the later part checks them out of sample, with an overfitting warning. Walk-forward optimization stitches together a fully out-of-sample equity curve.
+Grid search over any numeric parameter (up to 3 parameters and 500 combinations, run in parallel), with a heatmap of how results vary; the earlier part of the data picks parameters and the later part checks them out of sample, with overfitting warnings (too many combinations tested, most combinations losing money, markedly weaker out-of-sample results). Walk-forward optimization stitches together a fully out-of-sample equity curve.
 
 <img src="docs/images/optimize-en.png" alt="Optimization">
 
 ### 05 · Paper trading
-Open a simulated account for any saved strategy — no brokerage account needed. After each trading day's close it updates data, advances the account with **the same code as the backtest**, and lists the trades for the next open. A scheduled task (Windows Task Scheduler, macOS launchd or a Linux systemd timer) can run it automatically.
+Open a simulated account for any saved strategy — no brokerage account needed. After each trading day's close it updates data, advances the account with **the same code as the backtest**, and lists the trades for the next open. A scheduled task (Windows Task Scheduler, macOS launchd or a Linux systemd timer) can run it automatically; the home page warns if no schedule is set, the last run failed or the data has not been updated for several days.
 
 <img src="docs/images/paper-en.png" alt="Paper trading">
 
@@ -58,6 +59,11 @@ Open a simulated account for any saved strategy — no brokerage account needed.
 Using free BaoStock data, score the **historical constituents** of the CSI 300 and CSI 500 by value, momentum, low volatility, quality, growth and other factors, and rebalance on a schedule; or pick from **all convertible bonds** (including delisted ones) by double-low, premium and other factors. Includes factor research (Rank IC, quantile backtests, factor correlation), industry/size neutralization, IC/ICIR weighting, custom factors and walk-forward optimization; selection strategies can be paper traded as well.
 
 <img src="docs/images/selection-en.png" alt="Stock selection">
+
+### Asset allocation
+A risk assessment modelled on broker suitability questionnaires (C1 conservative to C5 aggressive, with a maximum tolerable drawdown) leads to a reference allocation across cash, Treasury ETFs, broad-market ETFs, a gold ETF and your own timing or selection strategies: the risk level sets the class mix, risk parity splits weight within each class, and if the portfolio's historical drawdown exceeds the tolerance, weight moves to defensive assets automatically. Portfolio backtests support several rebalancing rules and show each component's return and risk contribution and the correlations; weights can be edited and re-tested.
+
+<img src="docs/images/allocation-en.png" alt="Asset allocation">
 
 ### Export
 - **Python script**: runs on its own, with fills identical to the SimpleQuant backtest.
@@ -146,6 +152,16 @@ PyInstaller cannot cross-compile, so each system's version is built on that syst
 </details>
 
 <details>
+<summary><b>Asset allocation</b></summary>
+
+- **Risk assessment**: 10 single-choice questions (age, income, share of assets to invest, income stability, experience, riskiest product held, horizon, objective, largest tolerable loss, reaction to a 20% fall). The total score's position between the minimum and maximum maps to C1-C5 in five equal bands; "no loss at all" caps the rating at C1 and a horizon under one year caps it at C2. The maximum tolerable drawdown has five bands: 3%, 10%, 20%, 35% and 50%.
+- **Candidates**: cash (a fixed annual rate), buy-and-hold ETFs, a timing strategy on an asset, or a saved selection strategy. Built-in candidates are cash, a Treasury ETF (511010), a 10-year Treasury ETF (511260), CSI 300 and CSI 500 ETFs and a gold ETF (518880); missing data can be downloaded with one click. Each candidate's risk grade R1-R5 comes from its annualized volatility (2% / 6% / 15% / 25%) and maximum drawdown (3% / 10% / 20% / 35%) over the common period, taking the higher grade; the drawdown bands match C1-C5.
+- **Reference allocation**: the risk level sets the shares of cash, bonds, equities and other assets (gold, convertibles, etc.), with missing classes redistributed proportionally; within each class, weights are inversely proportional to volatility (risk parity). Mean-variance optimization is not used because it is highly sensitive to errors in expected returns. If the portfolio's maximum drawdown over the common period exceeds the tolerance, 5% of the weight moves at a time from equities and other assets to bonds, then from bonds to cash, until the limit is met.
+- **Portfolio backtest**: component daily returns are combined by weight, with monthly, quarterly, yearly, threshold (5 percentage points) or no rebalancing; each rebalance costs 0.05% of the traded amount. An equal-weight mix of all candidates serves as the reference. Results include CAGR, volatility, maximum drawdown, Sharpe, the portfolio risk grade, return and risk contributions, correlations, and notes on the length of the common period, whether the drawdown limit holds and whether the portfolio grade exceeds the risk tolerance.
+- The drawdown limit and risk grades rely on historical data; future volatility and drawdowns may be larger. Results are for research only.
+</details>
+
+<details>
 <summary><b>Backtest charts</b></summary>
 
 - **Interactive strategy chart**: mirrors the native Backtrader chart but supports zoom, pan and linked hover: P&L per trade, price (with indicators and trades), volume and indicator panels share one time axis; quick ranges 1M/3M/6M/1Y/All; non-trading days removed. Rule strategies plot the indicator lines actually used by the rules, plus threshold reference lines.
@@ -203,12 +219,13 @@ main.py                    entry point (desktop window / --browser / --paper / -
 gui/                       UI (NiceGUI): app (routes), layout (header and step bar), pages/, components, widgets, theme
 ui/                        framework-independent parts: texts (UI strings), charts, shared (page logic)
 simplequant/data/          data sources (akshare / baostock / tdx_local / csv), local library, cash-dividend prices
-simplequant/engine/        backtest runner, A-share cost model, strategy base (lots / T+1 / dividends), metrics, optimization, walk-forward
+simplequant/engine/        backtest runner, A-share cost model, strategy base (lots / T+1 / dividends), metrics, optimization, walk-forward, credibility checks
 simplequant/strategies/    templates, rule strategies, code strategies
 simplequant/rules/         rule JSON schema, validation and descriptions
 simplequant/stocks/        stock selection: downloads, panels, factors, research, selection backtest, dividends, universe entry point
 simplequant/bonds/          convertible-bond data and panels, rates and credit spreads
-simplequant/paper/         paper trading: accounts, replay and ledger, trading calendar, scheduled task
+simplequant/paper/         paper trading: accounts, replay and ledger, trading calendar, scheduled task, health checks
+simplequant/allocation/    asset allocation: risk assessment, candidates and risk grades, reference allocation, portfolio backtest
 simplequant/export/        export: Python scripts, JoinQuant / MyQuant / QMT
 simplequant/llm/           LLM access: presets and config, Claude / OpenAI / LiteLLM adapters, natural language to rules
 simplequant/update/        automatic updates: check and download, signed manifest verification, file replacement script

@@ -60,6 +60,8 @@ Using free BaoStock data, score the **historical constituents** of the CSI 300 a
 
 <img src="docs/images/selection-en.png" alt="Stock selection">
 
+<img src="docs/images/selection-cb-en.png" alt="Convertible-bond selection">
+
 ### Asset allocation
 A risk assessment modelled on broker suitability questionnaires (C1 conservative to C5 aggressive, with a maximum tolerable drawdown) leads to a reference allocation across cash, Treasury ETFs, broad-market ETFs, a gold ETF and your own timing or selection strategies: the risk level sets the class mix, risk parity splits weight within each class, and if the portfolio's historical drawdown exceeds the tolerance, weight moves to defensive assets automatically. Portfolio backtests support several rebalancing rules and show each component's return and risk contribution and the correlations; weights can be edited and re-tested.
 
@@ -112,7 +114,9 @@ Requires Python 3.10 or later (developed and tested on 3.14).
 - **macOS / Linux**: in a terminal, go to the project folder and run `sh start.sh`; the first run sets everything up the same way.
   - The Python that ships with macOS is too old; install one from [python.org](https://www.python.org/downloads/) or Homebrew (`brew install python`).
   - On Linux the desktop window uses the system's GTK WebKit. On Debian / Ubuntu install `sudo apt install python3-venv python3-gi gir1.2-webkit2-4.1` (`start.sh` detects it and lets the virtual environment use it). Without it, SimpleQuant opens in your browser instead.
-- Or manually: `python -m venv .venv`, install dependencies with `pip install -r requirements.txt`, run `python main.py` (add `--browser` to open in a browser).
+- Or manually: `python -m venv .venv`, install dependencies with `pip install -r requirements.txt -c constraints.txt`, run `python main.py` (add `--browser` to open in a browser).
+- Dependency versions: `constraints.txt` lists the tested versions (applies to Python 3.12 and later). The start scripts install them and reinstall automatically when the dependency files change; `requirements.txt` only sets minimum versions.
+- LiteLLM is optional: `pip install litellm -c constraints.txt`.
 - The source version keeps its data in `data_cache`, `user_strategies` and `user_factors` inside the project folder, separate from the installed version.
 
 ### Build

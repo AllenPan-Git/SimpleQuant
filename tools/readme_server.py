@@ -1,9 +1,11 @@
 """
-README 截图用的界面服务：python tools/readme_server.py zh|en light|dark 端口
+README 截图用的界面服务：python tools/readme_server.py zh|en light|dark 端口 [cb]
 - 界面偏好、模拟账户都放在临时目录，不读写你自己的偏好、历史和模拟账户
 - 预先放入：一次双均线回测（回测页、首页「继续上次的工作」）、两条最近的报告、一个运行了一段时间的模拟账户、
   一次资产配置（风险测评 C3、默认候选）
-- 行情数据读本机数据库（只读）：需要 510300 后复权日线、沪深300选股数据，以及资产配置默认候选的 ETF 日线
+- 加 cb：选股页的股票池改为「可转债（全市场）」，使用可转债的默认因子与条件
+- 行情数据读本机数据库（只读）：需要 510300 后复权日线、沪深300选股数据，以及资产配置默认候选的 ETF 日线；
+  加 cb 时还需要可转债数据
 """
 import datetime as dt
 import os
@@ -14,6 +16,7 @@ from pathlib import Path
 LANG = sys.argv[1] if len(sys.argv) > 1 else "zh"
 THEME = sys.argv[2] if len(sys.argv) > 2 else "light"
 PORT = int(sys.argv[3]) if len(sys.argv) > 3 else 8780
+CB = len(sys.argv) > 4 and sys.argv[4] == "cb"
 TMP = Path(tempfile.mkdtemp(prefix="sq_readme_"))
 os.environ["NICEGUI_STORAGE_PATH"] = str(TMP / "storage")
 ROOT = Path(__file__).resolve().parents[1]
@@ -78,6 +81,14 @@ al_sug = allocation.suggest(prof.level, prof.max_dd, al_used, al_R, al_cfg["reba
 state.STATE["al"] = {"answers": dict(answers), "result": dict(
     R=al_R, sleeves=al_used, errors=al_err, profile=prof, rebalance=al_cfg["rebalance"], suggestion=al_sug,
     weights=dict(al_sug["weights"]), res=al_sug["result"], shifted=al_sug["shifted"], manual=False)}
+
+
+# ---- 选股页：可转债（全市场） ----
+if CB:
+    import gui.pages.selection as selection_page  # noqa: E402
+    sp = selection_page.sp_state()
+    selection_page.switch_kind(sp, "stock", "cb")
+    sp["universe"] = "cb"
 
 
 # 数据库里的行情只到某一天：让模拟盘页以这天为「最新应有数据」，不显示「数据未更新」的提示

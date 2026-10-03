@@ -1,6 +1,7 @@
 """
 生成 README 用的图片：顶部横幅（中英文 × 浅色 / 深色）和软件截图（中英文界面）
-    .venv\\Scripts\\python tools\\readme_assets.py [banner|shots]   （不给参数则全部生成）
+    .venv\\Scripts\\python tools\\readme_assets.py [banner|shots [截图名称…]]   （不给参数则全部生成）
+    例：readme_assets.py shots selection-cb   只重拍可转债选股的中英文截图
 输出到 docs/images/。截图通过 tools/readme_server.py 启动界面（不动你的偏好和模拟账户），需要 Microsoft Edge。
 """
 
@@ -78,19 +79,26 @@ SHOTS = {
                   {"zh": ("回测结果", "每期选股", 32, -16), "en": ("Results", "Picks per period", 32, -16)}),
     "allocation": ("/allocation", [],
                    {"zh": ("参考配置", "权重与贡献", 32, -16), "en": ("Reference allocation", "Weights and contributions", 32, -16)}),
+    # 可转债选股：单独启动一次服务（readme_server.py 加 cb），选股页的股票池为「可转债（全市场）」
+    "selection-cb": ("/selection", [{"zh": "开始回测", "en": "Run backtest"}],
+                     {"zh": ("回测结果", "每期选股", 32, -16), "en": ("Results", "Picks per period", 32, -16)}),
 }
-WAIT = {"/selection": 30, "/optimize": 8, "/allocation": 8}
-CLICK_WAIT = {"/optimize": 45, "/selection": 40, "/paper": 3}
+# 按截图名称：打开页面后、点击后各等几秒
+WAIT = {"selection": 30, "selection-cb": 45, "optimize": 8, "allocation": 8}
+CLICK_WAIT = {"optimize": 45, "selection": 40, "selection-cb": 60, "paper": 3}
+# 每次启动服务截哪几张：(主题, 服务的附加参数, 截图名称)
+RUNS = [("light", [], [n for n in SHOTS if n != "selection-cb"]), ("dark", [], ["backtest"]),
+        ("light", ["cb"], ["selection-cb"])]
 
 
-def start_server(lang: str, theme: str) -> subprocess.Popen:
+def start_server(lang: str, theme: str, extra: list | None = None) -> subprocess.Popen:
     try:                                   # 端口上已有别的服务：截到的会是它的页面
         urllib.request.urlopen(f"http://127.0.0.1:{PORT}/", timeout=2)
         raise RuntimeError(f"port {PORT} is already in use; stop the other server first")
     except OSError:
         pass
-    proc = subprocess.Popen([PY, "-X", "utf8", str(ROOT / "tools" / "readme_server.py"), lang, theme, str(PORT)],
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    proc = subprocess.Popen([PY, "-X", "utf8", str(ROOT / "tools" / "readme_server.py"), lang, theme, str(PORT),
+                             *(extra or [])], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for _ in range(120):
         try:
             urllib.request.urlopen(f"http://127.0.0.1:{PORT}/", timeout=2)
@@ -101,17 +109,20 @@ def start_server(lang: str, theme: str) -> subprocess.Popen:
     raise RuntimeError("readme_server did not start")
 
 
-async def screenshots():
+async def screenshots(only: set | None = None):
     base = f"http://127.0.0.1:{PORT}"
     for lang in ("zh", "en"):
-        for theme, names in (("light", list(SHOTS)), ("dark", ["backtest"])):
-            proc = start_server(lang, theme)
+        for theme, extra, names in RUNS:
+            names = [n for n in names if not only or n in only]
+            if not names:
+                continue
+            proc = start_server(lang, theme, extra)
             try:
                 for name in names:
                     path, clicks, crop = SHOTS[name]
                     suffix = "" if theme == "light" else "-dark"
-                    await shoot(base + path, OUT / f"{name}-{lang}{suffix}.png", 1440, WAIT.get(path, 6),
-                                clicks=[(c[lang], CLICK_WAIT[path]) for c in clicks], crop=crop[lang])
+                    await shoot(base + path, OUT / f"{name}-{lang}{suffix}.png", 1440, WAIT.get(name, 6),
+                                clicks=[(c[lang], CLICK_WAIT[name]) for c in clicks], crop=crop[lang])
                     print(name, lang, theme)
             finally:
                 proc.kill()
@@ -124,4 +135,4 @@ if __name__ == "__main__":
     if what in ("all", "banner"):
         asyncio.run(banners())
     if what in ("all", "shots"):
-        asyncio.run(screenshots())
+        asyncio.run(screenshots(set(sys.argv[2:]) or None))

@@ -1,0 +1,19 @@
+# 由 tools/pin_versions.py 根据开发环境生成，是测试通过的版本。不要手动改，重新生成即可
+# start.bat / start.sh / CI 安装时使用：pip install -r requirements.txt -c constraints.txt
+# Python 3.12 以下装不了其中部分版本，因此不套用（按 requirements.txt 的下限安装最新版）
+backtrader==1.9.78.123; python_version >= "3.12"
+pandas==3.0.5; python_version >= "3.12"
+numpy==2.5.3; python_version >= "3.12"
+pyarrow==25.0.1; python_version >= "3.12"
+akshare==1.18.94; python_version >= "3.12"
+baostock==0.9.4; python_version >= "3.12"
+mootdx==0.11.7; python_version >= "3.12"
+nicegui==3.17.1; python_version >= "3.12"
+pywebview==6.2.1; python_version >= "3.12"
+plotly==7.1.0; python_version >= "3.12"
+matplotlib==3.11.1; python_version >= "3.12"
+pytest==9.1.1; python_version >= "3.12"
+pytest-asyncio==1.4.0; python_version >= "3.12"
+anthropic==1.9.0; python_version >= "3.12"
+openai==2.54.0; python_version >= "3.12"
+litellm==1.103.0; python_version >= "3.12"

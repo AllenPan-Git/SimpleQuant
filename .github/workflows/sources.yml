@@ -1,0 +1,58 @@
+# 数据源健康检查：每周一次，每个外部接口只取一只标的（tools/source_check.py）。
+# 失败时开一个 issue（已有未关闭的就追加评论），恢复后自动评论并关闭，这样能比用户更早发现接口变化。
+# 注意：公开仓库 60 天没有提交时，GitHub 会暂停定时任务，需在 Actions 页面重新启用。
+
+name: Data sources
+
+on:
+  schedule:
+    - cron: "0 1 * * 6"        # 每周六 01:00 UTC（北京时间 09:00）
+  workflow_dispatch:
+  push:
+    branches: ["ci/**"]
+    paths: ["tools/source_check.py", ".github/workflows/sources.yml"]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-22.04
+    env:
+      TITLE: 数据源检查失败
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          cache: pip
+      - name: Install
+        run: python -m pip install -r requirements.txt -c constraints.txt
+      - name: Check
+        id: check
+        run: python tools/source_check.py --markdown result.md --again 600
+        continue-on-error: true
+      - name: Summary
+        if: always()
+        run: |
+          RUN="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          printf '\n[运行记录](%s)\n' "$RUN" >> result.md
+          cat result.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Open or update issue
+        # 只有定时运行和手动运行才开 issue（ci/** 分支的推送只是测试本流程）
+        if: steps.check.outcome == 'failure' && github.event_name != 'push'
+        run: |
+          N=$(gh issue list --state open --search "$TITLE in:title" --json number -q '.[0].number')
+          if [ -n "$N" ]; then gh issue comment "$N" --body-file result.md
+          else gh issue create --title "$TITLE" --body-file result.md; fi
+      - name: Close issue when recovered
+        if: steps.check.outcome == 'success' && github.event_name != 'push'
+        run: |
+          N=$(gh issue list --state open --search "$TITLE in:title" --json number -q '.[0].number')
+          if [ -n "$N" ]; then gh issue close "$N" --comment "已恢复：$(head -1 result.md)"; fi
+      - name: Fail
+        if: steps.check.outcome == 'failure'
+        run: exit 1

@@ -162,9 +162,11 @@ class LiteLLMProvider(Provider):
     def chat(self, system, messages, schema=None, **extra):
         try:
             import litellm
-        except ImportError as e:   # 打包版不含 LiteLLM（体积太大）
-            raise LLMError("LiteLLM is not included in this build; use an OpenAI-compatible preset instead / "
-                           "此版本未包含 LiteLLM，请改用「OpenAI / 兼容 OpenAI 的接口」类服务商") from e
+        except ImportError as e:   # 打包版不含 LiteLLM（体积太大）；源码版是可选依赖，默认不安装
+            raise LLMError("LiteLLM is not installed (source version: pip install litellm -c constraints.txt); "
+                           "otherwise use an OpenAI-compatible preset / "
+                           "未安装 LiteLLM（源码版可执行 pip install litellm -c constraints.txt），"
+                           "或改用「OpenAI / 兼容 OpenAI 的接口」类服务商") from e
 
         kw = _openai_style_kwargs(self.cfg, system, messages, schema)
         if self.cfg.api_key:

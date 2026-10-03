@@ -15,4 +15,5 @@ pytest-asyncio      # 界面测试（nicegui.testing）
 # AI 功能（自然语言写策略 / 解读结果），按需安装其中之一即可
 anthropic>=1.0      # Claude
 openai>=2.0         # OpenAI 及兼容接口（DeepSeek、通义、Kimi、智谱、Ollama……）
-litellm             # 可选：统一接入上百家模型
+# 可选：LiteLLM（统一接入上百家模型）不在这里，需要时另行 pip install litellm -c constraints.txt。
+# 它要求 httpx>=0.28，mootdx 声明 httpx<0.26（实际可用 0.28），写在一起时 pip 无法求解

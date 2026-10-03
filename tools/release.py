@@ -6,6 +6,8 @@
     .venv\\Scripts\\python tools\\release.py --no-upload   只打包并生成发布文件（dist\\release\\<版本>\\），不打标签、不上传
     .venv\\Scripts\\python tools\\release.py --no-build    用已生成的发布文件直接上传（上次上传中断时）
     .venv\\Scripts\\python tools\\release.py --sign-only   只给 macOS / Linux 的清单签名（上次没等到 GitHub Actions 打包完时）
+    .venv\\Scripts\\python tools\\release.py publish     发布草稿：按 CHANGELOG.md 更新说明，等 Actions 全部通过后公开
+    .venv\\Scripts\\python tools\\release.py --publish   上传、签名之后接着发布（不再到网页上点 Publish）
     python tools/release.py ci                         GitHub Actions 里调用：生成本平台的清单（未签名）与补丁包并上传
 
 三个系统（PyInstaller 不能交叉编译）：
@@ -14,9 +16,10 @@
         dmg / tar.gz、补丁包、未签名的 manifest-<平台>.json 上传到同一个草稿；
         本机的 release.py 等它们上传完，下载这几个清单（很小）签名，再上传 .sig。私钥始终只在本机
 
-发布前：改好 simplequant/__init__.py 的版本号，测试通过，提交并推送到 GitHub。
-上传后：在 GitHub 打开草稿，检查发布说明（dist\\release\\<版本>\\release_notes.md 是初稿），点 Publish。
-        发布之后，用户的程序才会检测到新版本；草稿对外不可见。
+发布前：改好 simplequant/__init__.py 的版本号，在 CHANGELOG.md 把「未发布」改成「<版本>（日期）」，
+        测试通过，提交并推送到 GitHub。发布说明的「更新内容」「Changes」两节取自 CHANGELOG.md。
+上传后：草稿对外不可见；运行 release.py publish（或一开始就加 --publish）才公开，用户的程序这时才会检测到新版本。
+        发布前想改说明：改 CHANGELOG.md 后运行 publish 即可（会重新生成正文），也可以在网页上改好后点 Publish。
 
 补丁包：与之前最多 MAX_PATCHES 个版本各比一次，只打包变化的文件。旧版本的清单先找 dist\\release\\，
         没有就从 GitHub 下载（并验证签名）。打包时固定 PYTHONHASHSEED、SOURCE_DATE_EPOCH，
@@ -207,10 +210,26 @@ def make_release(version: str, installer: Path, token: str | None, app: Path = A
     return out
 
 
+def changelog(version: str, path: Path = ROOT / "CHANGELOG.md") -> tuple[str, str]:
+    """CHANGELOG.md 里该版本的「更新内容」「Changes」两节（版本标题形如「## 0.2.1（2026-10-05）」）"""
+    text = path.read_text(encoding="utf-8") if path.exists() else ""
+    m = re.search(rf"^## {re.escape(version)}(?![.\d]).*?$(.*?)(?=^## |\Z)", text, re.M | re.S)
+    if not m:
+        die(f"CHANGELOG.md 里没有 {version} 的条目：把「## 未发布」改成「## {version}（日期）」，提交后再运行")
+    parts = {}
+    for title in ("更新内容", "Changes"):
+        sec = re.search(rf"^### {title}\s*$(.*?)(?=^### |\Z)", m.group(1), re.M | re.S)
+        parts[title] = sec.group(1).strip() if sec else ""
+        if not parts[title]:
+            die(f"CHANGELOG.md 的 {version} 缺少「### {title}」一节")
+    return parts["更新内容"], parts["Changes"]
+
+
 def release_notes(version: str, installer: str) -> str:
     n = f"SimpleQuant-{version}"
+    zh, en = changelog(version)
     return (
-        f"## 更新内容\n- \n\n## 下载\n已安装 0.1.1 及以后版本的程序会自动检测并下载更新。首次安装请下载：\n\n"
+        f"## 更新内容\n{zh}\n\n## 下载\n已安装 0.1.1 及以后版本的程序会自动检测并下载更新。首次安装请下载：\n\n"
         f"| 系统 | 文件 |\n|---|---|\n"
         f"| Windows 10 / 11（64 位，无需管理员权限） | `{installer}` |\n"
         f"| macOS 11 及以上（Apple 芯片：M1 / M2 / M3 / M4…） | `{n}-macos-arm64.dmg` |\n"
@@ -219,7 +238,7 @@ def release_notes(version: str, installer: str) -> str:
         f"macOS 版未经 Apple 公证，第一次打开会被拦下：请在「系统设置 → 隐私与安全性」中点「仍要打开」，"
         f"或在终端运行 `xattr -dr com.apple.quarantine /Applications/SimpleQuant.app`。\n\n"
         f"> 本软件仅供学习与研究使用，不构成任何投资建议。\n\n---\n\n"
-        f"## Changes\n- \n\nInstalled copies (0.1.1 or later) update themselves. For a fresh install, download "
+        f"## Changes\n{en}\n\nInstalled copies (0.1.1 or later) update themselves. For a fresh install, download "
         f"`{installer}` (Windows), `{n}-macos-arm64.dmg` / `{n}-macos-x86_64.dmg` (macOS, Apple silicon / Intel) or "
         f"`{n}-linux-x86_64.tar.gz` (Linux). The macOS app is not notarized: on first launch, allow it under "
         f"System Settings → Privacy & Security → Open Anyway.\n\n"
@@ -348,7 +367,44 @@ def sign_unix(version: str, token: str, out_root: Path = OUT_ROOT, wait_min: flo
                 die(f"还没等到 {', '.join(pending)}；在 GitHub 的 Actions 页面查看打包进度，完成后运行 "
                     f"release.py --sign-only。未签名的平台不会收到自动更新")
             time.sleep(30)
-    print(f"\n全部平台已就绪：{rel['html_url']}\n请在 GitHub 上检查发布说明，然后点 Publish release。")
+    print(f"\n全部平台已就绪：{rel['html_url']}")
+
+
+# ---------- 发布草稿 ----------
+def publish(version: str, token: str, wait_min: float = CI_WAIT_MIN):
+    """按 CHANGELOG.md 重新生成说明；等该标签的 GitHub Actions 全部结束且通过、各平台清单都已签名，再公开"""
+    s = github(token)
+    tag = f"v{version}"
+    rel = find_release(s, tag)
+    if not rel:
+        die(f"没有找到 {tag} 的发布草稿")
+    if not rel["draft"]:
+        die(f"{tag} 已经发布过")
+    names = {a["name"] for a in rel["assets"]}
+    missing = [n for n in [mf.MANIFEST, mf.SIGNATURE, *(mf.signature_name(t) for t in UNIX_TARGETS)] if n not in names]
+    if missing:
+        die(f"草稿里还缺 {', '.join(missing)}；先运行 release.py --sign-only")
+    body = release_notes(version, f"SimpleQuant-{version}-Setup.exe")
+    sha = git("rev-list", "-n", "1", tag)
+    deadline = time.time() + wait_min * 60
+    print(f"等待 {tag} 的 GitHub Actions 全部结束（Intel Mac 最慢，整个运行约 25 分钟）…")
+    while True:
+        # 公开仓库查询运行状态不需要令牌（fine-grained 令牌未必有 Actions 权限）
+        runs = requests.get(f"{API}/actions/runs", params={"head_sha": sha, "event": "push"},
+                            timeout=30).json().get("workflow_runs", [])
+        runs = [r for r in runs if r["head_branch"] == tag]     # 同一提交先前推到 ci/** 分支的运行不算
+        if runs and all(r["status"] == "completed" for r in runs):
+            bad = [f"{r['name']}：{r['conclusion']}" for r in runs if r["conclusion"] != "success"]
+            if bad:
+                die(f"GitHub Actions 没有全部通过（{'；'.join(bad)}），不发布。确认无碍后可在网页上发布")
+            break
+        if time.time() > deadline:
+            die(f"等了 {wait_min} 分钟 GitHub Actions 还没结束；结束后再运行 release.py publish")
+        time.sleep(30)
+    # 修改发布草稿时必须同时传 tag_name，否则 GitHub 会把草稿的标签重置成 untagged-…
+    r = s.patch(f"{API}/releases/{rel['id']}", json={"tag_name": tag, "body": body, "draft": False}, timeout=30)
+    r.raise_for_status()
+    print(f"\n已发布：{r.json()['html_url']}")
 
 
 # ---------- GitHub Actions 里：本平台的清单与补丁 ----------
@@ -399,23 +455,28 @@ def ci(upload_to_release: bool):
 
 def main():
     ap = argparse.ArgumentParser(description="SimpleQuant 发布脚本")
-    ap.add_argument("command", nargs="?", default="release", choices=["release", "keygen", "ci"])
+    ap.add_argument("command", nargs="?", default="release", choices=["release", "keygen", "ci", "publish"])
     ap.add_argument("--force", action="store_true", help="keygen：覆盖已有密钥")
     ap.add_argument("--no-upload", action="store_true", help="只打包并生成发布文件")
     ap.add_argument("--no-build", action="store_true", help="用 dist\\release\\<版本> 里已有的文件上传")
     ap.add_argument("--yes", action="store_true", help="上传前不再确认")
     ap.add_argument("--sign-only", action="store_true", help="只给 GitHub Actions 上传的 macOS / Linux 清单签名")
     ap.add_argument("--upload", action="store_true", help="ci：上传到当前标签的发布草稿")
+    ap.add_argument("--publish", action="store_true", help="上传、签名之后接着发布（等 GitHub Actions 全部通过）")
     args = ap.parse_args()
     if args.command == "keygen":
         return keygen(args.force)
     if args.command == "ci":
         return ci(args.upload)
+    if args.command == "publish":
+        return publish(__version__, load_token())
     if args.sign_only:
-        return sign_unix(__version__, load_token())
+        sign_unix(__version__, load_token())
+        return publish(__version__, load_token()) if args.publish else None
 
     version = __version__
     print(f"SimpleQuant {version}")
+    changelog(version)          # 没写更新内容就不必打包
     token = None if args.no_upload else load_token()
     load_secret()
     if not args.no_upload:
@@ -432,6 +493,10 @@ def main():
         die("已取消")
     upload(version, out, token)
     sign_unix(version, token)
+    if args.publish:
+        publish(version, token)
+    else:
+        print("检查草稿无误后运行 release.py publish（也可在网页上点 Publish release）。")
 
 
 if __name__ == "__main__":

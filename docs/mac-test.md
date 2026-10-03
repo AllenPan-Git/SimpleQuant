@@ -55,7 +55,7 @@ curl -fsSL https://raw.githubusercontent.com/AllenPan-Git/SimpleQuant/ci/cross-p
 若电脑已安装 Python 3.10 及以上（终端运行 `python3 --version` 查看）：
 
 ```
-git clone -b ci/cross-platform https://github.com/AllenPan-Git/SimpleQuant.git
+git clone https://github.com/AllenPan-Git/SimpleQuant.git
 cd SimpleQuant && sh start.sh
 ```
 

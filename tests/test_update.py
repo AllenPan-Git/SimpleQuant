@@ -556,10 +556,46 @@ def test_release_patches_and_unix_manifest_checks(tmp_path):
             release.check_unix_manifest(bad_m, "1.1.0", "linux-x86_64", bad_assets)
 
 
-def test_release_targets_match_workflow():
+def test_release_targets_match_workflow(monkeypatch):
     release = _release()
     wf = (ROOT / ".github" / "workflows" / "build.yml").read_text(encoding="utf-8")
     for t in release.UNIX_TARGETS:
         assert f"target: {t}" in wf
+    monkeypatch.setattr(release, "changelog", lambda v: ("- 中文条目", "- English item"))
     notes = release.release_notes("1.2.3", "SimpleQuant-1.2.3-Setup.exe")
     assert all(f"SimpleQuant-1.2.3-{t}" in notes for t in release.UNIX_TARGETS)
+    assert "## 更新内容\n- 中文条目\n" in notes and "## Changes\n- English item\n" in notes
+
+
+def test_release_changelog(tmp_path):
+    release = _release()
+    p = tmp_path / "CHANGELOG.md"
+    p.write_text("# 更新记录\n\n## 未发布\n\n### 更新内容\n- 新的\n\n### Changes\n- new\n\n"
+                 "## 1.2.10（2026-10-05）\n\n### 更新内容\n- 甲\n  - 乙\n\n### Changes\n- A\n  - B\n\n"
+                 "## 1.2.1（2026-10-04）\n\n### 更新内容\n- 旧\n\n### Changes\n- old\n", encoding="utf-8")
+    assert release.changelog("1.2.10", p) == ("- 甲\n  - 乙", "- A\n  - B")
+    assert release.changelog("1.2.1", p) == ("- 旧", "- old")              # 不会匹配到 1.2.10
+    for v in ("1.2.2", "1.2"):
+        with pytest.raises(SystemExit):
+            release.changelog(v, p)
+    p.write_text("## 1.3.0\n\n### 更新内容\n- 甲\n", encoding="utf-8")    # 缺英文
+    with pytest.raises(SystemExit):
+        release.changelog("1.3.0", p)
+    zh, en = release.changelog("0.2.0")                                    # 仓库里的 CHANGELOG.md
+    assert zh.startswith("- ") and en.startswith("- ")
+
+
+# ---------------- 依赖版本 ----------------
+def test_constraints_cover_requirements():
+    sys.path.insert(0, str(ROOT / "tools"))
+    import pin_versions
+    pinned = {}
+    for line in (ROOT / "constraints.txt").read_text(encoding="utf-8").splitlines():
+        if line and not line.startswith("#"):
+            spec, marker = line.split(";")
+            name, ver = spec.split("==")
+            pinned[name.strip()] = ver.strip()
+            assert marker.strip() == f'python_version >= "{pin_versions.MIN_PYTHON}"'
+    assert set(pin_versions.names()) == set(pinned)          # 改了 requirements.txt 要重新运行 tools/pin_versions.py
+    for script in ("start.bat", "start.sh", ".github/workflows/build.yml", ".github/workflows/sources.yml"):
+        assert "-r requirements.txt -c constraints.txt" in (ROOT / script).read_text(encoding="utf-8"), script

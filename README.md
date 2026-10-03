@@ -60,6 +60,8 @@ A 股交易规则：100 股整手、按品种执行 T+1（股票与境内股票 
 
 <img src="docs/images/selection-zh.png" alt="多因子选股">
 
+<img src="docs/images/selection-cb-zh.png" alt="可转债选股">
+
 ### 资产配置
 参照证券公司投资者适当性管理的问卷进行风险测评（C1 保守型 ～ C5 进取型，并给出可承受的最大回撤），在现金、国债 ETF、宽基 ETF、黄金 ETF 以及自己的择时 / 选股策略之间给出参考配置：按风险等级确定大类比例，大类内部按风险平价分配，组合历史回撤超过可承受范围时自动提高稳健资产的比例。组合回测支持多种再平衡方式，并列出各成分的收益贡献、风险贡献与相关系数；权重可以手动调整后重新回测。
 
@@ -112,7 +114,9 @@ A 股交易规则：100 股整手、按品种执行 T+1（股票与境内股票 
 - **macOS / Linux**：在终端进入项目目录，运行 `sh start.sh`，首次运行同样自动完成安装。
   - macOS 系统自带的 Python 版本过低，请从 [python.org](https://www.python.org/downloads/) 或 Homebrew（`brew install python`）安装。
   - Linux 的桌面窗口使用系统的 GTK WebKit，Debian / Ubuntu 需安装：`sudo apt install python3-venv python3-gi gir1.2-webkit2-4.1`（`start.sh` 检测到后会让虚拟环境使用它）。缺少时程序自动改为在浏览器中打开。
-- 也可手动执行：`python -m venv .venv`，安装依赖 `pip install -r requirements.txt`，运行 `python main.py`（加 `--browser` 在浏览器中打开）。
+- 也可手动执行：`python -m venv .venv`，安装依赖 `pip install -r requirements.txt -c constraints.txt`，运行 `python main.py`（加 `--browser` 在浏览器中打开）。
+- 依赖版本：`constraints.txt` 记录经过测试的版本（Python 3.12 及以上适用），启动脚本按它安装，依赖文件更新后会自动重新安装；`requirements.txt` 只规定最低版本。
+- LiteLLM 为可选依赖，需要时执行 `pip install litellm -c constraints.txt`。
 - 源码版的数据保存在项目目录下的 `data_cache`、`user_strategies`、`user_factors`，与安装版相互独立。
 
 ### 打包

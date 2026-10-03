@@ -404,6 +404,7 @@ def test_describe_selection_both_languages():
 
 # ---------------- LiteLLM（mock_response） ----------------
 def test_litellm_provider():
+    pytest.importorskip("litellm")   # 可选依赖，不在 requirements.txt 里
     cfg = LLMConfig.from_preset("litellm", api_key="sk-x")
     cfg.model = "deepseek/deepseek-chat"
     reply = LiteLLMProvider(cfg).chat("sys", [{"role": "user", "content": "hi"}], LLM_SCHEMA,

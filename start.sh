@@ -16,7 +16,7 @@ if [ ! -x .venv/bin/python ]; then
         echo "Python 3.10 or newer is required."
         exit 1
     fi
-    echo "首次运行，正在创建虚拟环境并安装依赖，请稍候……（$PY）"
+    echo "首次运行，正在创建虚拟环境，请稍候……（$PY）"
     # Linux 的桌面窗口用系统的 GTK 绑定（python3-gi），它不能用 pip 直接装；系统里有时让虚拟环境能用到它
     SITE=""
     if [ "$(uname)" = "Linux" ] && "$PY" -c 'import gi' 2>/dev/null; then
@@ -27,6 +27,11 @@ if [ ! -x .venv/bin/python ]; then
         rm -rf .venv
         exit 1
     fi
-    .venv/bin/python -m pip install -r requirements.txt || exit 1
+fi
+# requirements.txt 或 constraints.txt 与上次安装时不同（包括第一次运行）才安装依赖；装好后各存一份到 .venv 里用来比较
+if ! cmp -s requirements.txt .venv/requirements.txt || ! cmp -s constraints.txt .venv/constraints.txt; then
+    echo "正在安装依赖，请稍候……"
+    .venv/bin/python -m pip install -r requirements.txt -c constraints.txt || exit 1
+    cp requirements.txt constraints.txt .venv/
 fi
 exec .venv/bin/python main.py "$@"

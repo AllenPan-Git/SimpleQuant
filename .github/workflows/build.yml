@@ -1,4 +1,4 @@
-# macOS / Linux 版：测试、打包、冒烟测试（PyInstaller 不能交叉编译，只能在各自的系统上打包）
+# 三平台测试；macOS / Linux 版打包、冒烟测试（PyInstaller 不能交叉编译，只能在各自的系统上打包）
 #
 # 触发：
 #   - 推送 v* 标签（tools/release.py 发版时）：打包后把 dmg / tar.gz、补丁包、未签名的清单上传到该标签的发布草稿，
@@ -31,8 +31,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, macos-14]
+        os: [ubuntu-22.04, macos-14, windows-latest]
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash            # Windows 上也用 Git Bash（下面的重定向语法；从 PowerShell 7 启动时更新脚本的测试会找不到 Get-FileHash）
+    env:
+      PYTHONIOENCODING: utf-8  # Windows 运行器的默认代码页不是 GBK / UTF-8，pytest 输出中文时会报错
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -40,7 +45,7 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
       - name: Install
-        run: python -m pip install -r requirements.txt
+        run: python -m pip install -r requirements.txt -c constraints.txt
       - name: Test
         run: python -m pytest -q -p no:cacheprovider > step.log 2>&1 || { tail -80 step.log; eval "$SHOW_TAIL"; exit 1; }
 
@@ -67,8 +72,8 @@ jobs:
         run: sudo apt-get update -q && sudo apt-get install -y -q $LINUX_APT
       - name: Install
         run: |
-          python -m pip install -r requirements.txt pyinstaller pillow
-          if [ "$RUNNER_OS" = "Linux" ]; then python -m pip install "pywebview[qt]"; fi
+          python -m pip install -r requirements.txt -c constraints.txt pyinstaller pillow
+          if [ "$RUNNER_OS" = "Linux" ]; then python -m pip install "pywebview[qt]" -c constraints.txt; fi
       - name: Check target
         run: test "$(python -c 'from simplequant.system import TARGET; print(TARGET)')" = "${{ matrix.target }}"
       - name: Build

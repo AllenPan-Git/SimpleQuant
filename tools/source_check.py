@@ -32,22 +32,17 @@ def need(df, columns=(), min_rows=1):
 
 
 # ---------------- 东方财富 ----------------
+# 日线直接调用各个接口（AKShareSource.fetch 在一个接口失败时会静默改用备用接口，测不出来）
 def em_etf():
-    from simplequant.data.akshare_src import AKShareSource
-    df = AKShareSource().fetch("510300", START, END, adjust="hfq", asset="etf")
-    if df.attrs.get("provider") != "eastmoney":     # 东方财富失败时会静默改用新浪
-        raise AssertionError(f"fell back to {df.attrs.get('provider')}")
-    return need(df, ["open", "high", "low", "close", "volume"])
+    from simplequant.data.akshare_src import eastmoney
+    from simplequant.data.base import normalize
+    return need(normalize(eastmoney("510300", START, END, "hfq", "etf")), ["open", "high", "low", "close", "volume"])
 
 
 def em_stock():
-    from simplequant.data.akshare_src import AKShareSource
-    return need(AKShareSource().fetch("600519", START, END, adjust="hfq", asset="stock"), ["close", "volume"])
-
-
-def em_index():
-    from simplequant.data.akshare_src import AKShareSource
-    return need(AKShareSource().fetch("000300", START, END, asset="index"), ["close"])
+    from simplequant.data.akshare_src import eastmoney
+    from simplequant.data.base import normalize
+    return need(normalize(eastmoney("600519", START, END, "hfq", "stock")), ["close", "volume", "turnover"])
 
 
 def em_rights():
@@ -76,8 +71,18 @@ def em_cb_info():
 
 # ---------------- 新浪 ----------------
 def sina_etf():
-    from simplequant.data.akshare_src import sina_etf as fetch
-    return need(fetch("510300", "hfq"), ["date", "close", "volume"], min_rows=100)
+    from simplequant.data import sina
+    return need(sina.etf("510300", "hfq"), ["open", "high", "low", "close", "volume"], min_rows=100)
+
+
+def sina_stock():
+    from simplequant.data import sina
+    return need(sina.stock("600519", "hfq"), ["open", "high", "low", "close", "volume", "turnover"], min_rows=100)
+
+
+def sina_index():
+    from simplequant.data import sina
+    return need(sina.index("000300"), ["open", "high", "low", "close", "volume"], min_rows=100)
 
 
 def sina_cb_daily():
@@ -137,12 +142,13 @@ CB_CODE = "113052"   # 兴业转债（规模大、存续期长）
 CHECKS = [
     ("东方财富 ETF 日线", em_etf),
     ("东方财富 股票日线", em_stock),
-    ("东方财富 指数日线", em_index),
     ("东方财富 配股", em_rights),
     ("东方财富 可转债列表", em_cb_list),
     ("东方财富 可转债价值分析", em_cb_value),
     ("东方财富 可转债条款", em_cb_info),
     ("新浪 ETF 日线与分红", sina_etf),
+    ("新浪 股票日线、复权因子与流通股本", sina_stock),
+    ("新浪 指数日线", sina_index),
     ("新浪 可转债日线", sina_cb_daily),
     ("BaoStock", baostock),
     ("中证指数官网 中证转债指数", csindex),
@@ -180,6 +186,9 @@ def main():
 
 def run(fn):
     """返回 (是否通过, 用时, 说明)；失败时把异常栈打到 stderr"""
+    from simplequant.data import net, sina
+    net.reset()           # 每项单独检查：不受前一项失败后「暂停访问」的影响
+    sina.clear_cache()
     t0 = time.time()
     try:
         detail, ok = fn(), True

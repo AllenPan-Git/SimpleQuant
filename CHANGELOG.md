@@ -10,10 +10,16 @@ Changes in each release. `tools/release.py` copies the matching section into the
 ### 更新内容
 - 从源码运行：依赖按经过测试的版本安装（`constraints.txt`，Python 3.12 及以上适用），依赖文件更新后，启动脚本自动重新安装
 - 从源码运行：LiteLLM 改为可选依赖（`pip install litellm -c constraints.txt`）。此前它与 mootdx 的依赖版本冲突，可能导致首次安装失败
+- AKShare 数据源：东方财富无法连接时，股票日线也自动改用新浪财经（等比复权，与 BaoStock 一致；此前只有 ETF 有备用接口）；东方财富失败后 15 分钟内直接使用新浪，无需每次等待重试
+- AKShare 数据源：指数日线改为新浪财经优先、中证指数官网备用（东方财富指数接口经常无法获取数据）
+- 新浪财经访问统一限速，被限制访问（HTTP 456）时立即暂停访问，不再反复重试；各接口均失败时分别列出原因
 
 ### Changes
 - Running from source: dependencies are installed at tested versions (`constraints.txt`, Python 3.12 and later); the start scripts reinstall them when the dependency files change
 - Running from source: LiteLLM is now optional (`pip install litellm -c constraints.txt`); its dependency conflict with mootdx could make the first install fail
+- AKShare source: stock daily bars now also fall back to Sina Finance when Eastmoney is unreachable (proportional adjustment, matching BaoStock; previously only ETFs had a fallback); after an Eastmoney failure, Sina is used directly for 15 minutes instead of retrying each time
+- AKShare source: index daily bars now come from Sina Finance first, with the CSI website as a fallback (Eastmoney's index interface often failed)
+- Requests to Sina Finance share one rate limit; when Sina restricts access (HTTP 456), requests pause immediately instead of retrying, and when every interface fails each reason is listed
 
 ## 0.2.0（2026-10-03）
 

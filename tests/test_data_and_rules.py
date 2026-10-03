@@ -70,31 +70,25 @@ def test_resample_bars():
 
 @pytest.fixture
 def fake_akshare(monkeypatch):
-    """东方财富接口连不上、新浪可用（不联网）"""
+    """东方财富接口连不上、新浪可用（不联网）；返回东方财富被调用的次数"""
     import akshare as ak
-    from simplequant.data import akshare_src
+    from simplequant.data import net, sina
+
+    em_calls = []
 
     def em_down(**kw):
+        em_calls.append(kw)
         raise ConnectionError("Remote end closed connection without response")
-    sina = pd.DataFrame({"date": pd.bdate_range("2024-01-02", periods=5).strftime("%Y-%m-%d"),
-                         "open": 4.0, "high": 4.1, "low": 3.9, "close": 4.05, "volume": 1e6})
+    bars = pd.DataFrame({"open": 4.0, "high": 4.1, "low": 3.9, "close": 4.05, "volume": 1e6},
+                        index=pd.bdate_range("2024-01-02", periods=5))
     monkeypatch.setattr(ak, "fund_etf_hist_em", em_down)
-    monkeypatch.setattr(ak, "fund_etf_hist_sina", lambda symbol: sina)
-    # 新浪累计分红：2024-01-04 除息 0.1（之前还有一次，累计 0.3 → 0.4）
-    monkeypatch.setattr(ak, "fund_etf_dividend_sina", lambda symbol: pd.DataFrame(
-        {"日期": ["2023-06-01", "2024-01-04"], "累计分红": [0.3, 0.4]}))
-    monkeypatch.setattr(akshare_src, "with_retry",
-                        lambda fn, retries=3, wait=1.5: _retry_no_sleep(fn, retries))
-
-
-def _retry_no_sleep(fn, retries):
-    err = None
-    for _ in range(retries):
-        try:
-            return fn()
-        except Exception as e:  # noqa: BLE001
-            err = e
-    raise RuntimeError(str(err)) from err
+    monkeypatch.setattr(ak, "stock_zh_a_hist", em_down)
+    monkeypatch.setattr(sina, "kline", lambda sym, index=False: bars.copy())
+    # 新浪复权表：ETF 的 f 恒为 1，u 为累计分红：2024-01-04 除息 0.1（之前还有一次，累计 0.3 → 0.4）
+    monkeypatch.setattr(sina, "adjust_table", lambda sym: pd.DataFrame(
+        {"f": [1.0, 1.0], "u": [0.3, 0.4]}, index=pd.to_datetime(["2023-06-01", "2024-01-04"])))
+    monkeypatch.setattr(net.time, "sleep", lambda s: None)
+    return em_calls
 
 
 def test_akshare_sina_fallback_rebuilds_adjusted_prices(fake_akshare):
@@ -113,15 +107,120 @@ def test_akshare_sina_fallback_rebuilds_adjusted_prices(fake_akshare):
     assert (hfq["close"] - qfq["close"]).round(6).nunique() == 1             # 两种复权只差一个常数
 
 
-def test_akshare_both_sources_down(fake_akshare, monkeypatch):
-    import akshare as ak
-    from simplequant.data import AKShareSource
+def test_eastmoney_paused_after_failure(fake_akshare):
+    """东方财富重试后仍连不上：之后直接用新浪，不再每次先等东方财富失败"""
+    from simplequant.data import AKShareSource, net
+    src = AKShareSource()
+    src.fetch("510300", "2024-01-01", "2024-01-31", adjust="", asset="etf")
+    assert len(fake_akshare) == 3                                            # 第一次：重试 3 次
+    assert net.paused("eastmoney") is not None
+    src.fetch("510300", "2024-01-01", "2024-01-31", adjust="hfq", asset="etf")
+    src.fetch("600519", "2024-01-01", "2024-01-31", adjust="", asset="stock")
+    assert len(fake_akshare) == 3                                            # 暂停期间不再访问
+    net.reset("eastmoney")
+    src.fetch("510300", "2024-01-01", "2024-01-31", adjust="", asset="etf")
+    assert len(fake_akshare) == 6                                            # 恢复后重新优先东方财富
 
-    def down(**kw):
+
+def test_sina_stock_proportional_adjustment(fake_akshare, monkeypatch):
+    """新浪股票：等比复权（不复权价 × 后复权因子）；前复权最新价等于真实价；换手率按流通股本算成百分比"""
+    from simplequant.data import AKShareSource, sina
+    monkeypatch.setattr(sina, "adjust_table", lambda sym: pd.DataFrame(
+        {"f": [1.0, 2.0]}, index=pd.to_datetime(["2000-01-01", "2024-01-04"])))
+    monkeypatch.setattr(sina, "float_shares", lambda sym: pd.Series([1e8], index=pd.to_datetime(["2000-01-01"])))
+    src = AKShareSource()
+    hfq = src.fetch("600519", "2024-01-01", "2024-01-31", adjust="hfq", asset="stock")
+    assert hfq.attrs["provider"] == "sina+factors"
+    assert hfq["close"].round(2).tolist() == [4.05, 4.05, 8.1, 8.1, 8.1]
+    qfq = src.fetch("600519", "2024-01-01", "2024-01-31", adjust="qfq", asset="stock")
+    assert qfq["close"].round(3).tolist() == [2.025, 2.025, 4.05, 4.05, 4.05]
+    assert qfq["volume"].iloc[0] == pytest.approx(1e4)
+    assert qfq["turnover"].iloc[0] == pytest.approx(1.0)                     # 1e6 / 1e8 = 1%
+
+
+def test_index_sina_then_csindex(fake_akshare, monkeypatch):
+    """指数：新浪优先；新浪没有的（如部分中证指数）用中证官网，节假日起始的重复行去掉、缺失的开高低用收盘价"""
+    import akshare as ak
+    from simplequant.data import AKShareSource, sina
+    src = AKShareSource()
+    assert src.fetch("000300", "2024-01-01", "2024-01-31", adjust="", asset="index").attrs["provider"] == "sina"
+    assert fake_akshare == []                                                # 指数不访问东方财富
+
+    def no_sina(sym, index=False):
+        raise ValueError("Sina has no data")
+    monkeypatch.setattr(sina, "kline", no_sina)
+    monkeypatch.setattr(ak, "stock_zh_index_hist_csindex", lambda **kw: pd.DataFrame({
+        "日期": ["2024-01-01", "2024-01-02", "2024-01-03"], "开盘": [None, None, 10.2], "最高": [None, None, 10.3],
+        "最低": [None, None, 10.0], "收盘": [10.1, 10.1, 10.2], "成交量": [5e6, 5e6, 6e6]}))
+    df = src.fetch("931151", "2024-01-01", "2024-01-31", adjust="", asset="index")
+    assert df.attrs["provider"] == "csindex"
+    assert df.index.strftime("%Y-%m-%d").tolist() == ["2024-01-02", "2024-01-03"]
+    assert df["open"].iloc[0] == 10.1 and df["volume"].iloc[1] == pytest.approx(6e4)
+
+
+def test_akshare_all_sources_down(fake_akshare, monkeypatch):
+    from simplequant.data import AKShareSource, sina
+
+    def down(sym, index=False):
         raise ConnectionError("sina down")
-    monkeypatch.setattr(ak, "fund_etf_hist_sina", lambda symbol: down())
-    with pytest.raises(RuntimeError, match="都暂时连不上"):
+    monkeypatch.setattr(sina, "kline", down)
+    with pytest.raises(RuntimeError, match="各数据接口均无法获取数据") as e:
         AKShareSource().fetch("510300", "2024-01-01", "2024-01-31", adjust="qfq", asset="etf")
+    assert "东方财富" in str(e.value) and "新浪财经" in str(e.value)
+
+
+def test_net_call_retry_and_pause(monkeypatch):
+    """只有网络错误才重试；重试后仍失败、或被封（456）时暂停该网站；数据问题不重试也不暂停"""
+    from simplequant.data import net
+    monkeypatch.setattr(net.time, "sleep", lambda s: None)
+    calls = []
+
+    def flaky():
+        calls.append(1)
+        if len(calls) < 3:
+            raise ConnectionError("reset")
+        return "ok"
+    assert net.call("x", flaky) == "ok" and len(calls) == 3 and net.paused("x") is None
+
+    def bad_data():
+        calls.append(1)
+        raise ValueError("cannot parse")
+    calls.clear()
+    with pytest.raises(ValueError):
+        net.call("x", bad_data)
+    assert len(calls) == 1 and net.paused("x") is None
+
+    def blocked():
+        calls.append(1)
+        raise net.Blocked("Sina HTTP 456")
+    calls.clear()
+    with pytest.raises(net.Blocked):
+        net.call("sina", blocked)
+    assert len(calls) == 1                                                   # 被封：不重试
+    with pytest.raises(net.Paused, match="新浪财经近期无法连接"):
+        net.call("sina", lambda: "never")
+
+
+def test_sina_http_status(monkeypatch):
+    """新浪：456 / 403 视为被封，404 视为没有这个代码"""
+    import requests
+    from simplequant.data import net, sina
+
+    class Resp:
+        def __init__(self, code):
+            self.status_code, self.text = code, "var x={}"
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise requests.HTTPError(response=self)
+    for code, exc in ((456, net.Blocked), (403, net.Blocked), (404, net.NotFound)):
+        monkeypatch.setattr(requests, "get", lambda url, **kw: Resp(code))
+        with pytest.raises(exc):
+            sina.get("https://example.com")
+    assert not net.is_network_error(requests.HTTPError(response=Resp(404)))
+    assert net.is_network_error(requests.HTTPError(response=Resp(502)))
+    assert sina.symbol_of("000300", "index") == "sh000300" and sina.symbol_of("399006", "index") == "sz399006"
+    assert sina.symbol_of("000001", "stock") == "sz000001"
 
 
 def test_library_records_provider(fake_akshare, tmp_path, monkeypatch):

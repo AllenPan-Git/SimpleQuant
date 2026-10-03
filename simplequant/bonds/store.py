@@ -17,13 +17,12 @@
 import datetime as dt
 import json
 import re
-import threading
-import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import pandas as pd
 
+from ..data import net
 from ..data.base import with_retry
 from ..paths import CACHE_DIR
 
@@ -155,19 +154,6 @@ def sina_symbol(code: str) -> str:
 
 
 # ---------------- 网络 ----------------
-_SINA_LOCK = threading.Lock()
-_SINA_LAST = [0.0]
-SINA_INTERVAL = 0.25             # 新浪对频繁抓取会封 IP：所有线程合计每秒最多 4 次
-
-
-def _sina_throttle():
-    with _SINA_LOCK:
-        wait = _SINA_LAST[0] + SINA_INTERVAL - time.time()
-        if wait > 0:
-            time.sleep(wait)
-        _SINA_LAST[0] = time.time()
-
-
 def fetch_list() -> pd.DataFrame:
     import akshare as ak
     raw = pd.DataFrame(with_retry(ak.bond_zh_cov, retries=4, wait=2.0))
@@ -182,15 +168,11 @@ def fetch_list() -> pd.DataFrame:
 def fetch_daily(code: str) -> pd.DataFrame:
     import akshare as ak
 
-    def get():
-        _sina_throttle()
-        return ak.bond_zh_hs_cov_daily(symbol=sina_symbol(code))
-    try:
-        return pd.DataFrame(with_retry(get, retries=3, wait=2.0))
-    except RuntimeError as e:
-        if isinstance(e.__cause__, (KeyError, TypeError, IndexError)):   # 新浪没有这只（返回内容解析不出）
-            return pd.DataFrame()
-        raise
+    try:      # 与 ETF / 股票日线共用新浪的限速与暂停（data/net.py）
+        return pd.DataFrame(net.call("sina", lambda: ak.bond_zh_hs_cov_daily(symbol=sina_symbol(code)),
+                                     retries=3, wait=2.0))
+    except (KeyError, TypeError, IndexError):       # 新浪没有这只（返回内容解析不出）
+        return pd.DataFrame()
 
 
 def fetch_value(code: str, since: str | None = None) -> pd.DataFrame:

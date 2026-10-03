@@ -39,14 +39,14 @@ TEXT.update({
     "home.sources_table": L("""
 | 数据源 | 频率 | 适用场景 |
 |---|---|---|
-| **AKShare** | 日线 | ETF、股票、指数日线，支持复权，推荐优先使用 |
+| **AKShare** | 日线 | ETF、股票、指数日线，支持复权，推荐优先使用；东方财富无法连接时自动改用新浪财经 |
 | **BaoStock** | 日线、5/15/30/60 分钟 | 股票分钟线（约自 2000 年起）；ETF 分钟线仅覆盖近期 |
 | **通达信本地文件** | 日线、1/5 分钟 | 需先在通达信客户端执行「盘后数据下载」，再由本软件读取；免费且稳定 |
 | **CSV 导入** | 任意 | 自有数据；含 `last` 列的快照或 Tick 数据将自动合成为 K 线 |
 """, """
 | Source | Frequency | Best for |
 |---|---|---|
-| **AKShare** | Daily | Daily ETF, stock and index bars with price adjustment. Recommended default |
+| **AKShare** | Daily | Daily ETF, stock and index bars with price adjustment. Recommended default; switches to Sina Finance automatically when Eastmoney is unreachable |
 | **BaoStock** | Daily, 5/15/30/60 min | Stock intraday bars (from about 2000); ETF intraday data covers recent periods only |
 | **TDX local files** | Daily, 1/5 min | Download after-hours data in the TDX client first, then read it here. Free and reliable |
 | **CSV import** | Any | Your own data; snapshots or ticks with a `last` column are converted into bars |
@@ -92,7 +92,10 @@ TEXT.update({
                           "Run the backtest with the current settings to include its picks. Without it, the platform version can still be exported, but without the overlap check."),
     "lib.download_csv": L("下载 CSV", "Download CSV"),
     "prov.eastmoney": L("东方财富", "Eastmoney"),
-    "prov.sina": L("新浪·不复权", "Sina · unadjusted"),
+    "prov.sina": L("新浪财经", "Sina Finance"),
+    "prov.sina+dividends": L("新浪财经·行情与累计分红", "Sina Finance · prices and cumulative dividends"),
+    "prov.sina+factors": L("新浪财经·等比复权", "Sina Finance · proportional adjustment"),
+    "prov.csindex": L("中证指数官网", "CSI website"),
     "adj.hfq": L("后复权", "Back-adjusted"),
     "adj.qfq": L("前复权", "Forward-adjusted"),
     "adj.none": L("不复权", "Unadjusted"),

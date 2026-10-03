@@ -164,7 +164,7 @@ def _status(row, icon: str, color: str, text: str, detail: str = ""):
         ui.icon(icon).classes(color)
         ui.label(text)
         if detail:
-            ui.label(detail).classes("text-sm text-negative")
+            ui.label(detail).classes("text-sm text-negative").style("white-space: pre-line")   # 各接口的原因分行显示
 
 
 # ---------------- 导入 CSV ----------------

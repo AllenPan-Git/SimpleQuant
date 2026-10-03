@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
   push:
     branches: ["ci/**"]
-    paths: ["tools/source_check.py", ".github/workflows/sources.yml"]
+    paths: ["tools/source_check.py", ".github/workflows/sources.yml", "simplequant/data/**"]
 
 permissions:
   contents: read

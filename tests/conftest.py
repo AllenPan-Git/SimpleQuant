@@ -26,3 +26,14 @@ def make_prices(n=400, freq="B", seed=0, start="2021-01-04", drift=0.0003, amp=0
 @pytest.fixture
 def prices():
     return make_prices()
+
+
+@pytest.fixture(autouse=True)
+def _reset_data_sites():
+    """数据接口的「暂停访问」状态与新浪缓存是进程级的，每个测试前后清空"""
+    from simplequant.data import net, sina
+    net.reset()
+    sina.clear_cache()
+    yield
+    net.reset()
+    sina.clear_cache()

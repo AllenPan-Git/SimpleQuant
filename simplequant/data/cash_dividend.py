@@ -27,7 +27,7 @@ import pandas as pd
 
 from ..paths import CACHE_DIR
 from . import library
-from .base import exchange_prefix, with_retry
+from .base import exchange_prefix
 
 UNADJ_DIR = CACHE_DIR / "unadjusted"
 FUND_DIV_DIR = CACHE_DIR / "fund_div"
@@ -91,9 +91,8 @@ def fund_dividends(symbol: str, today: dt.date | None = None) -> pd.DataFrame:
     if path.exists() and dt.date.fromtimestamp(path.stat().st_mtime) >= today:
         return pd.read_parquet(path)
     try:
-        import akshare as ak
-        full = exchange_prefix(symbol) + symbol
-        df = fund_events_from_cumulative(pd.DataFrame(with_retry(lambda: ak.fund_etf_dividend_sina(symbol=full))))
+        from .sina import fund_dividends as sina_dividends
+        df = fund_events_from_cumulative(sina_dividends(symbol))
     except Exception:  # noqa: BLE001 - 网络问题：有缓存就用缓存
         if path.exists():
             return pd.read_parquet(path)

@@ -18,17 +18,20 @@ PAGES = [
     ("/optimize", "nav.optimize", "grid_on"),
     ("/selection", "nav.selection", "filter_list"),
     ("/paper", "nav.paper", "account_balance_wallet"),
+    ("/allocation", "nav.allocation", "pie_chart"),
     ("/settings", "nav.settings", "smart_toy"),
 ]
 
-# 两条工作流程，顶部步骤条按当前流程显示
+# 三条工作流程，顶部步骤条按当前流程显示
 FLOWS = {
     "timing": ["/data", "/strategy", "/backtest", "/optimize", "/paper"],
     "selection": ["/data", "/selection", "/paper"],
+    "allocation": ["/data", "/allocation"],
 }
-FLOW_HOME = {"timing": "/strategy", "selection": "/selection"}
+FLOW_HOME = {"timing": "/strategy", "selection": "/selection", "allocation": "/allocation"}
 STEP_KEY = {"/data": "step.data", "/strategy": "step.strategy", "/backtest": "step.backtest",
-            "/optimize": "step.optimize", "/selection": "step.selection", "/paper": "step.paper"}
+            "/optimize": "step.optimize", "/selection": "step.selection", "/paper": "step.paper",
+            "/allocation": "step.allocation"}
 
 _THEMES = [(None, "brightness_auto"), (False, "light_mode"), (True, "dark_mode")]
 
@@ -37,6 +40,8 @@ def flow_of(route: str) -> str:
     """当前页面属于哪条流程；数据、模拟盘等两条流程共用的页面沿用上次的流程"""
     if route == "/selection":
         flow = "selection"
+    elif route == "/allocation":
+        flow = "allocation"
     elif route in ("/strategy", "/backtest", "/optimize"):
         flow = "timing"
     else:
@@ -71,6 +76,11 @@ def step_info(route: str) -> tuple[bool, str]:
         if route == "/selection":
             res = (S.get("sp") or {}).get("result")
             return (True, pct(res[0].metrics["total_return"])) if res else (False, t("step.not_started"))
+        if route == "/allocation":
+            from simplequant.allocation import load_profile, LEVELS
+            from simplequant.i18n import pick
+            prof = load_profile()
+            return (True, f"C{prof.level} {pick(LEVELS[prof.level], lang())}") if prof else (False, t("step.not_started"))
         if route == "/paper":
             n = len(list_accounts())
             return n > 0, t("step.n_accounts", n=n) if n else t("step.not_started")

@@ -17,7 +17,7 @@ from nicegui import app, ui  # noqa: E402
 
 from gui import theme  # noqa: E402
 from gui.layout import PAGES  # noqa: E402
-from gui.pages import home, data, strategy, backtest, optimize, selection, paper, settings  # noqa: E402
+from gui.pages import home, data, strategy, backtest, optimize, selection, paper, settings, allocation  # noqa: E402
 
 ICON = Path(__file__).with_name("static") / "icon.png"
 
@@ -31,6 +31,7 @@ ROUTES = {
     "/selection": selection.page,
     "/paper": paper.page,
     "/settings": settings.page,
+    "/allocation": allocation.page,
 }
 
 

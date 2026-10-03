@@ -54,12 +54,13 @@ def _gapless(fig, index: pd.DatetimeIndex, intraday: bool):
         fig.update_xaxes(rangebreaks=[dict(values=missing.strftime("%Y-%m-%d").tolist())])
 
 
-def equity_chart(equity: pd.DataFrame, lang: str = "zh", benchmark_label: str | None = None) -> go.Figure:
+def equity_chart(equity: pd.DataFrame, lang: str = "zh", benchmark_label: str | None = None,
+                 strategy_label: str | None = None) -> go.Figure:
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.06,
                         subplot_titles=(tr("chart.equity", lang), tr("chart.drawdown", lang)))
     intraday = _intraday(equity.index)
     x = _x(equity.index, intraday)
-    fig.add_trace(go.Scatter(x=x, y=equity["value"], name=tr("chart.strategy", lang),
+    fig.add_trace(go.Scatter(x=x, y=equity["value"], name=strategy_label or tr("chart.strategy", lang),
                              line=dict(color=STRATEGY, width=2), hovertemplate="%{y:,.0f}"), row=1, col=1)
     fig.add_trace(go.Scatter(x=x, y=equity["benchmark"], name=benchmark_label or tr("chart.benchmark", lang),
                              line=dict(color=BENCHMARK, width=1.5, dash="dot"), hovertemplate="%{y:,.0f}"),

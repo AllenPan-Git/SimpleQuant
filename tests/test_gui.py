@@ -3,6 +3,7 @@
 import asyncio
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 from nicegui import ui
@@ -46,6 +47,8 @@ def isolated(tmp_path, monkeypatch):
         monkeypatch.setattr(fn, "__defaults__", (d,))
     from simplequant.stocks import custom_factors
     monkeypatch.setattr(custom_factors, "FACTOR_DIR", tmp_path / "factors")
+    from simplequant import allocation
+    monkeypatch.setattr(allocation, "ROOT", tmp_path / "allocation")      # 风险测评与配置设置
     custom_factors.load_all()
     yield
     state.reset()
@@ -1046,3 +1049,68 @@ async def test_paper_selection_account_flow(user: User, paper_dir):
     fills = acc.fills()
     assert (fills.loc[fills["side"] == "buy", "size"] % 100 == 0).all()
     assert acc.state()["positions"]
+
+
+# ---------------- 资产配置 ----------------
+async def test_allocation_flow(user: User, lib_dir):
+    from simplequant import allocation as A
+    _save_prices("511010", n=600, name="国债ETF")
+    _save_prices("510300", n=600, name="沪深300ETF")
+    cfg = A.load_config()
+    cfg["enabled"] = ["cash", "hold_511010", "hold_510300"]
+    A.save_config(cfg)
+
+    await user.open("/allocation")
+    await user.should_see("风险测评")
+    user.find(marker="al_submit").click()
+    await user.should_see("尚有 10 题未作答")                    # 未答完不能提交
+    for q in A.QUESTIONS:
+        user.find(marker=f"al_q:{q['key']}").elements.pop().set_value(2)
+    user.find(marker="al_submit").click()
+    await settle()
+    prof = A.load_profile()
+    assert prof is not None and prof.level == A.evaluate({q["key"]: 2 for q in A.QUESTIONS}).level
+    await user.should_see("风险承受能力：")
+
+    await user.should_not_see(marker="al_download")            # 选用的候选数据都在本地
+    user.find(marker="al_run").click()
+    AL = state.STATE["al"]
+    assert await _wait(lambda: AL.get("result"))
+    r = AL["result"]
+    assert set(r["R"].columns) == {"cash", "hold_511010", "hold_510300"} and not r["errors"]
+    assert np.isclose(sum(r["weights"].values()), 1)
+    await user.should_see("参考配置")
+    await user.should_see("可信度检查")
+    await user.should_see("权重与贡献")
+
+    # 手动调整权重后重新回测，再恢复参考配置
+    user.find(marker="al_w:hold_510300").elements.pop().set_value(100)
+    user.find(marker="al_w:hold_511010").elements.pop().set_value(0)
+    user.find(marker="al_w:cash").elements.pop().set_value(0)
+    user.find(marker="al_rerun").click()
+    assert await _wait(lambda: AL["result"]["manual"])
+    assert AL["result"]["weights"]["hold_510300"] == 1.0
+    await user.should_see("手动调整后的权重")
+    user.find(marker="al_reset").click()
+    assert await _wait(lambda: not AL["result"]["manual"])
+
+
+async def test_allocation_add_candidate_and_missing_data(user: User, lib_dir):
+    from simplequant import allocation as A
+    _save_prices("510300", n=300)
+    A.save_profile(A.preset_profile(3))
+    await user.open("/allocation")
+    await user.should_see("下载缺少的行情")                      # 默认候选中有本地没有的 ETF
+    user.find(marker="al_add").elements.pop().set_value(True)
+    await settle()
+    user.find(marker="al_add_kind").elements.pop().set_value("timing")
+    await settle()
+    user.find(marker="al_add_btn").click()
+    await user.should_see("请选择标的与策略")
+    user.find(marker="al_add_symbol").elements.pop().set_value("510300")
+    user.find(marker="al_add_strategy").elements.pop().set_value("tpl:sma_cross")
+    user.find(marker="al_add_btn").click()
+    await settle()
+    custom = A.load_config()["custom"]
+    assert len(custom) == 1 and custom[0]["kind"] == "timing" and custom[0]["symbol"] == "510300"
+    assert custom[0]["id"] in A.load_config()["enabled"]

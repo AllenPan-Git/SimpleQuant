@@ -84,7 +84,8 @@ def task_exists() -> bool:
 def _run(*args, encoding: str = "utf-8", stdin: str | None = None) -> tuple[bool, str]:
     try:
         r = subprocess.run(list(args), capture_output=True, text=True, encoding=encoding, errors="replace",
-                           timeout=30, input=stdin)
+                           timeout=30, input=stdin,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))   # 打包版不闪控制台窗口
     except (OSError, subprocess.TimeoutExpired) as e:
         return False, str(e)
     return r.returncode == 0, (r.stdout or r.stderr or "").strip()

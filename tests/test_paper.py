@@ -194,6 +194,56 @@ def test_latest_expected_day():
     assert latest_expected_day(cal, dt.datetime(2026, 10, 3, 10, 0)).date() == dt.date(2026, 9, 30)   # 国庆假期
 
 
+def _acc(name="甲", through="2026-09-29", status="active"):
+    acc = create_account(name, {"kind": "template", "template": "buy_hold", "params": {}}, BrokerConfig(), "2026-09-01",
+                         assets=[{"source": "akshare", "symbol": "510300", "asset": "etf", "name": "510300"}])
+    acc.data_through, acc.status = through, status
+    acc.save()
+    return acc
+
+
+def test_health_issues():
+    """首页提示：没有定时任务、上次运行失败、落后超过 1 个交易日；暂停的账户不检查"""
+    import datetime as dt
+    from simplequant.paper import health
+    cal = pd.to_datetime(["2026-09-28", "2026-09-29", "2026-09-30", "2026-10-08", "2026-10-09"])
+    fresh, behind, failed = _acc("新", "2026-09-30"), _acc("旧", "2026-09-28"), _acc("错", "2026-09-30")
+    failed.save_error("ValueError: boom")
+    paused = _acc("停", "2026-09-01", status="paused")
+    holiday = dt.datetime(2026, 10, 3, 10, 0)
+    assert health.lag_days(fresh, cal, holiday) == 0 and health.lag_days(behind, cal, holiday) == 2
+    # 10-08 收盘后、定时任务运行前：落后 1 个交易日，不提示
+    assert health.lag_days(fresh, cal, dt.datetime(2026, 10, 8, 18, 30)) == 1
+    found = health.issues(list_accounts(), cal, task_on=False, now=holiday)
+    kinds = sorted((k, kw.get("name")) for k, kw in found)
+    assert kinds == [("failed", "错"), ("no_task", None), ("stale", "旧")]
+    assert next(kw for k, kw in found if k == "failed")["message"] == "ValueError: boom"
+    assert health.issues([fresh], cal, task_on=True, now=holiday) == []
+    assert health.issues([paused], cal, task_on=False, now=holiday) == []       # 只有暂停的账户：不提示
+    assert health.lag_days(_acc("未运行", ""), cal, holiday) == 0
+
+
+def test_run_all_records_and_clears_error(monkeypatch):
+    """运行失败时记下原因；下次成功后清除"""
+    from simplequant.paper import runner
+    acc = _acc()
+    cal = pd.to_datetime(["2026-09-29"])
+    monkeypatch.setattr(runner, "load_calendar", lambda: cal)
+    monkeypatch.setattr(runner, "load_single_data", lambda a: {})
+    monkeypatch.setattr(runner, "with_rates", lambda a, prices, refresh: prices)
+
+    def boom(*a, **kw):
+        raise ValueError("no data")
+    monkeypatch.setattr(runner, "run_account", boom)
+    assert runner.run_all([acc], store=object(), refresh=False, log=lambda m: None)[acc.id] == "ValueError: no data"
+    err = load_account(acc.id).error()
+    assert err["message"] == "ValueError: no data" and err["time"]
+    monkeypatch.setattr(runner, "run_account", lambda *a, **kw: {"as_of": "2026-09-29", "value": 1.0, "signals": [],
+                                                                  "execute_on": "2026-09-30"})
+    assert runner.run_all([acc], store=object(), refresh=False, log=lambda m: None)[acc.id] == ""
+    assert load_account(acc.id).error() == {}
+
+
 def test_next_trading_days_skips_holidays_and_falls_back():
     cal = pd.to_datetime(["2026-09-29", "2026-09-30", "2026-10-08", "2026-10-09"])
     nd = next_trading_days(cal, "2026-09-30", 3)

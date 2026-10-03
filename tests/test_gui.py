@@ -938,6 +938,48 @@ async def test_paper_single_account_flow(user: User, lib_dir, paper_dir, monkeyp
     assert await _wait(lambda: not list_accounts())
 
 
+async def test_home_paper_warnings(user: User, paper_dir, monkeypatch):
+    """首页模拟账户卡片：没有定时任务、上次运行失败、多日未更新时提示；模拟盘页显示失败原因"""
+    from simplequant.engine import BrokerConfig
+    from simplequant.paper import create_account
+    spec = {"kind": "template", "template": "buy_hold", "params": {}}
+    asset = [{"source": "akshare", "symbol": "510300", "asset": "etf", "name": "510300"}]
+    old = create_account("旧账户", spec, BrokerConfig(), "2026-01-05", assets=asset)
+    old.data_through = "2026-01-05"
+    old.save()
+    bad = create_account("出错账户", spec, BrokerConfig(), "2026-01-05", assets=asset)
+    bad.data_through = "2026-01-05"
+    bad.save()
+    bad.save_error("ValueError: 数据源断开")
+    cal = pd.bdate_range("2026-01-01", "2026-01-31")
+    from simplequant.paper import health, schedule
+    monkeypatch.setattr(health, "latest_expected_day", lambda c, now=None: pd.Timestamp("2026-01-20"))
+    patch_page(monkeypatch, "/", "load_calendar", lambda refresh_if_stale=True: cal)
+    await user.open("/")
+    await user.should_see(marker="paper_warn:no_task")
+    await user.should_see("「旧账户」已有 11 个交易日未更新")
+    await user.should_see("「出错账户」上次运行失败")
+    await user.should_see("数据源断开")
+    # 有定时任务、没有异常时不提示
+    monkeypatch.setattr(schedule, "task_exists", lambda: True)
+    bad.clear_error()
+    old.data_through = bad.data_through = "2026-01-20"
+    old.save()
+    bad.save()
+    await user.open("/")
+    await user.should_see(marker="paper_warn")
+    await asyncio.sleep(0.3)
+    await user.should_not_see(marker="paper_warn:no_task")
+    await user.should_not_see(marker="paper_warn:stale")
+    # 模拟盘页：失败原因
+    bad.save_error("ValueError: 数据源断开")
+    state.STATE.setdefault("pp", {"kind": "single", "strategy": None, "assets": [], "sel": None, "mode": "now",
+                                  "past": "2026-01-05", "name": "", "account": bad.id, "task_time": "19:00"})
+    patch_page(monkeypatch, "/paper", "load_calendar", lambda refresh_if_stale=True: cal)
+    await user.open("/paper")
+    await user.should_see(marker="pp_failed")
+
+
 async def test_paper_single_cash_dividend_account(user: User, lib_dir, paper_dir, monkeypatch):
     """单标的模拟账户选「现金分红」：账户记住设置，页面显示累计分红和没能改用现金分红的标的"""
     import json

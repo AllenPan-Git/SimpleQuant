@@ -258,7 +258,9 @@ def run_all(accounts: list[PaperAccount], store=None, refresh: bool = True, log=
                 state["data_pending"] = expected
                 acc.save_state(state)
             results[acc.id] = ""
+            acc.clear_error()
         except Exception as e:  # noqa: BLE001 - 一个账户失败不影响其它账户
             log(f"[{acc.name}] FAILED: {type(e).__name__}: {e}")
             results[acc.id] = f"{type(e).__name__}: {e}"
+            acc.save_error(results[acc.id])        # 首页、模拟盘页据此提示
     return results

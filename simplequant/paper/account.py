@@ -6,6 +6,7 @@ data_cache/paper/<账户id>/
     fills.parquet   成交账本（只追加，已记录的成交不会被改写）
     nav.parquet     每日资产（只追加）
     state.json      最新一次运行的结果：今日信号、当前持仓、指标、一致性检查
+    error.json      上一次运行失败的时间和原因（成功运行后删除）
     prices/         单标的账户自己的行情数据（前复权，每次运行时刷新）
 """
 
@@ -82,6 +83,23 @@ class PaperAccount:
 
     def save_state(self, state: dict):
         (self.dir / "state.json").write_text(json.dumps(state, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+
+    def error(self) -> dict:
+        """上一次运行失败时的 {"time", "message"}；上一次成功或从未失败时为空"""
+        p = self.dir / "error.json"
+        try:
+            return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+    def save_error(self, message: str):
+        self.dir.mkdir(parents=True, exist_ok=True)
+        (self.dir / "error.json").write_text(json.dumps(
+            {"time": dt.datetime.now().strftime("%Y-%m-%d %H:%M"), "message": message}, ensure_ascii=False),
+            encoding="utf-8")
+
+    def clear_error(self):
+        (self.dir / "error.json").unlink(missing_ok=True)
 
 
 def new_id(name: str) -> str:

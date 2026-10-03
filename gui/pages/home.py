@@ -7,7 +7,7 @@ from nicegui import app, run, ui
 
 from simplequant import migrate
 from simplequant.data import library
-from simplequant.paper import list_accounts
+from simplequant.paper import list_accounts, load_calendar, health, schedule
 from simplequant.strategies import list_strategies
 from gui import history, state
 from gui.common import t
@@ -203,6 +203,7 @@ def _paper_panel():
             return
         acc = accounts[0]
         ui.label(t("home.paper_title", name=acc.name)).classes("sq-muted text-sm")
+        _paper_warnings()
         st, nav = acc.state(), acc.nav()
         if st and "value" in st:
             ret = st["value"] / acc.broker["cash"] - 1
@@ -220,6 +221,30 @@ def _paper_panel():
                 .classes("text-sm").style("color: var(--sq-text2)")
             ui.label(t("home.paper_view")).classes("sq-red text-sm cursor-pointer whitespace-nowrap") \
                 .on("click", lambda: ui.navigate.to("/paper"))
+
+
+def _paper_issues() -> list:
+    return health.issues(list_accounts(), load_calendar(refresh_if_stale=False), schedule.task_exists())
+
+
+def _paper_warnings():
+    """没有定时任务、上次运行失败、多日未更新时提示。查询定时任务要调用系统命令，放到后台做，不拖慢首页"""
+    box = ui.column().classes("w-full gap-1 py-2").mark("paper_warn")
+
+    async def fill():
+        try:
+            found = await run.io_bound(_paper_issues)
+        except Exception:  # noqa: BLE001 - 检查本身出错时不提示，不影响首页
+            return
+        if not found or box.is_deleted:
+            return
+        with box:
+            for kind, kw in found:
+                with ui.row().classes("items-start gap-1 no-wrap"):
+                    ui.icon("error" if kind == "failed" else "warning", size="16px").classes("mt-[2px]")                         .style(f"color: var({'--sq-red' if kind == 'failed' else '--sq-gold'})")
+                    ui.label(t(f"home.warn_{kind}", **kw)).classes("text-sm").mark(f"paper_warn:{kind}")
+            ui.label(t("home.warn_fix")).classes("sq-red text-sm cursor-pointer")                 .on("click", lambda: ui.navigate.to("/paper"))
+    ui.timer(0.05, fill, once=True)
 
 
 # ---------------- 最近的报告 ----------------

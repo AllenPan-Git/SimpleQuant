@@ -245,6 +245,10 @@ def _account_view(PP, run_accounts, redraw):
         ui.button(t("pp.delete"), icon="delete", on_click=ask_delete).props("outline no-caps color=negative") \
             .mark("pp_delete")
 
+    err = acc.error()
+    if err:
+        notice(t("pp.failed", time=err.get("time", ""), message=err.get("message", "").replace("`", "'")),
+               "error", "error").mark("pp_failed")
     if stale:
         notice(t("pp.stale", through=acc.data_through or "—", expected=expected.date()), "update", "warning")
     if st.get("divergence"):

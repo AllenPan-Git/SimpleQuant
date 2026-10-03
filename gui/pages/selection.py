@@ -52,7 +52,7 @@ def sp_state() -> dict:
         "factors": [dict(f) for f in SEL_DEFAULT], "weighting": "manual", "lookback": 252, "ni": False, "ns": False,
         "top_n": 10, "reb": "monthly", "reb_n": 20, "excl_st": True,
         "min_list": DEFAULT_FILTERS["min_list_days"], "pos": 95, "name": "", "follow": False, "dividend": "reinvest",
-        "ai_text": "", "ai": None, "result": None,
+        "ai_text": "", "ai": None, "ai_base": False, "result": None, "explanation": None,
         # 因子研究
         "res": {"fkey": "ep", "horizon": 20, "groups": 5, "min_days": DEFAULT_FILTERS["min_list_days"],
                 "ni": False, "ns": False},
@@ -69,6 +69,8 @@ def sp_state() -> dict:
     # 可转债的选股条件（价格上限等；None = 不限）；旧版保存的界面状态里没有这两项
     sp.setdefault("cbf", {k: v for k, v in CB_DEFAULT_FILTERS.items() if k in CB_FILTERS})
     sp.setdefault("forms", {})
+    sp.setdefault("ai_base", False)
+    sp.setdefault("explanation", None)
     sp["dl"].setdefault("cb_start", "2017-01-01")
     return sp
 
@@ -887,14 +889,21 @@ def _backtest_form(SP, ctx, rebuild):
                 notice(t("ai.need_config"), "key")
                 ui.button(t("nav.go_settings"), on_click=lambda: ui.navigate.to("/settings")) \
                     .props("flat no-caps dense color=primary icon-right=arrow_forward")
-        ai_text = ui.textarea(t("ai.describe"), value=SP["ai_text"], placeholder=t("sp.ai_placeholder")) \
+        def placeholder():
+            return t("sp.ai_base_placeholder") if SP["ai_base"] else t("sp.ai_placeholder")
+        ai_text = ui.textarea(t("ai.describe"), value=SP["ai_text"], placeholder=placeholder()) \
             .props("outlined autogrow").classes("w-full").mark("sp_ai_text")
+
+        def on_base(e):
+            SP["ai_base"] = bool(e.value)
+            ai_text.props(f'placeholder="{placeholder()}"')
 
         async def ai_go():
             SP["ai_text"] = ai_text.value or ""
             ai_btn.disable()
             try:
-                SP["ai"] = await run.io_bound(llm.translate_selection, SP["ai_text"], llm.get_provider(cfg), lg)
+                SP["ai"] = await run.io_bound(llm.translate_selection, SP["ai_text"], llm.get_provider(cfg), lg,
+                                              base=current_spec(SP) if SP["ai_base"] else None)
             except llm.LLMError as e:
                 SP["ai"] = None
                 ui.notify(str(e), type="negative", multi_line=True)
@@ -904,8 +913,11 @@ def _backtest_form(SP, ctx, rebuild):
             finally:
                 ai_btn.enable()
             ai_result.refresh()
-        ai_btn = ui.button(t("ai.generate"), icon="auto_awesome", on_click=ai_go).props("outline no-caps") \
-            .classes("self-start").mark("sp_ai_go")
+        with ui.row().classes("items-center gap-4"):
+            ai_btn = ui.button(t("ai.generate"), icon="auto_awesome", on_click=ai_go).props("outline no-caps") \
+                .mark("sp_ai_go")
+            ui.checkbox(t("sp.ai_base"), value=SP["ai_base"], on_change=on_base).tooltip(t("sp.ai_base_help")) \
+                .mark("sp_ai_base")
         ai_btn.set_enabled(ready and bool(SP["ai_text"].strip()))
         ai_text.on_value_change(lambda e: ai_btn.set_enabled(ready and bool((e.value or "").strip())))
 
@@ -1105,6 +1117,7 @@ def _backtest_form(SP, ctx, rebuild):
             t0 = time.time()
             res = await run.io_bound(run_selection, panel, spec, broker, start=ctx.start)
             SP["result"] = (res, spec, time.time() - t0)
+            SP["explanation"] = None
             SP["result_range"] = (ctx.start, ctx.end, ctx.panel_start)
             uni = p(UNIVERSES[spec["universe"]]["label"])
             title = SP["name"].strip() or t("sel.kind")
@@ -1201,6 +1214,7 @@ def _selection_results(SP, ctx):
         eg = sep.join(f"{res.names.get(r.code, r.code)} {r.ex_date:%Y-%m-%d} {r.cash:g}" for r in cash.head(5).itertuples())
         notice(t("sp.div_patched", n=len(cash), m=len(rights), eg=eg + ("…" if len(cash) > 5 else "")), "info", "info")
     credibility_box(check_backtest(res.metrics, res.trades))
+    _explain(SP, rspec, res.metrics)
     bench_label = t("cb.bench_label") if U.kind(rspec["universe"]) == "cb" else \
         t("sp.bench_label", name=p(UNIVERSES[rspec["universe"]]["label"]))
     with ui.card().classes("w-full p-2"):
@@ -1231,6 +1245,37 @@ def _selection_results(SP, ctx):
                                                          t("col.commission"): "{:.2f}"}), rows_per_page=30)
         with ui.tab_panel(tab_l).classes("px-0"):
             df_table(logs_table(res.logs, lg), rows_per_page=50)
+
+
+def _explain(SP, rspec: dict, metrics: dict):
+    """AI 解读本次选股回测结果（未配置大模型时不显示）"""
+    cfg = llm.load_config()
+    if not (cfg and cfg.ready):
+        return
+
+    async def explain():
+        btn.disable()
+        try:
+            SP["explanation"] = await run.io_bound(
+                llm.explain_result, llm.get_provider(cfg), strategies.describe(rspec, lang()), metrics, lang())
+        except llm.LLMError as e:
+            ui.notify(str(e), type="negative", multi_line=True)
+        except Exception as e:  # noqa: BLE001
+            ui.notify(f"{type(e).__name__}: {e}", type="negative", multi_line=True)
+        finally:
+            btn.enable()
+        show.refresh()
+
+    btn = ui.button(t("ai.explain"), icon="auto_awesome", on_click=explain).props("outline no-caps") \
+        .classes("self-start").mark("sp_explain")
+
+    @ui.refreshable
+    def show():
+        if SP.get("explanation"):
+            with ui.column().classes("w-full gap-1 sq-note py-3"):
+                ui.markdown(SP["explanation"]).classes("text-sm")
+                ui.label(t("ai.explain_note")).classes("sq-muted text-xs")
+    show()
 
 
 # ================= 运行导出的选股脚本 =================

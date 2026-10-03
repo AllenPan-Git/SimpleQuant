@@ -253,7 +253,9 @@ Conventions:
 - Convertible bonds ("可转债 / 转债 / convertible bonds") → universe cb, and only factors marked for convertible bonds. "双低 / double-low" → cb_double_low lower. "低价转债" → cb_price lower. "低溢价 / 低转股溢价率" → cb_premium lower. "接近债底 / 纯债溢价率低" → cb_bond_premium lower. "小规模转债" → cb_issue_size lower. For cb set exclude_st false and min_list_days 0 unless asked. max_price: the price cap for cb ("价格低于 130 元" → 130); 0 keeps the default (130). For stock universes set max_price to 0.
 
 Be honest about limits: anything not expressible with this catalog and these settings (e.g. factors not listed such as dividend yield, analyst ratings, specific industries to include/exclude, stop-losses, market-timing overlays, universes other than those listed) goes into "unsupported" as short phrases written in {language} and is left out. Do not use a different factor as a stand-in for an unsupported one (e.g. never use ep in place of dividend yield); the user decides whether to add something else. If none of what the user asked for can be expressed (or the text is not a stock-picking idea at all), return an empty factors list and explain in "unsupported".
-understood: one short paragraph in {language} restating the strategy you built. name: short name in {language}."""
+Editing an existing strategy: if the message starts with "Current strategy", the text after "Change request" asks for changes to that strategy (e.g. "add low volatility", "hold 30 instead"). Start from the current strategy and change only what is asked; copy every other field unchanged, including factor weights and directions. Removing all factors is allowed only if the user asks for it.
+
+understood: one short paragraph in {language} restating the strategy you built (when editing, begin with what you changed). name: short name in {language}."""
 
 
 def to_selection_spec(out: dict) -> dict:
@@ -287,6 +289,44 @@ def _filters(out: dict) -> dict:
     return {"exclude_st": bool(out.get("exclude_st", True)), "min_list_days": int(out.get("min_list_days") or 0)}
 
 
+def from_selection_spec(spec: dict) -> dict:
+    """选股策略描述 → 大模型输出格式（to_selection_spec 的逆）；用于「在当前方案基础上修改」"""
+    from ..stocks import FACTORS, universe as U
+    reb = spec.get("rebalance", "monthly")
+    flt = spec.get("filters") or {}
+    neutral = spec.get("neutralize") or {}
+    return {
+        "universe": spec.get("universe", "hs300"),
+        "factors": [{"key": f["key"], "direction": "higher" if f.get("direction", 1) > 0 else "lower",
+                     "weight": float(f.get("weight", 1))} for f in spec.get("factors") or [] if f["key"] in FACTORS],
+        "weighting": spec.get("weighting", "manual"),
+        "top_n": int(spec.get("top_n", 10)),
+        "rebalance": reb if isinstance(reb, str) else "days",
+        "rebalance_days": 20 if isinstance(reb, str) else int(reb),
+        "exclude_st": bool(flt.get("exclude_st", True)),
+        "min_list_days": int(flt.get("min_list_days") or 0),
+        "neutralize_industry": bool(neutral.get("industry")),
+        "neutralize_size": bool(neutral.get("size")),
+        "position_pct": float(spec.get("position_pct", 95)),
+        "max_price": float(flt.get("max_price") or 0) if U.kind(spec.get("universe") or "") == "cb" else 0,
+    }
+
+
+def _merge_base(base: dict, spec: dict, out: dict) -> dict:
+    """修改模式：模型管不到的设置（IC 回看期、分红方式、可转债成交额下限等）沿用原方案"""
+    from ..stocks import universe as U
+    merged = {**base, **spec}
+    if U.kind(base.get("universe") or "") == U.kind(spec["universe"]):
+        flt = {**(base.get("filters") or {}), "min_list_days": spec["filters"]["min_list_days"]}
+        if U.kind(spec["universe"]) == "cb":
+            if out.get("max_price"):
+                flt["max_price"] = float(out["max_price"])
+        else:
+            flt["exclude_st"] = spec["filters"]["exclude_st"]
+        merged["filters"] = flt
+    return merged
+
+
 def validate_selection(spec: dict, lang: str = "zh") -> list[str]:
     from ..i18n import tr
     from ..stocks import FACTORS, factor_assets, universe as U
@@ -306,21 +346,36 @@ def validate_selection(spec: dict, lang: str = "zh") -> list[str]:
     return errors
 
 
-def translate_selection(text: str, provider: Provider, lang: str = "zh", repair_rounds: int = 1) -> NLResult:
-    """自然语言 → 多因子选股策略"""
-    out = _generate(text, provider, selection_system_prompt(lang), selection_schema(), to_selection_spec,
+def translate_selection(text: str, provider: Provider, lang: str = "zh", repair_rounds: int = 1,
+                        base: dict | None = None) -> NLResult:
+    """自然语言 → 多因子选股策略；给了 base 则把这段话当作对 base 的修改"""
+    msg = text.strip()
+    if base:
+        msg = ("Current strategy:\n" + json.dumps(from_selection_spec(base), ensure_ascii=False)
+               + "\n\nChange request:\n" + msg)
+    out = _generate(msg, provider, selection_system_prompt(lang), selection_schema(), to_selection_spec,
                     validate_selection, repair_rounds, lambda o: not o.get("factors"))
     spec = to_selection_spec(out)
+    if base:
+        spec = _merge_base(base, spec, out)
     return NLResult(spec=spec, name=out.get("name") or "", understood=out.get("understood") or "",
                     unsupported=list(out.get("unsupported") or []), errors=validate_selection(spec, lang), raw=out)
 
 
+def explain_system_prompt(lang: str = "zh") -> str:
+    return f"""You are a careful, candid quantitative analyst explaining a backtest to a non-programmer, who may act on what you say. Write in {LANG_NAMES.get(lang, 'English')}, 4-6 short bullet points: the overall verdict, absolute and relative return, risk, trading behaviour, one or two concrete ideas to try next, and a reminder about overfitting if relevant. Do not invent numbers that are not given.
+
+Judge it by these yardsticks, and say plainly when it is weak:
+- Absolute return first: compare the annualized return (cagr) with a risk-free rate of about 2% a year (government bonds, money-market funds). An annualized return near or below that means the strategy earned little or nothing for the risk taken, whatever the excess return.
+- Sharpe ratio: below 0.5 is weak, 0.5-1 is moderate, above 1 is good (for a backtest, before real-world frictions). Calmar ratio (cagr / max drawdown): below 0.5 is weak, 0.5-1 is moderate, above 1 is good.
+- If the benchmark return is negative, point out that part of the excess return comes from the benchmark falling, not from the strategy making money; never present a large excess return as strong performance on its own.
+- Low volatility or a small drawdown is not good risk control by itself; it only counts together with an adequate return (a strategy that barely moves will also show low risk).
+- Keep the tone neutral. Do not use praise words for weak numbers, and do not soften a weak verdict."""
+
+
 def explain_result(provider: Provider, spec_text: str, metrics: dict, lang: str = "zh") -> str:
     """用大白话解读回测结果"""
-    system = (f"You are a careful quantitative analyst explaining a backtest to a non-programmer. "
-              f"Write in {LANG_NAMES.get(lang, 'English')}, 4-6 short bullet points: how it did vs the benchmark, "
-              "risk (drawdown, volatility), trading behaviour, one or two concrete ideas to try next, "
-              "and a reminder about overfitting if relevant. Do not invent numbers that are not given.")
+    system = explain_system_prompt(lang)
     user = f"Strategy:\n{spec_text}\n\nMetrics (ratios, not percents):\n" + json.dumps(
         {k: (round(v, 4) if isinstance(v, float) else v) for k, v in metrics.items()}, ensure_ascii=False)
     return provider.chat(system, [{"role": "user", "content": user}], None).strip()

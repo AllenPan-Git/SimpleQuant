@@ -332,6 +332,67 @@ def test_selection_prompt_lists_every_factor():
     assert all(f"- {k}:" in text for k in FACTORS)
 
 
+def test_from_selection_spec_roundtrip():
+    from simplequant.llm import to_selection_spec, from_selection_spec
+    from simplequant.llm.nl import selection_schema
+    spec = to_selection_spec(sel_output())
+    out = from_selection_spec(spec)
+    assert set(out) == set(selection_schema()["properties"]) - {"name", "understood", "unsupported"}
+    assert to_selection_spec(out) == spec
+    gone = {**spec, "factors": spec["factors"] + [{"key": "u_deadbeef", "weight": 1.0, "direction": 1}]}
+    assert from_selection_spec(gone)["factors"] == out["factors"]          # 已删除的自定义因子不发给模型
+
+
+def test_translate_selection_modifies_base():
+    from simplequant.llm import translate_selection
+    base = {"kind": "selection", "universe": "zz500",
+            "factors": [{"key": "ep", "weight": 2.0, "direction": 1}], "top_n": 20, "rebalance": "monthly",
+            "filters": {"exclude_st": True, "min_list_days": 250}, "position_pct": 95, "weighting": "icir",
+            "ic_lookback": 120, "neutralize": {"industry": False, "size": False}, "dividend": "cash"}
+    reply = sel_output(universe="zz500", rebalance="monthly", top_n=30, min_list_days=250, position_pct=95,
+                       neutralize_industry=False, weighting="icir",
+                       factors=[{"key": "ep", "direction": "higher", "weight": 2},
+                                {"key": "vol60", "direction": "lower", "weight": 1}])
+    fake = FakeProvider([json.dumps(reply)])
+    res = translate_selection("加个低波动，持有30只", fake, base=base)
+    msg = fake.calls[0]["messages"][0]["content"]
+    assert msg.startswith("Current strategy:") and msg.endswith("Change request:\n加个低波动，持有30只")
+    assert json.loads(msg.split("\n")[1])["factors"] == [{"key": "ep", "direction": "higher", "weight": 2.0}]
+    assert "Change request" in fake.calls[0]["system"]
+    assert res.ok and res.spec["top_n"] == 30 and [f["key"] for f in res.spec["factors"]] == ["ep", "vol60"]
+    assert res.spec["ic_lookback"] == 120 and res.spec["dividend"] == "cash"     # 模型管不到的设置沿用原方案
+
+
+def test_translate_selection_modify_keeps_cb_filters():
+    from simplequant.llm import translate_selection
+    base = {"kind": "selection", "universe": "cb", "factors": [{"key": "cb_double_low", "weight": 1.0, "direction": -1}],
+            "top_n": 10, "rebalance": "weekly", "position_pct": 95, "weighting": "manual",
+            "filters": {"exclude_st": False, "min_list_days": 0, "max_price": None, "min_amount": 500.0},
+            "neutralize": {"industry": False, "size": False}}
+    reply = sel_output(universe="cb", factors=[{"key": "cb_double_low", "direction": "lower", "weight": 1}],
+                       top_n=20, rebalance="weekly", min_list_days=0, exclude_st=False, max_price=0,
+                       neutralize_industry=False)
+    res = translate_selection("持有20只", FakeProvider([json.dumps(reply)]), base=base)
+    assert res.ok and res.spec["top_n"] == 20
+    assert res.spec["filters"]["max_price"] is None and res.spec["filters"]["min_amount"] == 500.0
+    reply["max_price"] = 120
+    res = translate_selection("价格低于120", FakeProvider([json.dumps(reply)]), base=base)
+    assert res.spec["filters"]["max_price"] == 120.0
+
+
+def test_explain_result_prompt_has_yardsticks():
+    from simplequant.llm import explain_result
+    fake = FakeProvider(["- 偏弱"])
+    metrics = {"cagr": 0.0321, "sharpe": 0.2042, "benchmark_return": -0.0585, "excess_return": 0.1927}
+    assert explain_result(fake, "沪深300 · 每周", metrics, "zh") == "- 偏弱"
+    system, msg = fake.calls[0]["system"], fake.calls[0]["messages"][0]["content"]
+    assert "Simplified Chinese" in system and fake.calls[0]["schema"] is None
+    for s in ("risk-free rate of about 2%", "Sharpe ratio: below 0.5 is weak", "Calmar", "benchmark return is negative",
+              "Low volatility or a small drawdown is not good risk control by itself"):
+        assert s in system
+    assert "沪深300" in msg and '"sharpe": 0.2042' in msg
+
+
 def test_describe_selection_both_languages():
     from simplequant import strategies
     from simplequant.llm import to_selection_spec

@@ -720,7 +720,12 @@ async def test_selection_ai_and_ic_weighting(user: User, monkeypatch):
     import simplequant.llm as llm
 
     class Fake:
+        sent = []
+
         def chat(self, system, messages, schema=None):
+            if schema is None:
+                return "- 跑赢基准\n- 换手偏高"
+            Fake.sent.append(messages[-1]["content"])
             return json.dumps(SEL_AI_REPLY, ensure_ascii=False)
     monkeypatch.setattr(llm, "load_config", lambda: llm.LLMConfig.from_preset("deepseek", api_key="x"))
     monkeypatch.setattr(llm, "get_provider", lambda cfg: Fake())
@@ -732,11 +737,19 @@ async def test_selection_ai_and_ic_weighting(user: User, monkeypatch):
     user.find(marker="sp_ai_apply").click()
     await settle()
     assert [f["key"] for f in SP["factors"]] == ["ep", "roe"] and SP["top_n"] == 15 and SP["ni"] is True
+    # 在当前方案基础上修改：表单里的方案随描述一起发给模型
+    user.find(marker="sp_ai_base").elements.pop().set_value(True)
+    user.find(marker="sp_ai_go").click()
+    assert await _wait(lambda: len(Fake.sent) == 2)
+    assert Fake.sent[-1].startswith("Current strategy:") and '"roe"' in Fake.sent[-1]
     user.find(marker="sp_weighting").elements.pop().set_value("ic")
     user.find(marker="sp_run").click()
     assert await _wait(lambda: SP.get("result"), n=1200)
     res, spec, _ = SP["result"]
     assert spec["weighting"] == "ic" and spec["neutralize"]["industry"]
+    await user.should_see(marker="sp_explain")                     # AI 解读选股回测结果
+    user.find(marker="sp_explain").click()
+    assert await _wait(lambda: SP.get("explanation"))
     from simplequant.stocks import StockStore
     ind = StockStore().load_industry()
     for codes in list(res.schedule.picks.values())[-5:]:

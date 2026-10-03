@@ -331,6 +331,23 @@ def metric_tiles(m: dict):
                 _fig_cell(k, m)
 
 
+CRED_STYLE = {"warn": ("warning", "warning"), "note": ("info", "info"), "ok": ("check_circle", "info")}
+
+
+def credibility_box(findings: list[dict]):
+    """可信度检查（engine/credibility.py 的结果）：浮点参数是比例，显示成百分数"""
+    if not findings:
+        return
+    with ui.column().classes("w-full gap-2").mark("credibility"):
+        with ui.row().classes("w-full items-baseline gap-3"):
+            ui.label(t("cred.title")).classes("font-semibold")
+            ui.label(t("cred.caption")).classes("sq-muted text-xs")
+        for f in sorted(findings, key=lambda f: list(CRED_STYLE).index(f["level"])):     # 问题排在前面
+            args = {k: shared.pct(v, 1) if isinstance(v, float) else v for k, v in f["args"].items()}
+            icon, kind = CRED_STYLE[f["level"]]
+            notice(t(f["key"], **args), icon, kind)
+
+
 def walkforward_results(res, labels: dict, metric: str, stitch_label: str, note: str, fmt_param=None):
     """滚动优化结果（参数优化页和选股页共用）；fmt_param(列名, 值) 把离散参数显示成文字"""
     from ui.charts import walkforward_chart, param_stability_chart

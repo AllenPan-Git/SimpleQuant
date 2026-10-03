@@ -12,6 +12,7 @@ import pandas as pd
 from nicegui import background_tasks, run, ui
 
 from simplequant import llm, strategies
+from simplequant.engine.credibility import check_backtest
 from simplequant.engine.optimize import value_range, default_workers
 from simplequant.engine.walkforward import make_windows
 from simplequant.stocks import (StockStore, UNIVERSES, FACTORS, GROUPS, REBALANCE, WEIGHTING, DIVIDEND,
@@ -24,7 +25,7 @@ from simplequant.stocks.walkforward import (walk_forward_selection, selection_tu
                                             REBALANCE_CHOICES, TARGET_METRICS as WF_TARGETS, MAX_COMBOS as WF_MAX)
 from gui import state, history
 from gui.common import t, p, lang
-from gui.components import broker_settings, metric_tiles, metric_tile, walkforward_results
+from gui.components import broker_settings, metric_tiles, metric_tile, walkforward_results, credibility_box
 from gui.layout import frame, page_title
 from gui.widgets import section, df_table, fmt_table, plot, notice, download_btn, Progress, code_editor
 from ui.charts import ic_chart, quantile_chart, group_bar, equity_chart, corr_heatmap
@@ -1199,6 +1200,7 @@ def _selection_results(SP, ctx):
         sep = "、" if lg == "zh" else ", "
         eg = sep.join(f"{res.names.get(r.code, r.code)} {r.ex_date:%Y-%m-%d} {r.cash:g}" for r in cash.head(5).itertuples())
         notice(t("sp.div_patched", n=len(cash), m=len(rights), eg=eg + ("…" if len(cash) > 5 else "")), "info", "info")
+    credibility_box(check_backtest(res.metrics, res.trades))
     bench_label = t("cb.bench_label") if U.kind(rspec["universe"]) == "cb" else \
         t("sp.bench_label", name=p(UNIVERSES[rspec["universe"]]["label"]))
     with ui.card().classes("w-full p-2"):

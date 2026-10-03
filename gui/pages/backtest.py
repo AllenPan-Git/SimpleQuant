@@ -9,13 +9,14 @@ from simplequant import llm, strategies
 from simplequant.strategies.code_strategy import explain_error
 from simplequant.data.base import freq_label
 from simplequant.engine import run_backtest, COST_PRESETS
+from simplequant.engine.credibility import check_backtest
 from simplequant.engine.native_plot import render as render_native, MAX_BARS as NATIVE_MAX_BARS
 from simplequant.export import PLATFORMS
 from gui import state, history
 from gui.common import t, p, lang
 from gui.components import (require_data, data_selector, strategy_selector, broker_settings, prepare_prices,
                             metric_tiles, metric_tile, missing_factor_warnings, dividend_notices,
-                            unadjusted_warning)
+                            unadjusted_warning, credibility_box)
 from gui.layout import frame, page_title
 from gui.widgets import df_table, fmt_table, plot, notice, download_btn
 from ui.charts import equity_chart, strategy_chart
@@ -135,9 +136,12 @@ def page():
                 prices, skipped, patched = await run.io_bound(prepare_prices, by_id, pick, broker, spec)
                 cls, params = strategies.resolve(spec)
                 res = await run.io_bound(run_backtest, prices, cls, params, broker, with_panels=True)
+                tuned = state.STATE.get("tuned") or {}          # 参数优化页「用最优参数回测」带过来的
+                tried = tuned["n"] if tuned.get("spec") == spec else 0
                 BT.clear()
                 BT.update(result=res, title=(strat["label"], list(prices), next(iter(pick.freqs))), spec=spec,
-                          broker=broker, name=strat.get("name", ""), div_notes=(skipped, patched))
+                          broker=broker, name=strat.get("name", ""), div_notes=(skipped, patched),
+                          checks=check_backtest(res.metrics, res.trades, tried))
                 _remember(BT, by_id, pick, strat)
                 setup.value = False
             except Exception as e:  # noqa: BLE001
@@ -234,6 +238,8 @@ def _results(BT: dict, exp_menu):
             if res.lot_too_big:
                 with ui.column().classes("w-full pt-4"):
                     notice(t("bt.lot_too_big", names=", ".join(res.lot_too_big)), "savings", "warning")
+            with ui.column().classes("w-full pt-6"):
+                credibility_box(BT.get("checks", []))
             explain_out = ui.column().classes("w-full pt-4")
 
             with ui.column().classes("w-full gap-1 pt-6"):

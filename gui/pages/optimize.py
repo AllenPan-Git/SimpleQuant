@@ -6,6 +6,7 @@ from nicegui import run, ui
 from simplequant import strategies
 from simplequant.strategies.code_strategy import explain_error
 from simplequant.engine import run_backtest
+from simplequant.engine.credibility import check_grid, check_backtest
 from simplequant.engine.optimize import (optimize, value_range, build_grid, split_prices, best_row, apply_combo,
                                          TARGET_METRICS, MAX_COMBOS, default_workers)
 from simplequant.engine.walkforward import (walk_forward, make_windows, count_backtests, STITCH_MODES,
@@ -14,7 +15,7 @@ from gui import state
 from gui.common import t, lang
 from gui.components import (require_data, data_selector, strategy_selector, broker_settings, load_prices,
                             prepare_prices, metric_tile, walkforward_results, dividend_notices,
-                            unadjusted_warning)
+                            unadjusted_warning, credibility_box)
 from gui.layout import frame, page_title
 from gui.widgets import section, df_table, plot, notice, Progress
 from ui.charts import heatmap, param_curve
@@ -222,14 +223,20 @@ def page():
                               progress=lambda d, n_: prog.set(d / n_, t("opt.progress", done=d, n=n_)))
                 best = best_row(df, O["metric"])
                 best_spec = apply_combo(spec, best, is_int)
-                compare = {"is_best": run_backtest(ins, *strategies.resolve(best_spec), broker).metrics}
+                is_res = run_backtest(ins, *strategies.resolve(best_spec), broker)
+                compare = {"is_best": is_res.metrics}
                 if outs is not None:
                     compare["oos_best"] = run_backtest(outs, *strategies.resolve(best_spec), broker).metrics
                     compare["oos_orig"] = run_backtest(outs, *strategies.resolve(spec), broker).metrics
+                ok = df[O["metric"]].notna().sum() if O["metric"] in df else 0
+                # 最优参数自身的交易检查只列出问题（样本内的成绩本来就偏乐观，不说「通过」）
+                checks = check_grid(df, O["metric"], compare) + \
+                    [c for c in check_backtest(is_res.metrics, is_res.trades) if c["level"] != "ok"]
                 return dict(df=df, axes=list(ax), is_int=is_int, labels=labels, metric=O["metric"], spec=spec,
                             spec_label=strat["label"], best_spec=best_spec, compare=compare, cut=cut,
                             start=min(d.index[0] for d in prices.values()),
-                            end=max(d.index[-1] for d in prices.values()), div_notes=(skipped, patched))
+                            end=max(d.index[-1] for d in prices.values()), div_notes=(skipped, patched),
+                            checks=checks, tried=int(ok))
             try:
                 O["result"] = await run.io_bound(work)
             except Exception as e:  # noqa: BLE001
@@ -312,11 +319,7 @@ def _grid_results(res: dict):
         table.insert(0, "", [t(f"m.{r}") for r in rows])
         ui.label(t("opt.robustness")).classes("font-semibold")
         df_table(table)
-        is_v, oos_v = cmp["is_best"]["sharpe"], cmp["oos_best"]["sharpe"]
-        if is_v > 0 and not oos_v > is_v * 0.5:
-            notice(t("opt.overfit"), "warning", "warning")
-        else:
-            notice(t("opt.robust_ok"), "check_circle", "info")
+    credibility_box(res.get("checks", []))
 
     ui.label(t("opt.landscape")).classes("font-semibold")
     with ui.card().classes("w-full p-3 gap-2"):
@@ -384,6 +387,7 @@ def _grid_results(res: dict):
 
         def use_best():
             state.STATE["current_spec"] = {"name": (name.value or "").strip() or t("opt.tuned"), **res["best_spec"]}
+            state.STATE["tuned"] = {"spec": res["best_spec"], "n": res.get("tried", 0)}     # 回测页据此提示
             state.STATE["bt_strategy"] = "__current__"
             ui.navigate.to("/backtest")
         ui.button(t("strat.save"), icon="save", on_click=save).props("outline no-caps")

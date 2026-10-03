@@ -412,8 +412,10 @@ async def test_backtest_run_and_results(user: User, lib_dir):
         await asyncio.sleep(0.05)
     await user.should_see("总收益率")
     await user.should_see("成交记录")
+    await user.should_see("可信度检查")
     res = state.STATE["bt"]["result"]
     assert not res.orders.empty
+    assert any(c["key"].startswith("cred.") for c in state.STATE["bt"]["checks"])
 
     user.find(marker="native").click()
     for _ in range(200):
@@ -551,12 +553,20 @@ async def test_optimize_grid_flow(user: User, lib_dir):
     assert await _wait(lambda: state.STATE["opt"].get("result"))
     await user.should_see("优化结果")
     await user.should_see("样本外检验")
+    await user.should_see("可信度检查")
     res = state.STATE["opt"]["result"]
     assert len(res["axes"]) == 2 and not res["df"].empty
+    assert any(c["key"] in ("cred.oos_ok", "cred.oos_worse") for c in res["checks"])
     user.find(marker="use_best").click()
     await user.should_see(marker="run")
     assert state.STATE["current_spec"]["template"] == "sma_cross"
     await user.should_see("当前策略：")
+    # 用最优参数回测：提示这组参数是从多少组里挑出来的
+    user.find(marker="run").click()
+    assert await _wait(lambda: state.STATE.get("bt", {}).get("result") is not None)
+    tuned = [c for c in state.STATE["bt"]["checks"] if c["key"] == "cred.tuned"]
+    assert tuned and tuned[0]["args"]["n"] == res["tried"] > 1
+    await user.should_see("组组合中的最优者")
 
 
 async def test_optimize_param_pick_limits_and_strategy_change(user: User, lib_dir):
@@ -636,6 +646,7 @@ async def test_selection_backtest(user: User):
     buys = res.orders[res.orders["side"] == "buy"]
     assert (buys["size"] % 100 == 0).all()
     await user.should_see("调仓次数")
+    await user.should_see("可信度检查")
 
 
 @needs_stocks

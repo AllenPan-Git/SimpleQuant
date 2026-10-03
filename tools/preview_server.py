@@ -15,6 +15,7 @@ from gui import state, history  # noqa: E402
 from simplequant import strategies  # noqa: E402
 from simplequant.data import library  # noqa: E402
 from simplequant.engine import run_backtest, BrokerConfig  # noqa: E402
+from simplequant.engine.credibility import check_backtest  # noqa: E402
 from ui import shared  # noqa: E402
 
 DARK = sys.argv[1] if len(sys.argv) > 1 else "light"
@@ -26,7 +27,8 @@ cls, params = strategies.resolve(spec)
 broker = BrokerConfig(cash=100000, commission=0.00005, min_commission=0, stamp_duty=0, slippage=0.0005)
 res = run_backtest(prices, cls, params, broker, with_panels=True)
 state.STATE["bt"] = dict(result=res, title=("模板：双均线", ["510300"], "1d"), spec=spec, broker=broker,
-                         name="双均线交叉", time="2026-09-30 21:14")
+                         name="双均线交叉", time="2026-09-30 21:14",
+                         checks=check_backtest(res.metrics, res.trades, tried=40))
 state.STATE["bt_ids"] = [ID]
 state.STATE["bt_range"] = rng
 state.STATE["bt_strategy"] = "tpl:sma_cross"

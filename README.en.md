@@ -41,7 +41,7 @@ Four ways to build a strategy:
 - **Write Python**: write a strategy class; board lots, T+1 and trading costs still apply, and its parameters can be optimized.
 
 ### 03 · Backtest
-Multiple assets (capital split equally), custom date range and costs, and a choice of dividend handling (reinvest, or cash dividends with dividend tax). The report opens with a plain-language summary, followed by return, CAGR, Sharpe, drawdown, win rate and profit factor, plus the equity curve, trades on the price chart, P&L per trade and the full fill list; the native Backtrader chart is also available. The report also includes a **credibility assessment**: whether there are enough trades, whether returns are concentrated in a few trades, and a bootstrap range of returns.
+Multiple assets (capital split equally), custom date range and costs, and a choice of dividend handling (reinvest, or cash dividends with dividend tax). The report opens with a plain-language summary, followed by return, CAGR, Sharpe, drawdown, win rate and profit factor, plus the equity curve, trades on the price chart, P&L per trade and the full fill list; the native Backtrader chart is also available. The report also includes a **credibility assessment**: whether there are enough trades, whether returns are concentrated in a few trades, and a bootstrap range of returns. With a language model configured, AI can explain the results: it compares the annualized return with the risk-free rate, rates Sharpe and Calmar against common yardsticks, and points out how much excess return comes from a falling benchmark.
 
 A-share rules: 100-share board lots, T+1 by product type (stocks and domestic equity ETFs are T+1; bond, money-market, gold, commodity and cross-border ETFs and convertibles are T+0, detected from the code and name), stamp duty on sells, minimum commission and slippage. Signals form at a bar's close and fill at the next bar's open.
 
@@ -56,7 +56,7 @@ Open a simulated account for any saved strategy — no brokerage account needed.
 <img src="docs/images/paper-en.png" alt="Paper trading">
 
 ### Multi-factor stock selection
-Using free BaoStock data, score the **historical constituents** of the CSI 300 and CSI 500 by value, momentum, low volatility, quality, growth and other factors, and rebalance on a schedule; or pick from **all convertible bonds** (including delisted ones) by double-low, premium and other factors. Includes factor research (Rank IC, quantile backtests, factor correlation), industry/size neutralization, IC/ICIR weighting, custom factors and walk-forward optimization; selection strategies can be paper traded as well.
+Using free BaoStock data, score the **historical constituents** of the CSI 300 and CSI 500 by value, momentum, low volatility, quality, growth and other factors, and rebalance on a schedule; or pick from **all convertible bonds** (including delisted ones) by double-low, premium and other factors. Includes factor research (Rank IC, quantile backtests, factor correlation), industry/size neutralization, IC/ICIR weighting, custom factors and walk-forward optimization; describe a selection idea in one sentence and refine the current settings step by step (AI); selection strategies can be paper traded as well.
 
 <img src="docs/images/selection-en.png" alt="Stock selection">
 
@@ -136,7 +136,7 @@ PyInstaller cannot cross-compile, so each system's version is built on that syst
 - **IC/ICIR weighting**: each factor's weight and direction come from its average Rank IC (or IC / std) over the past N trading days, using only ICs already fully realized at the time.
 - **Selection backtest**: monthly, weekly or every N days, stocks are scored at the rebalance-day close and the top N are traded at the next open; dropped stocks are sold first, then new picks are bought in equal amounts. Suspended or limit-down stocks cannot be sold (retried daily) and suspended or limit-up stocks cannot be bought; the benchmark is the corresponding index.
 - **Dividends**: "reinvest" (back-adjusted) by default. "Cash dividends, taxed" pays cash on the ex-date, adds bonus shares, and deducts dividend tax on sale by holding period (≤1 month 20%, 1 month–1 year 10%, over 1 year exempt), matching JoinQuant and live trading. Special and interim dividends missing from BaoStock's dividend table are filled in from the exchange's ex-dividend reference prices.
-- Also: describing a selection in words (AI), industry breakdown of each period's picks, and custom factors (write `def factor(p)` and preview coverage, IC and group returns).
+- Also: describing a selection in words (AI; tick "Modify the current settings" to make changes such as "add a low-volatility factor, hold 30 stocks" — only what you mention changes), AI explanation of selection backtest results, industry breakdown of each period's picks, and custom factors (write `def factor(p)` and preview coverage, IC and group returns).
 </details>
 
 <details>

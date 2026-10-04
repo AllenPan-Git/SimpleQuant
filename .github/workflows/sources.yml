@@ -1,5 +1,6 @@
 # 数据源健康检查：每周一次，每个外部接口只取一只标的（tools/source_check.py）。
 # 失败时开一个 issue（已有未关闭的就追加评论），恢复后自动评论并关闭，这样能比用户更早发现接口变化。
+# 有备用接口的项（source_check.py 的 WARN_ONLY）失败只在运行页显示警告，不开 issue。
 # 注意：公开仓库 60 天没有提交时，GitHub 会暂停定时任务，需在 Actions 页面重新启用。
 
 name: Data sources

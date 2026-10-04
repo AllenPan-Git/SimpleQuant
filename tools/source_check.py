@@ -2,10 +2,12 @@
 
 GitHub Actions 每周运行一次（.github/workflows/sources.yml），失败时开 issue，以便比用户更早发现接口变化。
 本机运行：.venv\\Scripts\\python -X utf8 tools\\source_check.py [--markdown 结果.md]
-走的是程序里实际使用的函数（含解析），因此字段改名也能发现。退出码：全部通过为 0，否则为 1。
+走的是程序里实际使用的函数（含解析），因此字段改名也能发现。退出码：没有失败项为 0，否则为 1
+（WARN_ONLY 里的项失败只警告，不影响退出码）。
 """
 import argparse
 import datetime as dt
+import os
 import sys
 import time
 import traceback
@@ -155,6 +157,10 @@ CHECKS = [
     ("中债 收益率曲线", chinabond),
 ]
 
+# 失败只警告、不算失败的项：程序在这些接口失败时会改用备用接口（ETF / 股票日线 → 新浪），
+# 且东方财富自 10 月起经常断开 K 线接口（Actions 上也是），算作失败会让 issue 一直开着
+WARN_ONLY = {"东方财富 ETF 日线", "东方财富 股票日线"}
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -170,15 +176,22 @@ def main():
         for name, fn in CHECKS:
             if not results[name][0]:
                 results[name] = run(fn)
+    status = {name: "ok" if ok else "warn" if name in WARN_ONLY else "fail"
+              for name, (ok, _, _) in results.items()}
+    label = {"ok": ("OK  ", "✅"), "warn": ("WARN", "⚠️"), "fail": ("FAIL", "❌")}
     for name, (ok, secs, detail) in results.items():
-        print(f"{'OK  ' if ok else 'FAIL'} {name}  ({secs:.1f}s)  {detail}", flush=True)
-    rows = [f"| {'✅' if ok else '❌'} | {name} | {secs:.1f}s | {detail.replace('|', '/')} |"
+        print(f"{label[status[name]][0]} {name}  ({secs:.1f}s)  {detail}", flush=True)
+        if status[name] == "warn" and os.environ.get("GITHUB_ACTIONS"):
+            print(f"::warning title={name}::{detail}", flush=True)   # 显示在 Actions 运行页的注释里
+    rows = [f"| {label[status[name]][1]} | {name} | {secs:.1f}s | {detail.replace('|', '/')} |"
             for name, (ok, secs, detail) in results.items()]
-    failed = sum(not ok for ok, _, _ in results.values())
+    failed = sum(s == "fail" for s in status.values())
+    warned = sum(s == "warn" for s in status.values())
 
     if args.markdown:
         head = f"数据源检查（{dt.datetime.now():%Y-%m-%d %H:%M}，akshare {_version('akshare')}，" \
-               f"baostock {_version('baostock')}）：{len(CHECKS) - failed} 项通过，{failed} 项失败\n\n"
+               f"baostock {_version('baostock')}）：{len(CHECKS) - failed - warned} 项通过，" \
+               f"{warned} 项警告（有备用接口），{failed} 项失败\n\n"
         table = "| | 接口 | 用时 | 结果 |\n|---|---|---|---|\n" + "\n".join(rows) + "\n"
         Path(args.markdown).write_text(head + table, encoding="utf-8")
     sys.exit(1 if failed else 0)

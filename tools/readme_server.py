@@ -1,9 +1,10 @@
 """
-README 截图用的界面服务：python tools/readme_server.py zh|en light|dark 端口 [cb]
+README 截图用的界面服务：python tools/readme_server.py zh|en light|dark 端口 [cb|up]
 - 界面偏好、模拟账户都放在临时目录，不读写你自己的偏好、历史和模拟账户
 - 预先放入：一次双均线回测（回测页、首页「继续上次的工作」）、两条最近的报告、一个运行了一段时间的模拟账户、
   一次资产配置（风险测评 C3、默认候选）
 - 加 cb：选股页的股票池改为「可转债（全市场）」，使用可转债的默认因子与条件
+- 加 up：模拟账户改用 RSI 超买超卖（截至 2026-09-30 为盈利），并视为已设置每日自动运行（首页不显示提示）
 - 行情数据读本机数据库（只读）：需要 510300 后复权日线、沪深300选股数据，以及资产配置默认候选的 ETF 日线；
   加 cb 时还需要可转债数据
 """
@@ -17,6 +18,7 @@ LANG = sys.argv[1] if len(sys.argv) > 1 else "zh"
 THEME = sys.argv[2] if len(sys.argv) > 2 else "light"
 PORT = int(sys.argv[3]) if len(sys.argv) > 3 else 8780
 CB = len(sys.argv) > 4 and sys.argv[4] == "cb"
+UP = len(sys.argv) > 4 and sys.argv[4] == "up"
 TMP = Path(tempfile.mkdtemp(prefix="sq_readme_"))
 os.environ["NICEGUI_STORAGE_PATH"] = str(TMP / "storage")
 ROOT = Path(__file__).resolve().parents[1]
@@ -58,8 +60,15 @@ for key in ("bt", "opt"):
 
 # ---- 模拟盘：从 2025-10 起运行的双均线账户 ----
 cal = load_calendar(refresh_if_stale=False)
-acc = create_account("沪深300ETF 双均线" if ZH else "CSI 300 ETF · SMA", {"kind": "template", "template": "sma_cross",
-                     "params": {"fast": 10, "slow": 30}}, BrokerConfig(cash=100000), "2025-10-09",
+if UP:
+    acc_name, acc_spec = "沪深300ETF RSI" if ZH else "CSI 300 ETF · RSI", {"kind": "template", "template": "rsi_reversion",
+                                                                          "params": {}}
+    from simplequant.paper import schedule  # noqa: E402
+    schedule.task_exists = lambda: True
+else:
+    acc_name, acc_spec = "沪深300ETF 双均线" if ZH else "CSI 300 ETF · SMA", {"kind": "template", "template": "sma_cross",
+                                                                            "params": {"fast": 10, "slow": 30}}
+acc = create_account(acc_name, acc_spec, BrokerConfig(cash=100000), "2025-10-09",
                      assets=[{"source": "akshare", "symbol": "510300", "asset": "etf", "name": "510300"}])
 history_df = DF.loc[:"2026-09-30"]
 for end in ("2026-03-31", "2026-06-30", "2026-09-30"):        # 分几次推进，和每天运行的效果一样

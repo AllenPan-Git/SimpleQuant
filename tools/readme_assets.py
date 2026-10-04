@@ -87,8 +87,9 @@ SHOTS = {
 WAIT = {"selection": 30, "selection-cb": 45, "optimize": 8, "allocation": 8}
 CLICK_WAIT = {"optimize": 45, "selection": 40, "selection-cb": 60, "paper": 3}
 # 每次启动服务截哪几张：(主题, 服务的附加参数, 截图名称)
-RUNS = [("light", [], [n for n in SHOTS if n != "selection-cb"]), ("dark", [], ["backtest"]),
-        ("light", ["cb"], ["selection-cb"])]
+# 首页单独启动一次服务（加 up）：模拟账户盈利、已设置每日自动运行
+RUNS = [("light", [], [n for n in SHOTS if n not in ("selection-cb", "home")]), ("dark", [], ["backtest"]),
+        ("light", ["cb"], ["selection-cb"]), ("light", ["up"], ["home"])]
 
 
 def start_server(lang: str, theme: str, extra: list | None = None) -> subprocess.Popen:

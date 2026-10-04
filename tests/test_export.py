@@ -96,6 +96,15 @@ def test_every_indicator_can_be_exported():
             compile(expr, "<expr>", "eval")
 
 
+def test_script_has_no_relative_imports():
+    """BaseStrategy 里为避开循环导入写在函数内的相对导入，导出时换成附带的函数源码"""
+    code = single_asset_script({"kind": "template", "template": "rsi_reversion", "params": {}},
+                               [{"name": "A", "source": "csv", "path": "A.csv"}], asdict(BROKER))
+    assert not [ln for ln in code.splitlines() if ln.lstrip().startswith("from .")]
+    ns = exec_script(code)
+    assert ns["tax_rate"]("2024-01-02", "2024-01-20") == 0.20 and ns["tax_rate"]("2023-01-02", "2024-06-03") == 0.0
+
+
 def test_script_header_and_selection_script():
     code = single_asset_script({"kind": "template", "template": "sma_cross", "params": {"fast": 10}},
                                [{"name": "510300", "source": "akshare", "symbol": "510300", "asset": "etf",

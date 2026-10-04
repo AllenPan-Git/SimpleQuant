@@ -25,6 +25,7 @@ from ..rules import INDICATORS, default_line
 from ..strategies import templates as tpl_module
 from ..strategies.factors import KDJ, OBV
 from ..strategies.registry import TEMPLATES
+from ..stocks.dividends import tax_rate
 from ..system import venv_python
 
 
@@ -38,7 +39,8 @@ def _module_body(module) -> str:
         while i < len(lines) and '"""' not in lines[i]:
             i += 1
         i += 1
-    body = [ln for ln in lines[i:] if not ln.startswith(("import ", "from "))]
+    # 顶部 import 由脚本统一写；函数里的相对导入（避开循环导入用）在独立脚本里无法执行，所需函数另行附上
+    body = [ln for ln in lines[i:] if not ln.startswith(("import ", "from ")) and not ln.lstrip().startswith("from .")]
     return "\n".join(body).strip() + "\n"
 
 
@@ -350,6 +352,7 @@ def single_asset_script(spec: dict, data: list[dict], broker: dict, title: str =
                  + inspect.getsource(AShareCommission) + "\n")
     parts.append("\n# ============================== 策略基类（整手、T+1、预留资金） ==============================\n"
                  + _module_body(base_module))
+    parts.append("\n\n" + inspect.getsource(tax_rate))          # BaseStrategy._dividend_tax 用到
     parts.append("\n\n" + inspect.getsource(tpl_module._PerAsset))
     if spec.get("kind") == "code":          # 自己写的代码：原样放入，可用名字与 SimpleQuant 里相同
         code = spec["code"]

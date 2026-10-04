@@ -7,6 +7,7 @@ data_cache/paper/<账户id>/
     nav.parquet     每日资产（只追加）
     state.json      最新一次运行的结果：今日信号、当前持仓、指标、一致性检查
     error.json      上一次运行失败的时间和原因（成功运行后删除）
+    rebalances.parquet  组合账户的再平衡记录（只追加）
     prices/         单标的账户自己的行情数据（前复权，每次运行时刷新）
 """
 
@@ -31,7 +32,7 @@ NAV_COLUMNS = ["value", "cash", "benchmark"]
 class PaperAccount:
     id: str
     name: str
-    kind: str                   # "single"（单标的策略）/ "selection"（多因子选股）
+    kind: str                   # "single"（单标的策略）/ "selection"（多因子选股）/ "portfolio"（资产配置组合）
     spec: dict                  # 策略描述
     broker: dict                # BrokerConfig 的字段
     start: str                  # 从这天收盘起产生信号（下一个交易日开盘第一次成交）
@@ -76,6 +77,14 @@ class PaperAccount:
 
     def save_nav(self, df: pd.DataFrame):
         df.to_parquet(self.dir / "nav.parquet")
+
+    def rebalances(self) -> pd.DataFrame:
+        """组合账户的再平衡记录：time / sleeve（成分 id）/ amount（调整金额，正数为买入）/ cost"""
+        p = self.dir / "rebalances.parquet"
+        return pd.read_parquet(p) if p.exists() else pd.DataFrame(columns=["time", "sleeve", "amount", "cost"])
+
+    def save_rebalances(self, df: pd.DataFrame):
+        df.to_parquet(self.dir / "rebalances.parquet")
 
     def state(self) -> dict:
         p = self.dir / "state.json"

@@ -241,7 +241,12 @@ def run_all(accounts: list[PaperAccount], store=None, refresh: bool = True, log=
             continue
         try:
             log(f"[{acc.name}] updating data…")
-            if acc.kind == "selection":
+            if acc.kind == "portfolio":
+                from . import portfolio
+                if refresh:
+                    portfolio.refresh_data(acc, store, done, calendar)
+                state = portfolio.run_portfolio(acc, calendar, store)
+            elif acc.kind == "selection":
                 if refresh:
                     refresh_selection_data(acc, store, done, calendar=calendar)
                 state = run_account(acc, calendar, panel=load_selection_panel(acc, store))

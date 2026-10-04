@@ -75,7 +75,7 @@ def download(symbol: str, end: str, start: str = DEFAULT_DATA_START, name: str =
     return fetch_to_library("akshare", symbol, start, end, freq="1d", adjust="hfq", name=name or symbol, asset="etf")
 
 
-def _broker_for(cls: str) -> BrokerConfig:
+def broker_for(cls: str) -> BrokerConfig:
     preset = COST_PRESETS["bond" if cls == "bond" else "etf"]
     # 资金取得较大，减少整手限制带来的现金拖累，使收益率主要反映策略本身
     return BrokerConfig(cash=1_000_000, commission=preset["commission"], min_commission=preset["min_commission"],
@@ -98,16 +98,19 @@ def sleeve_returns(sleeve: dict, calendar: pd.DatetimeIndex | None = None) -> pd
         if kind == "hold":
             return df["close"].pct_change().dropna().rename(sleeve["id"])
         from .. import strategies
-        spec = _strategy(sleeve)
-        res = run_backtest({sleeve["symbol"]: df}, *strategies.resolve(spec), _broker_for(sleeve["class"]))
+        spec = strategy_spec(sleeve)
+        res = run_backtest({sleeve["symbol"]: df}, *strategies.resolve(spec), broker_for(sleeve["class"]))
         return res.equity["value"].pct_change().dropna().rename(sleeve["id"])
     if kind == "selection":
         return _selection_returns(sleeve).rename(sleeve["id"])
     raise ValueError(f"unknown sleeve kind {kind}")
 
 
-def _strategy(sleeve: dict) -> dict:
+def strategy_spec(sleeve: dict) -> dict:
+    """候选使用的策略描述；组合模拟账户开户时已存入 sleeve["spec"]，之后改动同名策略不影响账户"""
     from .. import strategies
+    if sleeve.get("spec"):
+        return sleeve["spec"]
     name = sleeve["strategy"]
     if name.startswith("tpl:"):
         return {"kind": "template", "template": name[4:], "params": {}}
@@ -120,7 +123,7 @@ def _strategy(sleeve: dict) -> dict:
 def _selection_returns(sleeve: dict) -> pd.Series:
     from ..stocks import StockStore, run_selection, universe
     from ..paper.runner import PANEL_WARMUP_DAYS
-    spec = _strategy(sleeve)
+    spec = strategy_spec(sleeve)
     if spec.get("kind") != "selection":
         raise ValueError(f"not a selection strategy: {sleeve['strategy']} / 「{sleeve['strategy']}」不是选股策略")
     store = StockStore()
@@ -131,11 +134,15 @@ def _selection_returns(sleeve: dict) -> pd.Series:
     # 前 PANEL_WARMUP_DAYS 天只用于预热因子
     cal = panel.calendar
     start = cal[min(len(cal) - 1, cal.searchsorted(cal[0] + pd.Timedelta(days=PANEL_WARMUP_DAYS)))]
-    preset = COST_PRESETS["bond" if universe.kind(spec["universe"]) == "cb" else "stock"]
-    broker = BrokerConfig(cash=1_000_000, commission=preset["commission"], min_commission=preset["min_commission"],
-                          stamp_duty=preset["stamp_duty"], dividend=spec.get("dividend", "reinvest"))
-    res = run_selection(panel, spec, broker, start=start)
+    res = run_selection(panel, spec, selection_broker(spec), start=start)
     return res.equity["value"].pct_change().dropna()
+
+
+def selection_broker(spec: dict) -> BrokerConfig:
+    from ..stocks import universe
+    preset = COST_PRESETS["bond" if universe.kind(spec["universe"]) == "cb" else "stock"]
+    return BrokerConfig(cash=1_000_000, commission=preset["commission"], min_commission=preset["min_commission"],
+                        stamp_duty=preset["stamp_duty"], dividend=spec.get("dividend", "reinvest"))
 
 
 def risk_stats(returns: pd.Series) -> dict:

@@ -6,6 +6,7 @@ import pandas as pd
 from nicegui import run, ui
 
 from simplequant import strategies
+from simplequant.allocation import KINDS
 from simplequant.data import library
 from simplequant.i18n import render
 from simplequant.paper import list_accounts, load_account, delete_account, create_account, run_all, load_calendar
@@ -34,6 +35,9 @@ def page():
     PP = state.STATE.setdefault("pp", {"kind": "single", "strategy": None, "assets": [], "sel": None,
                                        "mode": "now", "past": str(dt.date.today() - dt.timedelta(days=180)),
                                        "name": "", "account": None, "task_time": "19:00"})
+    opened = state.STATE.pop("pp_open", None)       # 刚在资产配置页创建的组合账户
+    if opened:
+        PP["account"] = opened
     with frame("/paper"):
         page_title("/paper", t("pp.intro"))
         logs = None
@@ -75,8 +79,14 @@ def _new_account_form(PP, run_accounts, redraw):
     def draw():
         form.clear()
         with form:
-            ui.radio({k: t(f"pp.kind_{k}") for k in ("single", "selection")}, value=PP["kind"],
+            ui.radio({k: t(f"pp.kind_{k}") for k in ("single", "selection", "portfolio")}, value=PP["kind"],
                      on_change=lambda e: (PP.__setitem__("kind", e.value), draw())).props("inline").mark("pp_kind")
+            if PP["kind"] == "portfolio":
+                notice(t("pf.create_hint"), "info")
+                ui.button(t("pf.go_allocation"), on_click=lambda: ui.navigate.to("/allocation")) \
+                    .props("flat no-caps dense color=primary icon-right=arrow_forward").classes("self-start") \
+                    .mark("pp_go_allocation")
+                return
             spec, universe, assets, ok = None, "", [], True
             if PP["kind"] == "single":
                 opts = {f"saved:{n}": t("bt.opt_saved", name=n) for n, s in saved.items()
@@ -279,6 +289,9 @@ def _account_view(PP, run_accounts, redraw):
     notes = runner.dividend_notes(acc)
     if notes:
         dividend_notices(notes.get("skipped", {}), notes.get("patched", {}))
+    if acc.kind == "portfolio":
+        _portfolio_tabs(acc, st, nav, lg)
+        return
 
     with ui.tabs().classes("w-full").props("align=left no-caps") as tabs:
         tab_sig = ui.tab("sig", t("pp.tab_signals"), icon="notifications_active")
@@ -341,6 +354,94 @@ def _account_view(PP, run_accounts, redraw):
                 f = f.rename(columns={c: t(f"col.{c}") for c in f.columns})
                 df_table(fmt_table(f, {t("col.price"): "{:.3f}", t("col.value"): "{:,.0f}",
                                        t("col.commission"): "{:.2f}"}), rows_per_page=30)
+
+
+def _lots(size: float, lot: int) -> int:
+    return int(round(size / lot)) * lot if lot else int(round(size))
+
+
+def _portfolio_tabs(acc, st, nav, lg):
+    """组合账户：信号（含再平衡）、各成分与对应持仓、资产曲线、再平衡记录"""
+    sleeves = {s["id"]: s for s in acc.spec["sleeves"]}
+    sname = {sid: p(s["name"]) for sid, s in sleeves.items()}
+    reb = t(f"al.reb_{acc.spec['rebalance']}")
+    if st.get("next_rebalance"):
+        ui.label(t("pf.next_rebalance", reb=reb, date=st["next_rebalance"])).classes("sq-muted text-xs")
+    else:
+        ui.label(t("pf.reb_rule", reb=reb)).classes("sq-muted text-xs")
+    if st.get("rebalance_due"):
+        notice(t("pf.rebalance_due", as_of=st["as_of"], date=st["execute_on"]), "balance", "info").mark("pf_due")
+
+    with ui.tabs().classes("w-full").props("align=left no-caps") as tabs:
+        tab_sig = ui.tab("sig", t("pp.tab_signals"), icon="notifications_active")
+        tab_pos = ui.tab("pos", t("pp.tab_positions"), icon="account_balance_wallet")
+        tab_nav = ui.tab("nav", t("pp.tab_nav"), icon="show_chart")
+        tab_reb = ui.tab("reb", t("pf.tab_rebalances"), icon="receipt_long")
+    with ui.tab_panels(tabs, value=tab_sig).classes("w-full bg-transparent"):
+        with ui.tab_panel(tab_sig).classes("px-0 gap-2"):
+            # 折算后不足一手的调整无法下单，不列出
+            sig = [s for s in st["signals"] if _lots(s["size"], s.get("lot", 100))]
+            small = len(st["signals"]) - len(sig)
+            ui.label(t("pp.signals_title", date=st["execute_on"])).classes("font-semibold")
+            if not sig:
+                ui.label(t("pp.no_signals")).classes("sq-muted")
+            else:
+                df = pd.DataFrame([{
+                    t("pf.col_sleeve"): sname.get(s["sleeve"], s["sleeve"]),
+                    t("pp.col_code"): label(s["symbol"]), t("pp.col_name"): p(s["name"]),
+                    t("col.side"): t(f"side.{s['side']}"), t("pp.col_shares"): _lots(s["size"], s.get("lot", 100)),
+                    t("pp.col_ref_price"): s["ref_price"],
+                    t("pp.col_est_value"): _lots(s["size"], s.get("lot", 100)) * s["ref_price"],
+                    t("pp.col_reason"): render(*s["reason"], lang=lg) if s.get("reason") else ""} for s in sig])
+                df_table(fmt_table(df, {t("pp.col_ref_price"): "{:.3f}", t("pp.col_est_value"): "{:,.0f}"}))
+                download_btn(t("pp.download_signals"), lambda: df.to_csv(index=False).encode("utf-8-sig"),
+                             f"signals_{acc.name}_{st['execute_on']}.csv", "text/csv")
+            if small:
+                ui.label(t("pf.small_skipped", n=small)).classes("sq-muted text-xs").mark("pf_small")
+            ui.label(t("pf.signals_note")).classes("sq-muted text-xs")
+        with ui.tab_panel(tab_pos).classes("px-0 gap-2"):
+            ui.label(t("pf.sleeves_title")).classes("font-semibold")
+            dfs = pd.DataFrame([{
+                t("pf.col_sleeve"): p(x["name"]), t("pf.col_kind"): p(KINDS[x["kind"]]),
+                t("pf.col_target"): x["target"], t("pf.col_actual"): x["weight"], t("pp.col_value"): x["value"]}
+                for x in st.get("sleeves", [])])
+            df_table(fmt_table(dfs, {t("pf.col_target"): "{:.1%}", t("pf.col_actual"): "{:.1%}",
+                                     t("pp.col_value"): "{:,.0f}"})).mark("pf_sleeves")
+            ui.label(t("pf.holdings_title")).classes("font-semibold pt-2")
+            pos = st["positions"]
+            if not pos:
+                ui.label(t("pp.no_positions")).classes("sq-muted")
+            else:
+                dfp = pd.DataFrame([{
+                    t("pf.col_sleeve"): sname.get(x["sleeve"], x["sleeve"]),
+                    t("pp.col_code"): label(x["symbol"]), t("pp.col_name"): p(x["name"]),
+                    t("pp.col_shares"): _lots(x["size"], x.get("lot", 100)), t("pp.col_price"): x["price"],
+                    t("pp.col_value"): x["value"], t("pp.col_weight"): x["weight"]}
+                    for x in sorted(pos, key=lambda x: -x["value"])])
+                df_table(fmt_table(dfp, {t("pp.col_price"): "{:.3f}", t("pp.col_value"): "{:,.0f}",
+                                         t("pp.col_weight"): "{:.1%}"}))
+                download_btn(t("pp.download_positions"), lambda: dfp.to_csv(index=False).encode("utf-8-sig"),
+                             f"positions_{acc.name}_{st['as_of']}.csv", "text/csv")
+            ui.label(t("pp.cash", cash=num(st["cash"], 0))).classes("sq-muted text-xs")
+        with ui.tab_panel(tab_nav).classes("px-0"):
+            if len(nav) >= 2:
+                eq = nav.copy()
+                eq["drawdown"] = eq["value"] / eq["value"].cummax() - 1
+                with ui.card().classes("w-full p-2"):
+                    plot(equity_chart(eq, lg, t("pf.bench_label"), t("al.chart_portfolio")))
+            else:
+                ui.label(t("pp.nav_soon")).classes("sq-muted")
+        with ui.tab_panel(tab_reb).classes("px-0"):
+            led = acc.rebalances()
+            if led.empty:
+                ui.label(t("pf.no_rebalances")).classes("sq-muted")
+            else:
+                f = led.sort_values("time", ascending=False, kind="stable")
+                f = pd.DataFrame({t("col.time"): pd.to_datetime(f["time"]).dt.strftime("%Y-%m-%d"),
+                                  t("pf.col_sleeve"): f["sleeve"].map(lambda s: sname.get(s, s)),
+                                  t("pf.col_amount"): f["amount"], t("pf.col_cost"): f["cost"]})
+                df_table(fmt_table(f, {t("pf.col_amount"): "{:+,.0f}", t("pf.col_cost"): "{:,.2f}"}),
+                         rows_per_page=30)
 
 
 def _schedule_box(PP):

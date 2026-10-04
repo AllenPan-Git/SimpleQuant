@@ -1109,6 +1109,58 @@ async def test_allocation_flow(user: User, lib_dir):
     assert await _wait(lambda: not AL["result"]["manual"])
 
 
+async def test_allocation_to_portfolio_paper_account(user: User, lib_dir, paper_dir, monkeypatch):
+    """资产配置页按当前权重开设组合模拟账户 → 模拟盘页显示各成分、再平衡（行情用本地数据库代替下载）"""
+    import simplequant.paper as P
+    from simplequant import allocation as A
+    from simplequant.paper import portfolio as PF, runner, calendar as C, list_accounts
+    _save_prices("511010", n=600, name="国债ETF")
+    _save_prices("510300", n=600, name="沪深300ETF")
+    cfg = A.load_config()
+    cfg["enabled"] = ["cash", "hold_511010", "hold_510300"]
+    A.save_config(cfg)
+    A.save_profile(A.preset_profile(3))
+    idx = library.load("x_510300").index
+    cal = idx.append(pd.bdate_range(idx[-1] + pd.Timedelta(days=1), periods=60))
+
+    def fake_refresh(acc, store=None, done=None, calendar=None, selection=True):
+        (acc.dir / "prices").mkdir(parents=True, exist_ok=True)
+        for s in acc.spec["sleeves"]:
+            if s.get("symbol"):
+                library.load(f"x_{s['symbol']}").to_parquet(acc.dir / "prices" / f"{s['symbol']}.parquet")
+    monkeypatch.setattr(PF, "refresh_data", fake_refresh)
+    monkeypatch.setattr(P, "load_calendar", lambda *a, **kw: cal)
+    monkeypatch.setattr(runner, "load_calendar", lambda: cal)
+    monkeypatch.setattr(C, "latest_expected_day", lambda c, now=None: idx[-1])
+
+    await user.open("/allocation")
+    user.find(marker="al_run").click()
+    assert await _wait(lambda: state.STATE["al"].get("result"))
+    await settle()
+    user.find(marker="al_paper").elements.pop().set_value(True)
+    await settle()
+    user.find(marker="al_pf_mode").elements.pop().set_value("past")
+    user.find(marker="al_pf_past").elements.pop().set_value(str(idx[300].date()))
+    user.find(marker="al_pf_name").elements.pop().set_value("稳健组合")
+    user.find(marker="al_pf_create").click()
+    assert await _wait(lambda: any("已创建组合模拟账户" in m for m in user.notify.messages), n=600), \
+        user.notify.messages
+    acc = list_accounts()[0]
+    st = acc.state()
+    assert acc.kind == "portfolio" and acc.start == str(idx[300].date()) and st["as_of"] == str(idx[-1].date())
+    assert not acc.rebalances().empty and {r["id"] for r in st["sleeves"]} <= {"cash", "hold_511010", "hold_510300"}
+    weights = state.STATE["al"]["result"]["weights"]
+    assert acc.spec["weights"] == pytest.approx({k: v / sum(weights.values()) for k, v in weights.items() if v > 0})
+
+    await user.open("/paper")
+    await user.should_see("资产配置组合")
+    await user.should_see("再平衡方式：每季度")
+    await user.should_see("开盘待执行交易")
+    # 新建账户选「资产配置组合」时引导到资产配置页
+    user.find(marker="pp_kind").elements.pop().set_value("portfolio")
+    await user.should_see(marker="pp_go_allocation")
+
+
 async def test_allocation_add_candidate_and_missing_data(user: User, lib_dir):
     from simplequant import allocation as A
     _save_prices("510300", n=300)

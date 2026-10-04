@@ -52,19 +52,37 @@ def _period_key(idx: pd.DatetimeIndex, rule: str) -> np.ndarray:
     return idx.year.to_numpy()
 
 
-def _simulate(R: np.ndarray, w: np.ndarray, idx: pd.DatetimeIndex, rebalance: str, cost: float, cash: float):
+@dataclass
+class Simulation:
+    values: np.ndarray            # 每日收盘（再平衡后）的组合资产
+    weights: np.ndarray           # 每日收盘（再平衡后）的实际权重
+    pnl: np.ndarray               # 各成分的累计盈亏
+    hold: np.ndarray              # 最后一天收盘（再平衡后）各成分的持有金额
+    events: list                  # 再平衡记录 [(行号, 各成分调整金额, 成本)]
+    cost: float
+
+
+def simulate(R: np.ndarray, w: np.ndarray, idx: pd.DatetimeIndex, rebalance: str, cost: float, cash: float,
+             next_day: pd.Timestamp | None = None) -> Simulation:
+    """
+    next_day：最后一行之后的下一个交易日（模拟盘用）。给出时最后一天收盘同样按规则判断是否再平衡；
+    不给时（回测）最后一天不再平衡
+    """
     n, k = R.shape
     hold = cash * w
     values, weights, pnl = np.empty(n), np.empty((n, k)), np.zeros(k)
-    reb_days, total_cost = 0, 0.0
-    period = _period_key(idx, rebalance) if rebalance in ("monthly", "quarterly", "yearly") else None
+    events, total_cost = [], 0.0
+    period = None
+    if rebalance in ("monthly", "quarterly", "yearly"):
+        period = _period_key(idx if next_day is None else idx.append(pd.DatetimeIndex([next_day])), rebalance)
+    last = n if next_day is not None else n - 1
     for i in range(n):
         gain = hold * R[i]
         pnl += gain
         hold = hold + gain
         v = hold.sum()
         due = False
-        if i < n - 1 and v > 0:
+        if i < last and v > 0:
             if period is not None:
                 due = period[i + 1] != period[i]          # 本期最后一个交易日收盘再平衡
             elif rebalance == "threshold":
@@ -74,11 +92,11 @@ def _simulate(R: np.ndarray, w: np.ndarray, idx: pd.DatetimeIndex, rebalance: st
             c = np.abs(target - hold).sum() * cost
             total_cost += c
             v -= c
+            events.append((i, v * w - hold, c))
             hold = v * w
-            reb_days += 1
         values[i] = v
         weights[i] = hold / v if v > 0 else w
-    return values, weights, pnl, reb_days, total_cost
+    return Simulation(values=values, weights=weights, pnl=pnl, hold=hold, events=events, cost=total_cost)
 
 
 def backtest(returns: pd.DataFrame, weights: dict[str, float], rebalance: str = "quarterly",
@@ -96,11 +114,12 @@ def backtest(returns: pd.DataFrame, weights: dict[str, float], rebalance: str = 
     w = w / w.sum()
     R = returns[cols].to_numpy()
     idx = returns.index
-    values, wh, pnl, n_reb, total_cost = _simulate(R, w, idx, rebalance, cost, cash)
+    sim = simulate(R, w, idx, rebalance, cost, cash)
+    values, wh, pnl = sim.values, sim.weights, sim.pnl
 
     # 参照：全部候选等权、同样的再平衡规则
     ew = np.full(returns.shape[1], 1 / returns.shape[1])
-    bench, *_ = _simulate(returns.to_numpy(), ew, idx, rebalance, cost, cash)
+    bench = simulate(returns.to_numpy(), ew, idx, rebalance, cost, cash).values
 
     # 起点：第一天收益之前的那一刻
     start = idx[0] - pd.Timedelta(days=1)
@@ -120,4 +139,4 @@ def backtest(returns: pd.DataFrame, weights: dict[str, float], rebalance: str = 
         rows.append({"id": c, "weight": w[i], "return_contrib": pnl[i] / cash, "risk_contrib": float(risk_contrib[i]), **st})
     return PortfolioResult(equity=equity, weights=pd.DataFrame(wh, index=idx, columns=cols), metrics=metrics,
                            stats=risk_stats(port_ret), contrib=pd.DataFrame(rows), corr=returns[cols].corr(),
-                           n_rebalances=n_reb, cost=total_cost)
+                           n_rebalances=len(sim.events), cost=sim.cost)

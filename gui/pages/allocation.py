@@ -341,6 +341,84 @@ def _results(AL, rerun):
         ui.label(t("al.corr_title")).classes("font-semibold pt-4")
         plot(corr_heatmap(corr, names, lg))
 
+    _paper_form(AL, r)
+
+
+def _paper_form(AL, r):
+    """以当前权重与再平衡方式开设组合模拟账户"""
+    import datetime as dt
+    from simplequant.paper import portfolio as PF, run_all, load_calendar, delete_account
+    from simplequant.paper.calendar import latest_expected_day
+    from simplequant.strategies.code_strategy import explain_error
+
+    F = AL.setdefault("pf", {"name": "", "cash": 100_000, "mode": "now",
+                             "past": str(dt.date.today() - dt.timedelta(days=180))})
+    with ui.expansion(t("pf.new"), icon="add_circle").classes("w-full q-card mt-4").mark("al_paper"):
+        with ui.column().classes("w-full gap-3"):
+            ui.label(t("pf.new_help", reb=t(f"al.reb_{r['rebalance']}"))).classes("sq-muted text-sm")
+            with ui.row().classes("w-full items-center gap-6"):
+                with ui.column().classes("gap-0"):
+                    ui.label(t("pp.start_mode")).classes("text-xs sq-muted")
+
+                    def on_mode(e):
+                        F["mode"] = e.value
+                        past.set_enabled(e.value == "past")
+                    ui.radio({m: t(f"pp.start_{m}") for m in ("now", "past")}, value=F["mode"], on_change=on_mode) \
+                        .props("inline dense").mark("al_pf_mode")
+                past = ui.input(t("pp.start_date"), value=F["past"], on_change=lambda e: F.__setitem__("past", e.value)) \
+                    .props("outlined dense type=date").classes("w-44").tooltip(t("pp.start_date_help")).mark("al_pf_past")
+                past.set_enabled(F["mode"] == "past")
+            with ui.row().classes("w-full items-end gap-3"):
+                ui.number(t("pf.cash"), value=F["cash"], min=1000, step=10000, format="%.0f",
+                          on_change=lambda e: F.__setitem__("cash", e.value or 0)) \
+                    .props("outlined dense").classes("w-44").mark("al_pf_cash")
+                name = ui.input(t("pp.name"), value=F["name"], placeholder=t("pf.name_ph")) \
+                    .props("outlined dense").classes("grow").mark("al_pf_name")
+                btn = ui.button(t("pp.create"), icon="add", on_click=lambda: create()).props("unelevated no-caps") \
+                    .mark("al_pf_create")
+                spin = ui.spinner(size="sm")
+                spin.set_visibility(False)
+
+            def can():
+                btn.set_enabled(bool((name.value or "").strip()))
+            name.on_value_change(lambda e: (F.__setitem__("name", e.value or ""), can()))
+            can()
+
+    async def create():
+        if (F["cash"] or 0) < 1000:
+            ui.notify(t("pf.cash_min"), type="warning")
+            return
+        btn.disable()
+        spin.set_visibility(True)
+        acc = None
+        try:
+            cal = await run.io_bound(load_calendar)
+            start = F["past"] if F["mode"] == "past" else latest_expected_day(cal).date().isoformat()
+            acc = PF.create_account(F["name"].strip(), r["sleeves"], r["weights"], r["rebalance"], F["cash"], start)
+            # 只更新行情；选股成分直接用本机已有的股票池数据
+            await run.io_bound(PF.refresh_data, acc, None, None, cal, False)
+            if F["mode"] == "now":
+                last = await run.io_bound(PF.data_last, acc)
+                if last is not None and last.date().isoformat() < acc.start:
+                    acc.start = last.date().isoformat()
+                    acc.save()
+            results = await run.io_bound(run_all, [acc], refresh=False, log=lambda m: None)
+        except Exception as e:  # noqa: BLE001
+            if acc is not None:
+                delete_account(acc)
+            msg = explain_error(e, lang())
+            ui.notify(msg if msg != str(e) else f"{type(e).__name__}: {e}", type="negative", multi_line=True)
+            btn.enable()
+            spin.set_visibility(False)
+            return
+        if results.get(acc.id):
+            ui.notify(t("bt.failed", e=results[acc.id]), type="negative", multi_line=True)
+        else:
+            ui.notify(t("pf.created", name=acc.name), type="positive")
+        F["name"] = ""
+        state.STATE["pp_open"] = acc.id          # 模拟盘页打开这个账户
+        ui.navigate.to("/paper")
+
 
 def _weights_table(r, names, rerun):
     res, R = r["res"], r["R"]

@@ -42,10 +42,10 @@ ID = next(m.id for m in sorted(library.list_datasets(), key=lambda m: m.end, rev
           if m.symbol == "510300" and m.source == "akshare" and m.freq == "1d" and m.adjust)
 DF = library.load(ID)
 
-# ---- 回测：双均线 ----
-rng = (dt.date(2024, 8, 1), dt.date(2026, 9, 29))
+# ---- 回测：双均线（10 / 20 日） ----
+rng = (dt.date(2022, 1, 4), dt.date(2026, 9, 29))     # 区间内买入持有略亏，双均线跑赢基准
 prices = shared.slice_prices({"510300": DF}, rng)
-spec = {"kind": "template", "template": "sma_cross", "params": {}}
+spec = {"kind": "template", "template": "sma_cross", "params": {"fast": 10, "slow": 20}}
 cls, params = strategies.resolve(spec)
 broker = BrokerConfig(cash=100000, commission=0.00005, min_commission=0, stamp_duty=0, slippage=0.0005)
 res = run_backtest(prices, cls, params, broker, with_panels=True)
@@ -114,7 +114,7 @@ def seed():
     history.add("sel", "沪深300 低估值 + 反转" if ZH else "CSI 300 value + reversal",
                 ("沪深300" if ZH else "CSI 300") + " · 2020-01-02 ~ 2026-09-28",
                 {"total_return": 0.216, "sharpe": 0.94}, data="沪深300" if ZH else "CSI 300", strategy="")
-    history.add("bt", name, "510300 · " + ("日线" if ZH else "Daily") + " · 2024-08-01 ~ 2026-09-29", res.metrics,
+    history.add("bt", name, "510300 · " + ("日线" if ZH else "Daily") + " · 2022-01-04 ~ 2026-09-29", res.metrics,
                 data="510300", strategy=name)
 
 

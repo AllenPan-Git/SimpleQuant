@@ -1,7 +1,7 @@
 """
 README 截图用的界面服务：python tools/readme_server.py zh|en light|dark 端口 [cb|up]
 - 界面偏好、模拟账户都放在临时目录，不读写你自己的偏好、历史和模拟账户
-- 预先放入：一次双均线回测（回测页、首页「继续上次的工作」）、两条最近的报告、一个运行了一段时间的模拟账户、
+- 预先放入：一次 RSI 回测（回测页、首页「继续上次的工作」）、两条最近的报告、一个运行了一段时间的模拟账户、
   一次资产配置（风险测评 C3、默认候选）
 - 加 cb：选股页的股票池改为「可转债（全市场）」，使用可转债的默认因子与条件
 - 加 up：模拟账户改用 RSI 超买超卖（截至 2026-09-30 为盈利），并视为已设置每日自动运行（首页不显示提示）
@@ -42,23 +42,23 @@ ID = next(m.id for m in sorted(library.list_datasets(), key=lambda m: m.end, rev
           if m.symbol == "510300" and m.source == "akshare" and m.freq == "1d" and m.adjust)
 DF = library.load(ID)
 
-# ---- 回测：双均线（10 / 20 日） ----
-rng = (dt.date(2022, 1, 4), dt.date(2026, 9, 29))     # 区间内买入持有略亏，双均线跑赢基准
+# ---- 回测：RSI 超买超卖（默认参数） ----
+rng = (dt.date(2020, 1, 2), dt.date(2026, 9, 29))     # 区间内 RSI 跑赢买入持有
 prices = shared.slice_prices({"510300": DF}, rng)
-spec = {"kind": "template", "template": "sma_cross", "params": {"fast": 10, "slow": 20}}
+spec = {"kind": "template", "template": "rsi_reversion", "params": {}}
 cls, params = strategies.resolve(spec)
 broker = BrokerConfig(cash=100000, commission=0.00005, min_commission=0, stamp_duty=0, slippage=0.0005)
 res = run_backtest(prices, cls, params, broker, with_panels=True)
-name = "双均线交叉" if ZH else "SMA crossover"
-state.STATE["bt"] = dict(result=res, title=("模板：双均线" if ZH else "Template: SMA cross", ["510300"], "1d"),
+name = "RSI 超买超卖" if ZH else "RSI mean reversion"
+state.STATE["bt"] = dict(result=res, title=("模板：RSI 超买超卖" if ZH else "Template: RSI mean reversion", ["510300"], "1d"),
                          spec=spec, broker=broker, name=name, time="2026-09-30 21:14",
                          checks=check_backtest(res.metrics, res.trades))
 for key in ("bt", "opt"):
     state.STATE[f"{key}_ids"] = [ID]
     state.STATE[f"{key}_range"] = rng
-    state.STATE[f"{key}_strategy"] = "tpl:sma_cross"
+    state.STATE[f"{key}_strategy"] = "tpl:rsi_reversion"
 
-# ---- 模拟盘：从 2025-10 起运行的双均线账户 ----
+# ---- 模拟盘：从 2025-10 起运行的账户（默认双均线，加 up 为 RSI） ----
 cal = load_calendar(refresh_if_stale=False)
 if UP:
     acc_name, acc_spec = "沪深300ETF RSI" if ZH else "CSI 300 ETF · RSI", {"kind": "template", "template": "rsi_reversion",
@@ -114,7 +114,7 @@ def seed():
     history.add("sel", "沪深300 低估值 + 反转" if ZH else "CSI 300 value + reversal",
                 ("沪深300" if ZH else "CSI 300") + " · 2020-01-02 ~ 2026-09-28",
                 {"total_return": 0.216, "sharpe": 0.94}, data="沪深300" if ZH else "CSI 300", strategy="")
-    history.add("bt", name, "510300 · " + ("日线" if ZH else "Daily") + " · 2022-01-04 ~ 2026-09-29", res.metrics,
+    history.add("bt", name, "510300 · " + ("日线" if ZH else "Daily") + " · 2020-01-02 ~ 2026-09-29", res.metrics,
                 data="510300", strategy=name)
 
 

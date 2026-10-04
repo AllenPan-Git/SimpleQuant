@@ -13,6 +13,7 @@ Changes in each release. `tools/release.py` copies the matching section into the
 - AKShare 数据源：东方财富无法连接时，股票日线也自动改用新浪财经（等比复权，与 BaoStock 一致；此前只有 ETF 有备用接口）；东方财富失败后 15 分钟内直接使用新浪，无需每次等待重试
 - AKShare 数据源：指数日线改为新浪财经优先、中证指数官网备用（东方财富指数接口经常无法获取数据）
 - 新浪财经访问统一限速，被限制访问（HTTP 456）时立即暂停访问，不再反复重试；各接口均失败时分别列出原因
+- 顶部「AI 模型」入口更名为「设置」，页面分为「AI 模型」与「关于 SimpleQuant」两部分；「关于」中新增项目主页、问题反馈、更新记录链接
 
 ### Changes
 - Running from source: dependencies are installed at tested versions (`constraints.txt`, Python 3.12 and later); the start scripts reinstall them when the dependency files change
@@ -20,6 +21,7 @@ Changes in each release. `tools/release.py` copies the matching section into the
 - AKShare source: stock daily bars now also fall back to Sina Finance when Eastmoney is unreachable (proportional adjustment, matching BaoStock; previously only ETFs had a fallback); after an Eastmoney failure, Sina is used directly for 15 minutes instead of retrying each time
 - AKShare source: index daily bars now come from Sina Finance first, with the CSI website as a fallback (Eastmoney's index interface often failed)
 - Requests to Sina Finance share one rate limit; when Sina restricts access (HTTP 456), requests pause immediately instead of retrying, and when every interface fails each reason is listed
+- The "AI model" link at the top is renamed "Settings"; the page has an AI model section and an About section, which now links to the project page, issue tracker and changelog
 
 ## 0.2.0（2026-10-03）
 

@@ -19,7 +19,7 @@ PAGES = [
     ("/selection", "nav.selection", "filter_list"),
     ("/paper", "nav.paper", "account_balance_wallet"),
     ("/allocation", "nav.allocation", "pie_chart"),
-    ("/settings", "nav.settings", "smart_toy"),
+    ("/settings", "nav.settings", "settings"),
 ]
 
 # 三条工作流程，顶部步骤条按当前流程显示

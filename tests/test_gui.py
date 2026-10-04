@@ -855,7 +855,7 @@ async def test_selection_walkforward(user: User):
     assert SP["top_n"] == int(res.windows["top_n"].iloc[-1])
 
 
-# ---------------- AI 模型设置 ----------------
+# ---------------- 设置 ----------------
 async def test_settings_preset_and_save(user: User, monkeypatch, tmp_path):
     import simplequant.llm as llm
     from simplequant.llm.config import load_config as real_load
@@ -883,6 +883,7 @@ async def test_settings_update_section_and_banner(user: User, monkeypatch):
     await user.open("/settings")
     await user.should_see(marker="version")
     await user.should_see("当前已是最新版本")
+    assert user.find(marker="link:set.issues").elements.pop().props["href"].endswith("/issues")
     user.find(marker="update_check").click()
     assert checks
 

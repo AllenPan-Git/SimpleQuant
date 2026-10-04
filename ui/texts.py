@@ -991,7 +991,7 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
     "paper.divergence": L("与账本不一致", "differs from ledger"),
 
     # ---- 模型设置 ----
-    "nav.settings": L("AI 模型设置", "AI model settings"),
+    "nav.settings": L("设置", "Settings"),
     "nav.go_settings": L("前往模型设置", "Go to AI model settings"),
     "set.intro": L("用于「自然语言描述（AI）」及「AI 解读结果」功能。支持 Claude、OpenAI、各类兼容 OpenAI 协议的服务（DeepSeek、通义千问、Kimi、智谱、本地 Ollama）以及 LiteLLM。",
                    "Used by \"Describe in plain language (AI)\" and \"Explain with AI\". Supports Claude, OpenAI, OpenAI-compatible services (DeepSeek, Qwen, Kimi, Zhipu, local Ollama) and LiteLLM."),
@@ -1017,7 +1017,11 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
                            "Claude API feature: if the model declines for policy reasons, the server retries with another model"),
     "set.litellm_hint": L("LiteLLM 的模型名称需带服务商前缀；API Key 也可通过各服务商对应的环境变量提供。",
                           "LiteLLM model names include a provider prefix; API keys can also be supplied through each provider's environment variable."),
+    "set.ai": L("AI 模型", "AI model"),
     "set.about": L("关于 SimpleQuant", "About SimpleQuant"),
+    "set.home_page": L("项目主页", "Project page"),
+    "set.issues": L("问题反馈", "Report an issue"),
+    "set.changelog": L("更新记录", "Changelog"),
     "set.version": L("版本 {v}", "Version {v}"),
     "set.data_dir": L("数据目录：{path}", "Data folder: {path}"),
     "upd.check": L("检查更新", "Check for updates"),
@@ -1087,7 +1091,7 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
     "step.n_saved": L("已保存 {n} 个", "{n} saved"),
     "step.n_accounts": L("{n} 个账户", "{n} account(s)"),
     "step.eyebrow": L("{flow} · 第 {n} 步", "{flow} · Step {n}"),
-    "top.settings": L("AI 模型", "AI model"),
+    "top.settings": L("设置", "Settings"),
 
     "home.greet_morning": L("早上好", "Good morning"),
     "home.greet_afternoon": L("下午好", "Good afternoon"),

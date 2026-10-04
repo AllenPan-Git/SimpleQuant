@@ -1,13 +1,14 @@
 """
 自动更新的界面（检查、下载在 simplequant/update/client.py 的后台线程里，这里只读状态显示）
 - banner()：每页顶部的提示条（发现新版本、下载中、已下载好、上次更新的结果），frame() 调用
-- about()：设置页「关于 SimpleQuant」：版本、检查更新按钮、启动时自动检查的开关
+- about()：设置页「关于 SimpleQuant」：版本、检查更新按钮、启动时自动检查的开关、项目主页等链接
 """
 
 from nicegui import app, ui
 
 from simplequant import __version__
 from simplequant.paths import DATA_ROOT
+from simplequant.update import HOME_PAGE, ISSUES_PAGE, CHANGELOG_PAGE
 from simplequant.update.client import UPDATER
 from gui.common import t
 from gui.widgets import notice
@@ -133,6 +134,9 @@ def about():
     ui.label(t("set.about")).classes("font-semibold")
     ui.label(t("set.version", v=__version__)).mark("version")
     ui.label(t("set.data_dir", path=str(DATA_ROOT))).classes("sq-muted text-xs")
+    with ui.row().classes("items-center gap-4 text-sm"):    # 原生窗口中 new_tab 链接由系统浏览器打开
+        for key, url in (("set.home_page", HOME_PAGE), ("set.issues", ISSUES_PAGE), ("set.changelog", CHANGELOG_PAGE)):
+            ui.link(t(key), url, new_tab=True).mark(f"link:{key}")
     with ui.row().classes("items-center gap-4"):
         ui.button(t("upd.check"), icon="update", on_click=UPDATER.check_async) \
             .props("outline no-caps").mark("update_check")

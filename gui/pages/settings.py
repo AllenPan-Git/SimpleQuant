@@ -1,4 +1,4 @@
-"""AI 模型设置；关于 SimpleQuant（版本、检查更新）"""
+"""设置：AI 模型；关于 SimpleQuant（版本、检查更新、项目链接）"""
 
 from nicegui import run, ui
 
@@ -15,10 +15,13 @@ FIELDS = ("provider", "model", "api_key", "base_url", "json_mode", "timeout", "r
 
 def page():
     with frame("/settings"):
-        page_title("/settings", t("set.intro"))
+        page_title("/settings")
         cfg = llm.load_config() or LLMConfig()
         F = {"preset": cfg.preset, **{f: getattr(cfg, f) for f in FIELDS}}
 
+        with ui.column().classes("gap-1"):
+            ui.label(t("set.ai")).classes("font-semibold")
+            ui.label(t("set.intro")).classes("sq-muted text-sm")
         with ui.card().classes("w-full gap-3"):
             def on_preset(e):
                 """切换预设：填入接口类型、地址、示例模型；保留已填的 key（同一接口类型时）"""

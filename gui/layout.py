@@ -26,7 +26,7 @@ PAGES = [
 FLOWS = {
     "timing": ["/data", "/strategy", "/backtest", "/optimize", "/paper"],
     "selection": ["/data", "/selection", "/paper"],
-    "allocation": ["/data", "/allocation"],
+    "allocation": ["/data", "/allocation", "/paper"],
 }
 FLOW_HOME = {"timing": "/strategy", "selection": "/selection", "allocation": "/allocation"}
 STEP_KEY = {"/data": "step.data", "/strategy": "step.strategy", "/backtest": "step.backtest",

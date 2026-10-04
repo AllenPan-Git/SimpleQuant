@@ -26,7 +26,7 @@ The step bar at the top of the app follows these three workflows, and each step 
 |---|---|
 | **Timing** | 01 Data — 02 Strategy — 03 Backtest — 04 Optimize — 05 Paper |
 | **Stock selection** | 01 Data — 02 Selection — 03 Paper |
-| **Allocation** | 01 Data — 02 Allocation |
+| **Allocation** | 01 Data — 02 Allocation — 03 Paper |
 
 <img src="docs/images/home-en.png" alt="Home">
 
@@ -63,9 +63,11 @@ Using free BaoStock data, score the **historical constituents** of the CSI 300 a
 <img src="docs/images/selection-cb-en.png" alt="Convertible-bond selection">
 
 ### Asset allocation
-A risk assessment modelled on broker suitability questionnaires (C1 conservative to C5 aggressive, with a maximum tolerable drawdown) leads to a reference allocation across cash, Treasury ETFs, broad-market ETFs, a gold ETF and your own timing or selection strategies: the risk level sets the class mix, risk parity splits weight within each class, and if the portfolio's historical drawdown exceeds the tolerance, weight moves to defensive assets automatically. Portfolio backtests support several rebalancing rules and show each component's return and risk contribution and the correlations; weights can be edited and re-tested.
+A risk assessment modelled on broker suitability questionnaires (C1 conservative to C5 aggressive, with a maximum tolerable drawdown) leads to a reference allocation across cash, Treasury ETFs, broad-market ETFs, a gold ETF and your own timing or selection strategies: the risk level sets the class mix, risk parity splits weight within each class, and if the portfolio's historical drawdown exceeds the tolerance, weight moves to defensive assets automatically. Portfolio backtests support several rebalancing rules and show each component's return and risk contribution and the correlations; weights can be edited and re-tested. Once you settle on an allocation, open a **portfolio paper account** with its current weights and rebalancing rule in one click; it advances with the other paper accounts every trading day and lists the rebalancing trades for the next open when they fall due.
 
 <img src="docs/images/allocation-en.png" alt="Asset allocation">
+
+<img src="docs/images/paper-portfolio-en.png" alt="Portfolio paper account">
 
 ### Export
 - **Python script**: runs on its own, with fills identical to the SimpleQuant backtest.
@@ -162,6 +164,7 @@ PyInstaller cannot cross-compile, so each system's version is built on that syst
 - **Candidates**: cash (a fixed annual rate), buy-and-hold ETFs, a timing strategy on an asset, or a saved selection strategy. Built-in candidates are cash, a Treasury ETF (511010), a 10-year Treasury ETF (511260), CSI 300 and CSI 500 ETFs and a gold ETF (518880); missing data can be downloaded with one click. Each candidate's risk grade R1-R5 comes from its annualized volatility (2% / 6% / 15% / 25%) and maximum drawdown (3% / 10% / 20% / 35%) over the common period, taking the higher grade; the drawdown bands match C1-C5.
 - **Reference allocation**: the risk level sets the shares of cash, bonds, equities and other assets (gold, convertibles, etc.), with missing classes redistributed proportionally; within each class, weights are inversely proportional to volatility (risk parity). Mean-variance optimization is not used because it is highly sensitive to errors in expected returns. If the portfolio's maximum drawdown over the common period exceeds the tolerance, 5% of the weight moves at a time from equities and other assets to bonds, then from bonds to cash, until the limit is met.
 - **Portfolio backtest**: component daily returns are combined by weight, with monthly, quarterly, yearly, threshold (5 percentage points) or no rebalancing; each rebalance costs 0.05% of the traded amount. An equal-weight mix of all candidates serves as the reference. Results include CAGR, volatility, maximum drawdown, Sharpe, the portfolio risk grade, return and risk contributions, correlations, and notes on the length of the common period, whether the drawdown limit holds and whether the portfolio grade exceeds the risk tolerance.
+- **Portfolio paper accounts**: opened below the portfolio backtest results; the weights, the rebalancing rule and the strategies of timing / selection components are stored with the account (later edits to strategies of the same name do not affect it). Each component advances exactly as in the backtest: cash accrues at its fixed rate, buy-and-hold ETFs follow forward-adjusted closes, and timing and selection components run the backtest code in a 1,000,000 sub-account whose positions and signals are scaled to the component's value. Combining and rebalancing use the same function as the portfolio backtest, and tests ensure day-by-day progress matches a single run and the portfolio backtest. When rebalancing falls due (the last trading day of a period, or drift beyond the threshold), each component's adjustment is computed at the close and executed at the next open; trades smaller than one lot after scaling are not listed. The Paper trading page shows target and actual component weights, underlying holdings, the equity curve (against an equal-weight mix of the components) and the rebalancing history.
 - The drawdown limit and risk grades rely on historical data; future volatility and drawdowns may be larger. Results are for research only.
 </details>
 
@@ -228,7 +231,7 @@ simplequant/strategies/    templates, rule strategies, code strategies
 simplequant/rules/         rule JSON schema, validation and descriptions
 simplequant/stocks/        stock selection: downloads, panels, factors, research, selection backtest, dividends, universe entry point
 simplequant/bonds/          convertible-bond data and panels, rates and credit spreads
-simplequant/paper/         paper trading: accounts, replay and ledger, trading calendar, scheduled task, health checks
+simplequant/paper/         paper trading: accounts, replay and ledger, allocation portfolio accounts, trading calendar, scheduled task, health checks
 simplequant/allocation/    asset allocation: risk assessment, candidates and risk grades, reference allocation, portfolio backtest
 simplequant/export/        export: Python scripts, JoinQuant / MyQuant / QMT
 simplequant/llm/           LLM access: presets and config, Claude / OpenAI / LiteLLM adapters, natural language to rules

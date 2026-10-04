@@ -9,9 +9,11 @@ Changes in each release. `tools/release.py` copies the matching section into the
 
 ### 更新内容
 - 组合模拟账户：在「资产配置」页完成组合回测后，可按当前权重与再平衡方式开设模拟账户。账户每个交易日与其他模拟账户一同推进，各成分（现金类、ETF 买入持有、择时策略、选股策略）按与回测相同的方式计算，到再平衡时点给出下一交易日开盘的调整交易；模拟盘页显示各成分的目标与当前权重、对应持仓、资产曲线（与各成分等权配置对比）及再平衡记录
+- 资产配置流程的步骤条增加第 3 步「模拟盘」
 
 ### Changes
 - Portfolio paper accounts: after a portfolio backtest on the Asset allocation page, open a paper account with its current weights and rebalancing rule. The account advances with the other paper accounts every trading day; each component (cash, buy-and-hold ETFs, timing and selection strategies) is computed exactly as in the backtest, and rebalancing trades are listed for the next open when due. The Paper trading page shows target and actual component weights, underlying holdings, the equity curve (against an equal-weight mix of the components) and the rebalancing history
+- The Allocation workflow's step bar gains a third step, Paper trading
 
 ## 0.2.1（2026-10-04）
 

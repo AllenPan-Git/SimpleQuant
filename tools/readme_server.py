@@ -5,6 +5,7 @@ README 截图用的界面服务：python tools/readme_server.py zh|en light|dark
   一次资产配置（风险测评 C3、默认候选）
 - 加 cb：选股页的股票池改为「可转债（全市场）」，使用可转债的默认因子与条件
 - 加 up：模拟账户改用 RSI 超买超卖（截至 2026-09-30 为盈利），并视为已设置每日自动运行（首页不显示提示）
+- 加 pf：另开一个按上述参考配置的组合模拟账户（2025-10-09 起），模拟盘页打开它，报头为「资产配置」流程
 - 行情数据读本机数据库（只读）：需要 510300 后复权日线、沪深300选股数据，以及资产配置默认候选的 ETF 日线；
   加 cb 时还需要可转债数据
 """
@@ -19,6 +20,7 @@ THEME = sys.argv[2] if len(sys.argv) > 2 else "light"
 PORT = int(sys.argv[3]) if len(sys.argv) > 3 else 8780
 CB = len(sys.argv) > 4 and sys.argv[4] == "cb"
 UP = len(sys.argv) > 4 and sys.argv[4] == "up"
+PF = len(sys.argv) > 4 and sys.argv[4] == "pf"
 TMP = Path(tempfile.mkdtemp(prefix="sq_readme_"))
 os.environ["NICEGUI_STORAGE_PATH"] = str(TMP / "storage")
 ROOT = Path(__file__).resolve().parents[1]
@@ -91,6 +93,19 @@ state.STATE["al"] = {"answers": dict(answers), "result": dict(
     R=al_R, sleeves=al_used, errors=al_err, profile=prof, rebalance=al_cfg["rebalance"], suggestion=al_sug,
     weights=dict(al_sug["weights"]), res=al_sug["result"], shifted=al_sug["shifted"], manual=False)}
 
+# ---- 组合模拟账户：按参考配置，行情取本机数据库（代替下载） ----
+if PF:
+    from simplequant.paper import portfolio as pf  # noqa: E402
+    pf_acc = pf.create_account("平衡型 季度再平衡" if ZH else "Balanced · quarterly", al_used,
+                               dict(al_sug["weights"]), al_cfg["rebalance"], 100000, "2025-10-09")
+    (pf_acc.dir / "prices").mkdir(parents=True, exist_ok=True)
+    for s in pf_acc.spec["sleeves"]:
+        if s.get("symbol"):
+            library.load(allocation.find_dataset(s["symbol"]).id).loc[:"2026-09-30"] \
+                .to_parquet(pf_acc.dir / "prices" / f"{s['symbol']}.parquet")
+    pf.run_portfolio(pf_acc, cal)
+    state.STATE["pp_open"] = pf_acc.id
+
 
 # ---- 选股页：可转债（全市场） ----
 if CB:
@@ -103,7 +118,7 @@ if CB:
 # 数据库里的行情只到某一天：让模拟盘页以这天为「最新应有数据」，不显示「数据未更新」的提示
 import pandas as pd  # noqa: E402
 import gui.pages.paper as paper_page  # noqa: E402
-paper_page.latest_expected_day = lambda calendar: pd.Timestamp(acc.data_through)
+paper_page.latest_expected_day = lambda calendar: pd.Timestamp((pf_acc if PF else acc).data_through)
 
 
 @app.on_startup
@@ -111,6 +126,8 @@ def seed():
     app.storage.general["lang"] = LANG
     app.storage.general["dark"] = THEME == "dark"
     app.storage.general["recent"] = []
+    if PF:
+        app.storage.general["flow"] = "allocation"
     history.add("sel", "沪深300 低估值 + 反转" if ZH else "CSI 300 value + reversal",
                 ("沪深300" if ZH else "CSI 300") + " · 2020-01-02 ~ 2026-09-28",
                 {"total_return": 0.216, "sharpe": 0.94}, data="沪深300" if ZH else "CSI 300", strategy="")

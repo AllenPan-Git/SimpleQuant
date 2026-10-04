@@ -5,7 +5,7 @@
 
 Changes in each release. `tools/release.py` copies the matching section into the GitHub release notes.
 
-## 未发布
+## 0.2.1（2026-10-04）
 
 ### 更新内容
 - 从源码运行：依赖按经过测试的版本安装（`constraints.txt`，Python 3.12 及以上适用），依赖文件更新后，启动脚本自动重新安装

@@ -252,6 +252,10 @@ tests/                     pytest
 - **测试**：`.venv\Scripts\python -m pytest -q tests`（macOS / Linux：`.venv/bin/python -m pytest -q tests`）
 </details>
 
+## 支持本项目
+
+SimpleQuant 免费开源，所有功能对所有人开放。如果它对你有帮助，欢迎在[爱发电](https://afdian.com/a/allengit)支持后续开发；赞助完全自愿，不影响任何功能。也欢迎在 GitHub 点 Star，或在 Issues 反馈问题与建议。
+
 ## 许可证
 
 本项目以 [GNU General Public License v3.0](LICENSE)（GPLv3）发布：可以自由使用、修改和再发布，但再发布（包括分发修改后的版本或打包的程序）时须以相同许可证提供完整源码。采用 GPLv3 是因为所依赖的回测引擎 Backtrader 采用 GPLv3。

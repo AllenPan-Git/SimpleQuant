@@ -81,3 +81,12 @@ def test_outputs_and_limits():
                      IS_INT, BROKER, train_months=12, test_months=1, workers=1)
     with pytest.raises(ValueError):
         walk_forward(prices(n=150), SPEC, AXES, IS_INT, BROKER, train_months=12, test_months=6, workers=1)
+
+
+def test_charts_serialize_for_browser():
+    """图里不能留 pandas.Timestamp：NiceGUI 用 orjson 发给浏览器，遇到 Timestamp 会报错，结果区整块不显示"""
+    import orjson
+    from ui.charts import walkforward_chart, param_stability_chart
+    res = walk_forward(prices(), SPEC, AXES, IS_INT, BROKER, train_months=12, test_months=6, workers=1)
+    for fig in (walkforward_chart(res.equity, res.windows), param_stability_chart(res.params, {})):
+        orjson.dumps(fig.to_plotly_json(), option=orjson.OPT_SERIALIZE_NUMPY)

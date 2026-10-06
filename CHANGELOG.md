@@ -5,6 +5,16 @@
 
 Changes in each release. `tools/release.py` copies the matching section into the GitHub release notes.
 
+## 0.2.3（2026-10-06）
+
+### 更新内容
+- 修复：参数优化页的滚动优化完成后，结果区域（资产曲线、参数变化图、各窗口表格）整块不显示
+- 修复：导出的 Python 脚本中残留一处包内相对导入（`from ..stocks.dividends import tax_rate`），改为在脚本中附带该函数源码，脚本可独立运行
+
+### Changes
+- Fixed: after a walk-forward optimization on the Optimize page, the whole results area (equity curve, parameter chart and window table) was not displayed
+- Fixed: exported Python scripts contained a leftover package-relative import (`from ..stocks.dividends import tax_rate`); the function's source is now included so the script runs on its own
+
 ## 0.2.2（2026-10-04）
 
 ### 更新内容

@@ -329,7 +329,7 @@ def walkforward_chart(equity: pd.DataFrame, windows: pd.DataFrame, lang: str = "
                              line=dict(color=DRAWDOWN, width=1), fillcolor="rgba(30,122,76,0.14)",
                              hovertemplate="%{y:.2%}"), row=2, col=1)
     for d in windows["test_start"].iloc[1:]:
-        fig.add_vline(x=d, line_width=1, line_dash="dot", line_color=BENCHMARK, opacity=0.5)
+        fig.add_vline(x=pd.Timestamp(d).to_pydatetime(), line_width=1, line_dash="dot", line_color=BENCHMARK, opacity=0.5)
     fig.update_yaxes(tickformat=",.0f", row=1, col=1)
     fig.update_yaxes(tickformat=".0%", row=2, col=1)
     fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])

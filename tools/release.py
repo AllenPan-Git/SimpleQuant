@@ -43,6 +43,8 @@ import zipfile
 from pathlib import Path
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -250,6 +252,10 @@ def github(token: str) -> requests.Session:
     s = requests.Session()
     s.headers.update({"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json",
                       "X-GitHub-Api-Version": "2022-11-28"})
+    # 等 Actions 时要轮询几十分钟，偶尔连接被断开不应让发布中断；只重试 GET 等幂等请求，上传（POST）不重试
+    retry = Retry(total=5, connect=5, read=5, backoff_factor=2, status_forcelist=(502, 503, 504),
+                  allowed_methods=frozenset({"GET", "HEAD"}))
+    s.mount("https://", HTTPAdapter(max_retries=retry))
     return s
 
 

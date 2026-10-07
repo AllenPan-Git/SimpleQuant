@@ -19,6 +19,7 @@ from pathlib import Path
 from .. import strategies
 from ..engine import base_strategy as base_module
 from ..engine.commission import AShareCommission
+from ..engine import limits as limits_module
 from ..engine.market import t0_names
 from ..i18n import pick
 from ..rules import INDICATORS, default_line
@@ -275,6 +276,10 @@ def run(prices: dict):
                                                       stamp_duty=BROKER["stamp_duty"]))
     if BROKER["slippage"] > 0:
         cerebro.broker.set_slippage_perc(perc=BROKER["slippage"])
+    if BROKER.get("price_limit", True):
+        filler = LimitFiller()
+        filler.broker = cerebro.broker
+        cerebro.broker.set_filler(filler)
     for name, df in prices.items():
         extras = {c: c for c in EXTRA if c in df.columns}
         cerebro.adddata(Feed(dataname=df, name=name, datetime=None, openinterest=-1, **extras), name=name)
@@ -350,6 +355,8 @@ def single_asset_script(spec: dict, data: list[dict], broker: dict, title: str =
     parts.append(DATA_CODE)
     parts.append("\n# ============================== 交易成本 ==============================\n"
                  + inspect.getsource(AShareCommission) + "\n")
+    parts.append("\n# ============================== 涨跌停与停牌 ==============================\n"
+                 + _module_body(limits_module))
     parts.append("\n# ============================== 策略基类（整手、T+1、预留资金） ==============================\n"
                  + _module_body(base_module))
     parts.append("\n\n" + inspect.getsource(tax_rate))          # BaseStrategy._dividend_tax 用到

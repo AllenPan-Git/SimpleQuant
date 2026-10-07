@@ -84,6 +84,9 @@ def check_backtest(metrics: dict, trades: pd.DataFrame, tried: int = 0) -> list[
         else:
             out.append(_f("boot_ok", "ok", **args))
 
+    if metrics.get("limit_blocked"):
+        out.append(_f("limit_blocked", "note", n=int(metrics["limit_blocked"])))
+
     if tried > 1:
         out.append(_f("tuned", "warn" if tried >= MANY_COMBOS else "note", n=tried))
     return out

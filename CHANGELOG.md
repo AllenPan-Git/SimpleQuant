@@ -5,12 +5,18 @@
 
 Changes in each release. `tools/release.py` copies the matching section into the GitHub release notes.
 
-## 未发布
+## 0.2.4（2026-10-07）
 
 ### 更新内容
+- 新增：回测页选择多个标的时，可选择「分别回测」：同一策略在每个标的上单独回测，报告给出跑赢买入持有的比例、收益中位数、最差 10% 标的的收益与回撤对比，附策略收益对买入持有收益的散点图和逐个标的的明细（可下载 CSV、可打开任一标的的完整回测）
+- 新增：择时回测模拟涨跌停与停牌（日线，默认开启，可在「资金与交易成本」中关闭）：开盘即跌停或停牌时卖出委托顺延至下一交易日开盘，开盘即涨停或停牌时买入委托作废，规则与多因子选股相同；可信度检查会提示受影响的委托次数。导出的 Python 脚本使用相同规则。此前开设的模拟账户保持原有规则
+- 新增：回测方案文件（.sqplan）：在回测页「导出」菜单保存策略、标的、区间与费率（可附带回测结果），在另一台电脑的回测页「导入方案」即可还原设置、下载缺少的数据并重新回测，回测后与方案记录的结果核对。方案文件只含设置，不含行情与代码，代码策略请通过导出 Python 脚本分享
 - 改进：程序内的更新说明不再显示发布页开头的「下载」一节
 
 ### Changes
+- New: when several assets are selected on the Backtest page, they can be backtested separately: the same strategy runs on each asset on its own, and the report shows the share of assets beating buy-and-hold, the median return, the bottom-decile return and a drawdown comparison, with a scatter plot of strategy versus buy-and-hold returns and a per-asset table (downloadable as CSV; any asset can be opened as a full backtest)
+- New: timing backtests now simulate price limits and suspensions (daily bars, on by default, can be turned off under Capital & trading costs): a sell order is carried over to the next open when the asset opens limit-down or is suspended, and a buy order is canceled when it opens limit-up or is suspended, following the same rules as factor selection; the credibility assessment reports how many orders were affected. Exported Python scripts use the same rules. Paper accounts opened earlier keep their original rules
+- New: backtest plan files (.sqplan): save the strategy, assets, period and costs (optionally with the backtest result) from the Export menu on the Backtest page, then use Import plan on another computer to restore the settings, download any missing data, rerun the backtest and verify the result against the one recorded in the plan. Plan files contain settings only, with no market data or code; share code strategies as exported Python scripts
 - Improved: the in-app release notes no longer show the "Download" section at the top of the release page
 
 ## 0.2.3（2026-10-06）

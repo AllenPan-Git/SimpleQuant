@@ -407,3 +407,30 @@ def param_curve(df: pd.DataFrame, param: str, metric: str, x_label: str, lang: s
     fig.update_yaxes(title=m_label, tickformat=_fmt(metric)[0], gridwidth=0.5)
     fig.update_layout(height=380, margin=dict(l=10, r=10, t=20, b=10), showlegend=False)
     return fig
+
+
+def batch_scatter(df: pd.DataFrame, lang: str = "zh") -> go.Figure:
+    """批量回测：横轴买入持有收益、纵轴策略收益；对角线以上为跑赢买入持有（红），以下为跑输（绿）"""
+    ok = df[df["error"].isna()]
+    x, y = ok["benchmark_return"].astype(float) * 100, ok["total_return"].astype(float) * 100
+    beat = y > x
+    lo = float(min(x.min(), y.min(), 0)) if len(ok) else -10.0
+    hi = float(max(x.max(), y.max(), 0)) if len(ok) else 10.0
+    pad = (hi - lo) * 0.05 or 1.0
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=[lo - pad, hi + pad], y=[lo - pad, hi + pad], mode="lines", hoverinfo="skip",
+                             line=dict(color=BENCHMARK, width=1, dash="dash"), name=tr("chart.batch_diag", lang)))
+    for mask, color, symbol, key in ((beat, UP, "triangle-up", "chart.batch_beat"),
+                                     (~beat, DOWN, "triangle-down", "chart.batch_lag")):
+        sub = ok[mask]
+        fig.add_trace(go.Scatter(
+            x=x[mask], y=y[mask], mode="markers", name=f"{tr(key, lang)}（{int(mask.sum())}）" if lang == "zh"
+            else f"{tr(key, lang)} ({int(mask.sum())})",
+            marker=dict(color=color, symbol=symbol, size=8, opacity=0.8), text=sub["symbol"],
+            hovertemplate="%{text}<br>" + tr("chart.batch_y", lang) + " %{y:.2f}%<br>"
+                          + tr("chart.batch_x", lang) + " %{x:.2f}%<extra></extra>"))
+    _layout(fig, 460)
+    fig.update_layout(hovermode="closest")
+    fig.update_xaxes(title=tr("chart.batch_x", lang) + " (%)", zeroline=True, range=[lo - pad, hi + pad])
+    fig.update_yaxes(title=tr("chart.batch_y", lang) + " (%)", zeroline=True, range=[lo - pad, hi + pad])
+    return fig

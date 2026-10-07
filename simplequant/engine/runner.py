@@ -14,6 +14,7 @@ from ..bonds.rates import MACRO_COLUMNS
 from ..data.cash_dividend import has_columns, events_of
 from .base_strategy import ORDER_COLUMNS, TRADE_COLUMNS
 from .commission import AShareCommission
+from .limits import LimitFiller
 from .market import t0_names
 from .results import EquityRecorder, BacktestResult, compute_metrics, build_benchmark
 
@@ -28,6 +29,7 @@ class BrokerConfig:
     t_plus_1: bool = True          # 按品种执行 T+1（债券 ETF、可转债等 T+0 品种除外）；False = 全部按 T+0
     risk_free: float = 0.02
     dividend: str = "reinvest"     # reinvest 分红再投资（后复权）/ cash 现金分红（行情由 data/cash_dividend.prepare 换好）
+    price_limit: bool = True       # 日线按涨跌停与停牌限制成交（见 limits.py）
 
 
 class FactorPandasData(bt.feeds.PandasData):
@@ -76,6 +78,10 @@ def build_cerebro(prices: dict[str, pd.DataFrame], strategy_cls, strategy_params
         commission=broker.commission, min_commission=broker.min_commission, stamp_duty=broker.stamp_duty))
     if broker.slippage > 0:
         cerebro.broker.set_slippage_perc(perc=broker.slippage)
+    if broker.price_limit:
+        filler = LimitFiller()
+        filler.broker = cerebro.broker
+        cerebro.broker.set_filler(filler)
     for name, df in prices.items():
         cerebro.adddata(_feed(df, name), name=name)
     cerebro.addstrategy(strategy_cls, **params)
@@ -93,6 +99,7 @@ def run_backtest(prices: dict[str, pd.DataFrame], strategy_cls, strategy_params:
     cerebro.addanalyzer(EquityRecorder, _name="equity")
 
     strat = cerebro.run()[0]
+    blocked = _limit_events(cerebro.broker, strat)
 
     equity = strat.analyzers.equity.get_analysis()
     if trade_start is not None:
@@ -106,6 +113,7 @@ def run_backtest(prices: dict[str, pd.DataFrame], strategy_cls, strategy_params:
     orders = pd.DataFrame(strat.order_records, columns=ORDER_COLUMNS)
     trades = pd.DataFrame(strat.trade_records, columns=TRADE_COLUMNS)
     metrics = compute_metrics(equity["value"], equity["benchmark"], trades, broker.cash, broker.risk_free)
+    metrics["limit_blocked"] = blocked
     if strat.p.dividends:
         metrics["dividend_cash"], metrics["dividend_tax"] = strat.div_cash, strat.div_tax
     panels = {}
@@ -116,6 +124,19 @@ def run_backtest(prices: dict[str, pd.DataFrame], strategy_cls, strategy_params:
                           logs=strat.logs, prices=prices, lot_too_big=sorted(strat.lot_too_big),
                           t0=list(getattr(strat.p, "t0_names", ())),
                           pending=_pending_orders(strat), positions=_positions(strat), panels=panels)
+
+
+def _limit_events(broker, strat) -> int:
+    """涨跌停 / 停牌挡住的委托写进日志（按时间排好），返回次数"""
+    filler = broker.p.filler
+    events = getattr(filler, "events", None)
+    if not events:
+        return 0
+    for when, name, why, is_buy in events:
+        strat.logs.append((when, "log.blocked_buy" if is_buy else "log.blocked_sell",
+                           {"name": name, "why": ("limit." + why, {})}))
+    strat.logs.sort(key=lambda x: (x[0], not x[1].startswith("log.blocked")))     # 同一天：开盘撮合在收盘信号之前
+    return len(events)
 
 
 def _pending_orders(strat) -> list[dict]:

@@ -175,7 +175,7 @@ class BaseStrategy(bt.Strategy):
             self.order_records.append(dict(zip(ORDER_COLUMNS, (
                 dt, order.data._name, "buy" if order.isbuy() else "sell", size,
                 order.executed.price, size * order.executed.price, order.executed.comm))))
-        else:
+        elif not order.info.get("blocked"):        # 涨停 / 停牌作废的买单另有日志（见 limits.py）
             self.logs.append((dt, "log.order_failed", {"name": order.data._name,
                                                         "status": ("status." + order.getstatusname(), {})}))
 

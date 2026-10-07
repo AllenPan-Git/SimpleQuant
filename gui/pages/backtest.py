@@ -9,17 +9,20 @@ from simplequant import llm, strategies
 from simplequant.strategies.code_strategy import explain_error
 from simplequant.data.base import freq_label
 from simplequant.engine import run_backtest, COST_PRESETS
+from simplequant.engine.batch import run_batch, summarize
 from simplequant.engine.credibility import check_backtest
 from simplequant.engine.native_plot import render as render_native, MAX_BARS as NATIVE_MAX_BARS
 from simplequant.export import PLATFORMS
 from gui import state, history
+from gui.plan_io import import_button, export_bytes, plan_filename
+from simplequant import plan as plan_mod
 from gui.common import t, p, lang
 from gui.components import (require_data, data_selector, strategy_selector, broker_settings, prepare_prices,
                             metric_tiles, metric_tile, missing_factor_warnings, dividend_notices,
                             unadjusted_warning, credibility_box)
 from gui.layout import frame, page_title
 from gui.widgets import df_table, fmt_table, plot, notice, download_btn
-from ui.charts import equity_chart, strategy_chart
+from ui.charts import equity_chart, strategy_chart, batch_scatter
 from ui.shared import (export_script, export_filename, platform_export, orders_table, trades_table,
                        logs_table, pct, num)
 
@@ -29,6 +32,7 @@ def page():
         page_title("/backtest")
         by_id = require_data()
         if by_id is None:
+            import_button().classes("mt-2")
             return
         BT = state.STATE.setdefault("bt", {})
         lg = lang()
@@ -43,9 +47,17 @@ def page():
                     .props("unelevated no-caps").mark("run")
                 with ui.button(t("exp.menu"), icon="ios_share").props("outline no-caps") as exp_btn:
                     exp_menu = ui.menu().props("auto-close")
+                import_button()
         with setup:
             with ui.column().classes("w-full gap-4 pt-3"):
                 pick = data_selector(by_id, "bt", lambda: check())
+                mode_row = ui.row().classes("w-full items-center gap-3 px-1")
+                with mode_row:
+                    ui.label(t("bt.mode")).classes("text-sm")
+                    ui.radio({"portfolio": t("bt.mode_portfolio"), "batch": t("bt.mode_batch")},
+                             value=state.STATE.get("bt_mode", "portfolio"), on_change=lambda e: on_mode(e.value)) \
+                        .props("inline dense").mark("bt_mode")
+                    ui.icon("help_outline").classes("sq-muted").tooltip(t("bt.mode_help"))
                 strat = strategy_selector("bt", lambda: check())
                 make_broker = broker_settings("bt", show_dividend=True)
         setup.on_value_change(lambda _: draw_chips())
@@ -53,15 +65,24 @@ def page():
         running = ui.row().classes("items-center gap-2")
         with running:
             ui.spinner(size="sm")
-            ui.label(t("bt.running")).classes("sq-muted text-sm")
+            running_text = ui.label(t("bt.running")).classes("sq-muted text-sm")
         running.set_visibility(False)
+
+        def batch() -> bool:
+            """分别回测：选了两个及以上标的，并选择了「分别回测」"""
+            return state.STATE.get("bt_mode") == "batch" and len(pick.ids) > 1
+
+        def on_mode(v):
+            state.STATE["bt_mode"] = v
+            check()
 
         def draw_chips():
             chips.clear()
             b = state.STATE.get("bt_broker", {})
             preset = COST_PRESETS.get(b.get("preset"), {})
             items = [
-                ("data", " · ".join(by_id[i].name for i in pick.ids) or "—"),
+                ("data", t("bt.chip_batch", n=len(pick.ids)) if batch()
+                 else " · ".join(by_id[i].name for i in pick.ids) or "—"),
                 ("strategy", strat.get("name", "")),
                 ("range", f"{pick.start} ~ {pick.end}" if pick.date_range else "—"),
                 ("broker", t("bt.cash_wan", v=f"{(b.get('cash') or 0) / 1e4:g}")
@@ -78,13 +99,22 @@ def page():
 
         def ready() -> bool:
             need = strategies.min_assets(strat["spec"])
+            if batch():
+                return need <= 1 and len(pick.freqs) == 1 and pick.date_range is not None
             return bool(pick.ids) and len(pick.freqs) == 1 and pick.date_range is not None and len(pick.ids) >= need
 
         def check():
             warnings.clear()
+            mode_row.set_visibility(len(pick.ids) > 1)
+            if pick.union != batch():
+                pick.union = batch()
+                pick.refresh()               # 重新计算可选区间，并再次调用 check()
+                return
             need = strategies.min_assets(strat["spec"])
             with warnings:
-                if pick.ids and len(pick.ids) < need:
+                if batch() and need > 1:
+                    notice(t("bt.batch_need_single", n=need), "warning", "warning")
+                elif pick.ids and len(pick.ids) < need:
                     notice(t("bt.need_assets", n=need), "warning", "warning")
                 for w in missing_factor_warnings(by_id, pick.ids, strat["spec"]):
                     notice(w, "warning", "warning")
@@ -103,6 +133,17 @@ def page():
             spec, label = strat["spec"], strat["label"]
             stem = export_filename(label)[:-3]
             with exp_menu:
+                if spec.get("kind") in ("template", "rule"):
+                    with ui.menu_item(on_click=export_plan).mark("plan_export"):
+                        with ui.row().classes("items-center gap-2 no-wrap"):
+                            ui.icon("description")
+                            with ui.column().classes("gap-0"):
+                                ui.label(t("plan.export"))
+                                ui.label(t("plan.export_help")).classes("sq-muted text-xs max-w-[320px]")
+                    ui.separator()
+                if batch():
+                    ui.label(t("plan.batch_only")).classes("sq-muted text-xs px-4 py-2 max-w-[360px]")
+                    return
                 with ui.menu_item(on_click=lambda: ui.download.content(
                         export_script(spec, label, by_id, pick.ids, pick.date_range, make_broker(), lg),
                         export_filename(label), "text/x-python")):
@@ -126,12 +167,35 @@ def page():
                         item.disable()
                     item.tooltip(why or t(f"exp.help_{key}"))
 
+        def signature():
+            """当前设置；导出方案时，回测结果与当前设置一致才附带结果"""
+            return (strat["spec"], tuple(pick.ids), pick.date_range, make_broker())
+
+        def export_plan():
+            name = strat.get("name") or strat["label"].split("：")[-1].split(": ")[-1]
+            res = BT.get("result")
+            result = res.metrics if res is not None and BT.get("sig") == signature() else None
+            try:
+                data = export_bytes(name, strat["spec"], [by_id[i] for i in pick.ids], pick.date_range,
+                                    make_broker(), "batch" if batch() else "portfolio", result)
+            except plan_mod.PlanError as e:
+                ui.notify(t(e.key, **e.kw), type="warning")
+                return
+            ui.download.content(data, plan_filename(name), "application/json")
+            if result is None:
+                ui.notify(t("plan.exported_no_result"), multi_line=True)
+
         async def do_run():
             if not ready():
                 return
             spec, broker = strat["spec"], make_broker()
+            plan_ctx = state.STATE.pop("bt_plan", None)        # 刚导入的方案：回测后与其中记录的结果核对
+            sig = signature()
             run_btn.disable()
             running.set_visibility(True)
+            if batch():
+                await do_batch(spec, broker)
+                return
             try:
                 prices, skipped, patched = await run.io_bound(prepare_prices, by_id, pick, broker, spec)
                 cls, params = strategies.resolve(spec)
@@ -141,7 +205,9 @@ def page():
                 BT.clear()
                 BT.update(result=res, title=(strat["label"], list(prices), next(iter(pick.freqs))), spec=spec,
                           broker=broker, name=strat.get("name", ""), div_notes=(skipped, patched),
-                          checks=check_backtest(res.metrics, res.trades, tried))
+                          checks=check_backtest(res.metrics, res.trades, tried), sig=sig)
+                if plan_ctx:
+                    BT["plan_check"] = (plan_mod.compare(plan_ctx.get("result"), res.metrics), plan_ctx)
                 _remember(BT, by_id, pick, strat)
                 setup.value = False
             except Exception as e:  # noqa: BLE001
@@ -152,17 +218,137 @@ def page():
                 running.set_visibility(False)
             results.refresh()
 
+        async def do_batch(spec, broker):
+            done = {"n": 0, "of": len(pick.ids)}
+            tick = ui.timer(0.3, lambda: running_text.set_text(t("bt.batch_running", n=done["n"], of=done["of"])))
+            try:
+                prices, skipped, patched = await run.io_bound(prepare_prices, by_id, pick, broker, spec)
+                df = await run.io_bound(run_batch, prices, spec, broker, None,
+                                        lambda n, of: done.update(n=n, of=of))
+                BT.clear()
+                BT.update(batch=df, summary=summarize(df), spec=spec, broker=broker,
+                          name=strat.get("name", "") or strat["label"], freq=next(iter(pick.freqs)),
+                          range=(pick.start, pick.end), div_notes=(skipped, patched),
+                          ids={by_id[i].name: i for i in pick.ids},
+                          time=dt.datetime.now().strftime("%Y-%m-%d %H:%M"))
+                setup.value = False
+            except Exception as e:  # noqa: BLE001
+                BT.clear()
+                ui.notify(t("bt.failed", e=explain_error(e, lang())), type="negative", multi_line=True)
+            finally:
+                tick.cancel()
+                running_text.set_text(t("bt.running"))
+                run_btn.enable()
+                running.set_visibility(False)
+            results.refresh()
+
         check()
 
         @ui.refreshable
         def results():
-            if BT.get("result") is not None:
+            if BT.get("batch") is not None:
+                _batch_results(BT)
+            elif BT.get("result") is not None:
                 _results(BT, exp_menu)
         results()
 
         # 从首页「最近的报告」打开：设置已恢复，自动重新运行
         if state.STATE.pop("bt_autorun", None) and ready():
             ui.timer(0.05, do_run, once=True)
+
+
+def _batch_results(BT: dict):
+    """批量回测的报告：结论段落 → 分布指标 → 散点图 → 逐个标的的明细"""
+    lg = lang()
+    df, s = BT["batch"], BT["summary"]
+    with ui.column().classes("sq-report w-full gap-0 pt-2"):
+        ui.label(t("bt.report_eyebrow", time=BT["time"])).classes("sq-eyebrow")
+        ui.label(BT["name"]).classes("sq-title mt-1")
+        ui.label(f"{t('bt.batch_title', n=s['n'])} · {BT['range'][0]} ~ {BT['range'][1]} · "
+                 f"{freq_label(BT['freq'], lg)}").classes("sq-muted text-sm")
+        if not s.get("ok"):
+            with ui.column().classes("w-full pt-4"):
+                notice(t("bt.batch_all_failed"), "error", "warning")
+        else:
+            ui.html(t("bt.batch_lede", n=s["ok"], beat=s["beat"], share=pct(s["beat_share"], 1),
+                      med=pct(s["median_return"]), bmed=pct(s["median_benchmark"]),
+                      low=pct(s["worst_decile"]), high=pct(s["best_decile"]))
+                    + ("" if lg == "zh" else " ")
+                    + t("bt.batch_lede_dd", share=pct(s["smaller_drawdown_share"], 1), dd=pct(s["median_drawdown"]),
+                        bdd=pct(s["median_benchmark_drawdown"]))).classes("sq-lede my-5")
+            with ui.row().classes("w-full gap-3"):
+                metric_tile(t("bt.batch_beat"), pct(s["beat_share"], 1), f"{s['beat']} / {s['ok']}",
+                            help_text=t("bt.batch_beat_help"))
+                metric_tile(t("bt.batch_profit"), pct(s["profit_share"], 1),
+                            t("bt.batch_vs_hold", v=pct(s["bench_profit_share"], 1)))
+                metric_tile(t("bt.batch_median"), pct(s["median_return"]),
+                            t("bt.batch_vs_hold", v=pct(s["median_benchmark"])))
+                metric_tile(t("bt.batch_excess"), pct(s["median_excess"]), help_text=t("bt.batch_excess_help"))
+                metric_tile(t("bt.batch_worst"), pct(s["worst_decile"]), help_text=t("bt.batch_worst_help"))
+                metric_tile(t("bt.batch_dd"), pct(s["median_drawdown"]),
+                            t("bt.batch_vs_hold", v=pct(s["median_benchmark_drawdown"])))
+            with ui.column().classes("w-full pt-4 gap-2"):
+                if any(BT.get("div_notes", ({}, {}))):
+                    dividend_notices(*BT["div_notes"])
+                if s["failed"]:
+                    notice(t("bt.batch_failed", n=s["failed"]), "error_outline", "warning")
+                if s["no_trades"]:
+                    notice(t("bt.batch_no_trades", n=s["no_trades"]), "info")
+                if s["lot_too_big"]:
+                    notice(t("bt.batch_lot", n=s["lot_too_big"]), "savings", "warning")
+                if s["holding"]:
+                    notice(t("bt.batch_holding", n=s["holding"]), "info")
+                notice(t("bt.batch_note"), "lightbulb")
+            with ui.column().classes("w-full gap-1 pt-6"):
+                plot(batch_scatter(df, lg))
+                ui.html(f"<b>{t('bt.fig1')}</b>{t('bt.batch_fig')}").classes("sq-caption")
+
+    with ui.element("div").classes("sq-sec"):
+        ui.label(t("bt.details")).classes("sq-h2")
+    names = list(df.loc[df["error"].isna(), "symbol"])
+    if names:
+        with ui.row().classes("w-full items-center gap-3"):
+            one = ui.select(names, label=t("bt.batch_open"), value=names[0]).props("outlined dense").classes("w-72")
+            ui.button(t("bt.batch_open_btn"), icon="open_in_new", on_click=lambda: _open_single(BT, one.value)) \
+                .props("outline no-caps").mark("batch_open")
+    tbl = _batch_table(df)
+    df_table(tbl, rows_per_page=20)
+    download_btn(t("bt.batch_download"), lambda: tbl.to_csv(index=False).encode("utf-8-sig"), "batch.csv", "text/csv")
+
+
+def _batch_table(df: pd.DataFrame) -> pd.DataFrame:
+    """按超额收益从高到低排列；出错的标的排在最后，只有备注"""
+    df = df.assign(_x=df["excess_return"].astype(float)).sort_values("_x", ascending=False, na_position="last")
+
+    def p2(v):
+        return "" if pd.isna(v) else f"{v * 100:.2f}%"
+
+    def span(a, b):
+        return f"{pd.Timestamp(a):%Y-%m-%d} ~ {pd.Timestamp(b):%Y-%m-%d}" if pd.notna(a) and pd.notna(b) else ""
+    return pd.DataFrame({
+        t("bt.batch_col_symbol"): df["symbol"],
+        t("bt.batch_col_range"): [span(a, b) for a, b in zip(df["start"], df["end"])],
+        t("bt.batch_col_ret"): df["total_return"].map(p2),
+        t("bt.batch_col_hold"): df["benchmark_return"].map(p2),
+        t("bt.batch_col_excess"): df["excess_return"].map(p2),
+        t("bt.batch_col_dd"): df["max_drawdown"].map(p2),
+        t("bt.batch_col_hold_dd"): df["benchmark_max_drawdown"].map(p2),
+        t("bt.batch_col_trades"): df["trades"].map(lambda v: "" if pd.isna(v) else str(int(v))),
+        t("bt.batch_col_win"): df["win_rate"].map(p2),
+        t("bt.batch_col_holding"): df["holding"].map(lambda v: t("bt.batch_yes") if v is True else ""),
+        t("bt.batch_col_note"): df["error"].fillna(""),
+    })
+
+
+def _open_single(BT: dict, name: str | None):
+    """对其中一个标的运行完整回测（区间、策略、费率沿用当前设置）"""
+    if not name or name not in BT["ids"]:
+        return
+    S = state.STATE
+    S["bt_ids"], S["bt_mode"], S["bt_autorun"] = [BT["ids"][name]], "portfolio", True
+    S.pop("bt_range", None)
+    BT.clear()
+    ui.navigate.to("/backtest")
 
 
 def _remember(BT: dict, by_id: dict, pick, strat: dict):
@@ -238,6 +424,9 @@ def _results(BT: dict, exp_menu):
             if res.lot_too_big:
                 with ui.column().classes("w-full pt-4"):
                     notice(t("bt.lot_too_big", names=", ".join(res.lot_too_big)), "savings", "warning")
+            if BT.get("plan_check"):
+                with ui.column().classes("w-full pt-4"):
+                    _plan_check(*BT["plan_check"], res.metrics)
             with ui.column().classes("w-full pt-6"):
                 credibility_box(BT.get("checks", []))
             explain_out = ui.column().classes("w-full pt-4")
@@ -305,6 +494,20 @@ def _results(BT: dict, exp_menu):
             df_table(logs_table(res.logs, lg), rows_per_page=50)
         with ui.tab_panel(tab_n).classes("px-0 gap-3"):
             _native(BT)
+
+
+def _plan_check(status, ctx: dict, metrics: dict):
+    """导入方案后的第一次回测：与方案文件记录的结果核对"""
+    rec = ctx.get("result") or {}
+    if status == "same":
+        notice(t("plan.check_same", name=ctx["name"], ret=pct(rec["total_return"]), n=rec.get("trades", "?")),
+               "verified", "info")
+    elif status == "differs":
+        notice(t("plan.check_differs", name=ctx["name"], ret=pct(rec["total_return"]), n=rec.get("trades", "?"),
+                 now=pct(metrics["total_return"]), m=metrics["trades"])
+               + (t("plan.check_provider") if ctx.get("provider") else ""), "rule", "warning")
+    else:
+        notice(t("plan.check_none", name=ctx["name"]), "description", "info")
 
 
 def _next(no: str, title: str, body: str, on_click, rec: bool = False):

@@ -428,6 +428,72 @@ async def test_backtest_run_and_results(user: User, lib_dir):
     assert state.STATE["bt"]["native_png"][1:4] == b"PNG"             # PNG 文件头
 
 
+async def test_backtest_batch_mode(user: User, lib_dir):
+    """选两个标的、分别回测：区间取并集，结果给出跑赢比例与明细；可打开单个标的的完整回测"""
+    _save_prices()
+    library.save(make_prices(n=300, seed=5, start="2021-06-01"),
+                 library.DatasetMeta(id="x_510500", name="中证500ETF", symbol="510500", source="akshare", freq="1d"))
+    state.STATE["bt_ids"] = ["x_510300", "x_510500"]
+    await user.open("/backtest")
+    user.find(marker="bt_strategy").elements.pop().set_value("tpl:sma_cross")
+    user.find(marker="bt_mode").elements.pop().set_value("batch")
+    await settle()
+    assert str(state.STATE["bt_range"][0]) == "2021-01-04"           # 并集：从较早的那个标的开始
+    user.find(marker="run").click()
+    assert await _wait(lambda: state.STATE.get("bt", {}).get("batch") is not None)
+    await user.should_see("跑赢买入持有")
+    await user.should_see("中证500ETF")
+    df = state.STATE["bt"]["batch"]
+    assert len(df) == 2 and df["error"].isna().all()
+    assert df.loc[df["symbol"] == "中证500ETF", "start"].iloc[0] == pd.Timestamp("2021-06-01")
+
+    await user.should_see(marker="batch_open")
+    user.find(marker="batch_open").click()
+    assert await _wait(lambda: state.STATE.get("bt", {}).get("result") is not None)
+    assert state.STATE["bt_ids"] == ["x_510300"] and state.STATE["bt_mode"] == "portfolio"
+
+
+async def test_plan_export_and_import(user: User, lib_dir, monkeypatch):
+    """回测后导出方案；在没有数据的电脑上导入：下载数据 → 还原设置 → 自动回测并与方案记录的结果核对"""
+    from simplequant import plan as plan_mod
+    from gui import plan_io
+    _save_prices()
+    await user.open("/backtest")
+    user.find(marker="bt_strategy").elements.pop().set_value("tpl:sma_cross")
+    user.find(marker="run").click()
+    assert await _wait(lambda: state.STATE.get("bt", {}).get("result") is not None)
+    got = {}
+    monkeypatch.setattr(ui.download, "content", lambda data, name, *a, **k: got.update(data=data, name=name))
+    user.find(marker="plan_export").click()
+    plan = plan_mod.loads(got["data"])
+    assert got["name"].endswith(".sqplan") and plan["strategy"]["template"] == "sma_cross"
+    assert plan["result"]["total_return"] == state.STATE["bt"]["result"].metrics["total_return"]
+
+    # 换一台「电脑」：数据库清空，下载时返回同一份行情
+    for f in list(lib_dir.iterdir()):
+        f.unlink()
+    state.reset()
+    fetched = []
+
+    def fake_fetch(source, symbol, start, end, freq="1d", adjust="", name=None, **kw):
+        fetched.append((source, symbol, start, end))
+        return library.save(make_prices(), library.DatasetMeta(id="dl_510300", name=name, symbol=symbol,
+                                                               source=source, freq=freq, adjust=adjust))
+    monkeypatch.setattr(plan_io, "fetch_to_library", fake_fetch)
+    await user.open("/backtest")
+    await user.should_see("前往数据页")
+    user.find(marker="plan_import").click()
+    up = user.find(marker="plan_upload").elements.pop()
+    await up.handle_uploads([up.SmallFileUpload("x.sqplan", "application/json", got["data"])])
+    await user.should_see(marker="plan_review")
+    await user.should_see("需要下载")
+    user.find(marker="plan_go").click()
+    assert await _wait(lambda: state.STATE.get("bt", {}).get("result") is not None)
+    assert fetched and fetched[0][1] == "510300"
+    assert state.STATE["bt"]["plan_check"][0] == "same"
+    await user.should_see("记录的结果一致")
+
+
 async def test_backtest_cash_dividend(user: User, lib_dir, monkeypatch):
     """回测页选「现金分红」：分红到账、显示分红指标；不支持的 CSV 数据保留原样并提示"""
     from simplequant.data import cash_dividend

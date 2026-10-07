@@ -39,6 +39,8 @@ class DataPick:
     end: dt.date | None = None
     error: str = ""
     freqs: set = field(default_factory=set)
+    union: bool = False           # 批量回测：区间取各标的数据的并集（每个标的只用自己有数据的部分）
+    refresh: object = None        # 切换 union 后调用，重新计算可选区间
 
     @property
     def date_range(self):
@@ -65,6 +67,9 @@ def data_selector(by_id: dict, key: str, on_change) -> DataPick:
     def bounds():
         if not pick.ids:
             return None, None
+        if pick.union:
+            return (min(dt.date.fromisoformat(by_id[i].start) for i in pick.ids),
+                    max(dt.date.fromisoformat(by_id[i].end) for i in pick.ids))
         return (max(dt.date.fromisoformat(by_id[i].start) for i in pick.ids),
                 min(dt.date.fromisoformat(by_id[i].end) for i in pick.ids))
 
@@ -109,6 +114,12 @@ def data_selector(by_id: dict, key: str, on_change) -> DataPick:
         state.STATE[f"{key}_range"] = (pick.start, pick.end)
         on_change()
 
+    def on_union():
+        refresh(reset_range=True)
+        on_change()
+
+    pick.refresh = on_union
+    pick.union = state.STATE.get(f"{key}_mode") == "batch" and len(pick.ids) > 1
     if saved_range and pick.ids:
         pick.start, pick.end = saved_range
     refresh(reset_range=not (saved_range and pick.ids))
@@ -216,6 +227,7 @@ def broker_settings(key: str, default_preset: str = "etf", default_cash: int = 1
     saved = state.STATE.setdefault(f"{key}_broker", {"cash": default_cash, "preset": default_preset, "t1": True,
                                                     "slippage": 5.0, "custom": {}})
     saved.setdefault("dividend", "reinvest")
+    saved.setdefault("limit", True)
     presets = list(COST_PRESETS)
     with section(t("bt.costs"), "account_balance"):
         with ui.row().classes("w-full items-center gap-3"):
@@ -224,6 +236,7 @@ def broker_settings(key: str, default_preset: str = "etf", default_cash: int = 1
             preset = ui.select({k: p(COST_PRESETS[k]["label"]) for k in presets}, label=t("bt.cost_preset"),
                                value=saved["preset"]).props(DENSE).classes("w-48")
             t1 = ui.switch(t("bt.t1"), value=saved["t1"]).tooltip(t("bt.t1_help")) if show_t1 else None
+            limit = ui.switch(t("bt.limit"), value=saved["limit"]).tooltip(t("bt.limit_help")).mark(f"{key}_limit") if show_t1 else None
         div = None
         if show_dividend:
             with ui.row().classes("w-full items-center gap-3"):
@@ -248,20 +261,21 @@ def broker_settings(key: str, default_preset: str = "etf", default_cash: int = 1
 
     def remember(_=None):
         saved.update(cash=cash.value or default_cash, preset=preset.value, slippage=slip.value or 0,
-                     t1=t1.value if t1 else True, dividend=div.value if div else "reinvest")
+                     t1=t1.value if t1 else True, dividend=div.value if div else "reinvest",
+                     limit=limit.value if limit else True)
         saved["custom"][preset.value] = {"commission": comm.value or 0, "min_commission": minc.value or 0,
                                          "stamp_duty": stamp.value or 0}
 
     fill_costs()
     preset.on_value_change(lambda e: (fill_costs(), remember()))
-    for el in (cash, comm, minc, stamp, slip) + ((t1,) if t1 else ()) + ((div,) if div else ()):
+    for el in (cash, comm, minc, stamp, slip) + ((t1, limit) if t1 else ()) + ((div,) if div else ()):
         el.on_value_change(remember)
 
     def make() -> BrokerConfig:
         return BrokerConfig(cash=float(cash.value or default_cash), commission=(comm.value or 0) / 1e4,
                             min_commission=float(minc.value or 0), stamp_duty=(stamp.value or 0) / 1e4,
                             slippage=(slip.value or 0) / 1e4, t_plus_1=t1.value if t1 else True,
-                            dividend=div.value if div else "reinvest")
+                            dividend=div.value if div else "reinvest", price_limit=limit.value if limit else True)
     return make
 
 

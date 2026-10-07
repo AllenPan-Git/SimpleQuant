@@ -161,7 +161,8 @@ def with_rates(acc: PaperAccount, prices: dict, refresh: bool = False) -> dict:
 # ---------------- 重放 ----------------
 def replay(acc: PaperAccount, calendar: pd.DatetimeIndex, prices: dict | None = None, panel=None):
     """用回测代码把策略从开始日重放到最新数据；返回 (回测结果, 名称映射, 最新数据日期)"""
-    broker = BrokerConfig(**acc.broker)
+    # 0.2.4 之前开设的账户没有 price_limit：保持当时的成交规则，不改写已有的成交
+    broker = BrokerConfig(**{"price_limit": False, **acc.broker})
     if acc.kind == "selection":
         from ..stocks import run_selection
         last = panel.calendar[-1]

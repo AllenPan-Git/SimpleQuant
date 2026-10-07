@@ -64,6 +64,7 @@ API = f"https://api.github.com/repos/{os.environ.get('GITHUB_REPOSITORY') or cfg
 MAX_PATCHES = 5
 UNIX_TARGETS = ["macos-arm64", "macos-x86_64", "linux-x86_64"]     # 与 .github/workflows/build.yml 的矩阵一致
 CI_WAIT_MIN = 45
+MIRROR_URL = "https://1829763294.share.123pan.cn/123pan/mv2ejv-wbhtA?pwd=ZfDO"     # 123 云盘（提取码 ZfDO），发新版时手动把安装包传进去
 # 固定的打包环境：两次打包同样的代码得到相同的文件（见文件开头）
 BUILD_ENV = {"PYTHONHASHSEED": "0", "SOURCE_DATE_EPOCH": "1735689600"}
 
@@ -230,20 +231,28 @@ def changelog(version: str, path: Path = ROOT / "CHANGELOG.md") -> tuple[str, st
 def release_notes(version: str, installer: str) -> str:
     n = f"SimpleQuant-{version}"
     zh, en = changelog(version)
+    # 附件列表按文件名排序、无法调整，安装包会排在 manifest 后面；所以下载表放在说明最前面，文件名直接做成链接
+    base = f"https://github.com/{os.environ.get('GITHUB_REPOSITORY') or cfg.REPO}/releases/download/v{version}"
+    win, arm, x86, lin = installer, f"{n}-macos-arm64.dmg", f"{n}-macos-x86_64.dmg", f"{n}-linux-x86_64.tar.gz"
+    a = lambda f: f"[{f}]({base}/{f})"  # noqa: E731
     return (
-        f"## 更新内容\n{zh}\n\n## 下载\n已安装 0.1.1 及以后版本的程序会自动检测并下载更新。首次安装请下载：\n\n"
-        f"| 系统 | 文件 |\n|---|---|\n"
-        f"| Windows 10 / 11（64 位，无需管理员权限） | `{installer}` |\n"
-        f"| macOS 11 及以上（Apple 芯片：M1 / M2 / M3 / M4…） | `{n}-macos-arm64.dmg` |\n"
-        f"| macOS 11 及以上（Intel 芯片） | `{n}-macos-x86_64.dmg` |\n"
-        f"| Linux（x86_64） | `{n}-linux-x86_64.tar.gz` |\n\n"
+        f"## 下载\n首次安装请点击下载（已安装 0.1.1 及以后版本的程序会自动检测并下载更新）：\n\n"
+        f"| 系统 | 安装包 |\n|---|---|\n"
+        f"| Windows 10 / 11（64 位，无需管理员权限） | {a(win)} |\n"
+        f"| macOS 11 及以上（Apple 芯片：M1 / M2 / M3 / M4…） | {a(arm)} |\n"
+        f"| macOS 11 及以上（Intel 芯片） | {a(x86)} |\n"
+        f"| Linux（x86_64） | {a(lin)} |\n\n"
+        f"国内下载慢可以用 123 云盘：{MIRROR_URL}\n\n"
         f"macOS 版未经 Apple 公证，第一次打开会被拦下：请在「系统设置 → 隐私与安全性」中点「仍要打开」，"
         f"或在终端运行 `xattr -dr com.apple.quarantine /Applications/SimpleQuant.app`。\n\n"
+        f"下方「Assets」中的其余文件（manifest、`-from-` 增量包）供程序自动更新使用，无需下载。\n\n"
+        f"## 更新内容\n{zh}\n\n"
         f"> 本软件仅供学习与研究使用，不构成任何投资建议。\n\n---\n\n"
-        f"## Changes\n{en}\n\nInstalled copies (0.1.1 or later) update themselves. For a fresh install, download "
-        f"`{installer}` (Windows), `{n}-macos-arm64.dmg` / `{n}-macos-x86_64.dmg` (macOS, Apple silicon / Intel) or "
-        f"`{n}-linux-x86_64.tar.gz` (Linux). The macOS app is not notarized: on first launch, allow it under "
-        f"System Settings → Privacy & Security → Open Anyway.\n\n"
+        f"## Download\nFor a fresh install: {a(win)} (Windows), {a(arm)} / {a(x86)} (macOS, Apple silicon / Intel) "
+        f"or {a(lin)} (Linux). Installed copies (0.1.1 or later) update themselves. The macOS app is not notarized: "
+        f"on first launch, allow it under System Settings → Privacy & Security → Open Anyway. "
+        f"The other assets are used by the auto-updater.\n\n"
+        f"## Changes\n{en}\n\n"
         f"This software is for learning and research only and is not investment advice.\n")
 
 

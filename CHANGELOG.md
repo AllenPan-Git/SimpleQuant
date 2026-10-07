@@ -5,6 +5,14 @@
 
 Changes in each release. `tools/release.py` copies the matching section into the GitHub release notes.
 
+## 未发布
+
+### 更新内容
+- 改进：程序内的更新说明不再显示发布页开头的「下载」一节
+
+### Changes
+- Improved: the in-app release notes no longer show the "Download" section at the top of the release page
+
 ## 0.2.3（2026-10-06）
 
 ### 更新内容

@@ -16,6 +16,7 @@ macOS / Linux 不同（清单是 manifest-<平台>.json，例如 manifest-macos-
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -43,6 +44,11 @@ TIMEOUT = (10, 30)        # 连接、读取超时（秒）
 RETRIES = 4
 # Inno Setup 写的卸载信息（安装包 AppId + _is1）；补丁更新后改这里的版本号，「应用和功能」里显示才对
 UNINSTALL_KEY = r"HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{E1A695AA-65CF-43E6-B7C1-E05D9C531879}_is1"
+
+
+def strip_download(notes: str) -> str:
+    """发布说明开头的「下载 / Download」一节是给首次安装的人看的，程序内显示更新说明时去掉"""
+    return re.sub(r"^## (下载|Download)\s*$.*?(?=^## |\Z)", "", notes, flags=re.M | re.S).strip()
 
 
 class UpdateError(Exception):
@@ -198,7 +204,7 @@ class Updater:
         for url in self.sources:
             try:
                 d = self._get(url).json()
-                return {"version": d["tag_name"].lstrip("vV"), "notes": d.get("body") or "",
+                return {"version": d["tag_name"].lstrip("vV"), "notes": strip_download(d.get("body") or ""),
                         "page": d.get("html_url") or cfg.RELEASES_PAGE,
                         "assets": {a["name"]: a["browser_download_url"] for a in d.get("assets", [])}}
             except UpdateError as e:

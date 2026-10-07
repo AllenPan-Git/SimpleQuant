@@ -599,3 +599,11 @@ def test_constraints_cover_requirements():
     assert set(pin_versions.names()) == set(pinned)          # 改了 requirements.txt 要重新运行 tools/pin_versions.py
     for script in ("start.bat", "start.sh", ".github/workflows/build.yml", ".github/workflows/sources.yml"):
         assert "-r requirements.txt -c constraints.txt" in (ROOT / script).read_text(encoding="utf-8"), script
+
+
+def test_strip_download_section():
+    from simplequant.update.client import strip_download
+    body = "## 下载\n| 系统 | 安装包 |\n|---|---|\n\n## 更新内容\n- 修复 A\n\n---\n\n## Download\nlinks\n\n## Changes\n- Fixed A\n"
+    out = strip_download(body)
+    assert "安装包" not in out and "links" not in out
+    assert out.startswith("## 更新内容") and "- 修复 A" in out and "- Fixed A" in out

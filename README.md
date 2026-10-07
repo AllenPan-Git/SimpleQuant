@@ -88,6 +88,8 @@ A 股交易规则：100 股整手、按品种执行 T+1（股票与境内股票 
 | macOS（Intel 芯片） | `SimpleQuant-<版本>-macos-x86_64.dmg` |
 | Linux | `SimpleQuant-<版本>-linux-x86_64.tar.gz` |
 
+GitHub 下载较慢时，可使用国内网盘（123 云盘，无需登录，提取码 `ZfDO`）：<https://1829763294.share.123pan.cn/123pan/mv2ejv-wbhtA?pwd=ZfDO>
+
 安装后，在「01 数据」页下载所需数据（AKShare、BaoStock 均为免费数据源）。
 
 ### Windows

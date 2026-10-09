@@ -439,7 +439,11 @@ class StockStore:
                     frequency="d")
         df["date"] = pd.to_datetime(df["date"])
         df = df.set_index("date")[["open", "close"]].apply(pd.to_numeric, errors="coerce")
-        df.to_parquet(self.root / "index" / f"{code}.parquet")
+        path = self.root / "index" / f"{code}.parquet"
+        if path.exists():           # 与已有的合并：下载较短的区间不会把更早的交易日删掉（指数决定交易日历）
+            old = pd.read_parquet(path)
+            df = pd.concat([old[~old.index.isin(df.index)], df]).sort_index()
+        df.to_parquet(path)
         return df
 
     def load_index(self, code: str) -> pd.DataFrame:

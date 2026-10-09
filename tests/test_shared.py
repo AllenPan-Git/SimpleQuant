@@ -53,3 +53,23 @@ def test_tables_translate(tmp_path):
     zh, en = shared.orders_table(orders, "zh"), shared.orders_table(orders, "en")
     assert list(zh.columns) != list(en.columns)
     assert zh.iloc[0, 0] != "buy" and en.iloc[0, 0] != "buy"
+
+
+def test_asset_names_tell_same_symbol_apart():
+    """同一代码的后复权与不复权数据在回测里是两个标的（第七期录屏发现组合回测只剩一份）"""
+    from simplequant.data.library import DatasetMeta
+    from simplequant.engine.limits import _code6
+    from simplequant.engine.market import symbol_of
+    metas = [DatasetMeta(id="a", name="515080", symbol="515080", source="akshare", freq="1d", adjust="hfq",
+                         start="2020-01-02", end="2026-09-30"),
+             DatasetMeta(id="b", name="515080", symbol="515080", source="akshare", freq="1d", adjust="",
+                         start="2020-01-02", end="2026-09-30"),
+             DatasetMeta(id="c", name="510300 沪深300ETF", symbol="510300", source="akshare", freq="1d", adjust="hfq",
+                         start="2020-01-02", end="2026-09-30")]
+    by_id = {m.id: m for m in metas}
+    names = shared.asset_names(by_id, ["a", "b", "c"], "zh")
+    assert len(set(names.values())) == 3
+    assert names["c"] == "510300 沪深300ETF"                         # 不重名的不变
+    assert "不复权" in names["b"] and "后复权" in names["a"]
+    assert all(_code6(n) == symbol_of(n) == "515080" for n in (names["a"], names["b"]))   # 仍能识别代码
+    assert shared.asset_names(by_id, ["a", "c"], "zh") == {"a": "515080", "c": "510300 沪深300ETF"}

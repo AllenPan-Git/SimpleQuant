@@ -398,6 +398,8 @@ def selection_script(spec: dict, broker: dict, start: str, project_dir: str, tit
     from ..stocks import FACTORS
     needs_fin = any(FACTORS.get(f["key"], {}).get("requires_fin") for f in spec["factors"]) or \
         bool((spec.get("neutralize") or {}).get("size"))
+    needs_div = spec.get("dividend") == "cash" or \
+        any(FACTORS.get(f["key"], {}).get("requires_div") for f in spec["factors"])
     if exe:
         how = f'''请用 SimpleQuant 运行（不需要安装 Python）：
     - 在 SimpleQuant「多因子选股」页的「导出」菜单点「运行选股脚本」，选择这个文件；或
@@ -431,6 +433,7 @@ SPEC = {pprint.pformat(spec, width=100, sort_dicts=False)}
 BROKER = BrokerConfig(**{broker!r})
 START = "{start}"
 NEEDS_FIN = {needs_fin!r}
+NEEDS_DIV = {needs_div!r}
 OUT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -438,7 +441,7 @@ if __name__ == "__main__":
     store = StockStore()
     end = latest_expected_day(load_calendar()).date().isoformat()
     print("updating data / 更新数据…", flush=True)
-    universe.update(SPEC["universe"], START, end, store, fin=NEEDS_FIN, div=SPEC.get("dividend") == "cash")
+    universe.update(SPEC["universe"], START, end, store, fin=NEEDS_FIN, div=NEEDS_DIV)
     first = universe.load_benchmark(SPEC["universe"], store).index[0]
     first = max(first, pd.Timestamp(START) - pd.Timedelta(days=400))    # 面板往前多取约 400 天预热因子
     print("backtesting / 回测…", flush=True)

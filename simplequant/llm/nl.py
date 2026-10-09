@@ -228,6 +228,7 @@ def selection_system_prompt(lang: str = "zh") -> str:
         f"usual direction {'higher' if m['direction'] > 0 else 'lower'} is better"
         + (f"; {pick(m['desc'], 'en')}" if m.get("desc") else "")
         + ("; needs financial data" if m.get("requires_fin") else "")
+        + ("; needs dividend data" if m.get("requires_div") else "")
         + f"; for {for_text.get(tuple(factor_assets(k)), 'stocks only')}"
         for k, m in FACTORS.items())
     unis = ", ".join(f"{k} = {pick(u['label'], 'en')} / {pick(u['label'], 'zh')}" for k, u in UNIVERSES.items())

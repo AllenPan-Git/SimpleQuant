@@ -40,6 +40,26 @@ def _inv(x: pd.DataFrame, positive_only: bool) -> pd.DataFrame:
     return 1 / x
 
 
+def dividend_yield(p):
+    """
+    股息率：最近一次分红及其前 200 个交易日内的每股分红合计 / 不复权收盘价；送股、转增折算到当前股本，
+    300 个交易日没有分红记 0。只看最近一次分红往前 200 天，年报加中期分红算一年，不会把两个年度的年报分红算进同一年
+    """
+    if "div_cash" not in p.fields:
+        return p["close"] * np.nan
+    split = (1 + p["div_bonus"] + p["div_reserve"]).cumprod()       # 送股、转增后股数是最早的几倍
+    cash = p["div_cash"] * split.shift(1).fillna(1)                 # 折算到最早的一股
+    total = cash.cumsum()
+    paid = cash > 0
+    before = total.shift(200).fillna(0).where(paid).ffill()        # 最近一次分红往前 200 天时的累计
+    recent = paid.rolling(300, min_periods=1).sum() > 0
+    out = (total - before).where(recent, 0).fillna(0) / split / p["raw_close"]
+    missing = [c for c in out.columns if c not in p.div_codes]     # 没有分红数据的股票不能当作不分红
+    if missing:
+        out[missing] = np.nan
+    return out
+
+
 def _ret(p, n):
     return p["close"] / p["close"].shift(n) - 1
 
@@ -52,6 +72,11 @@ FACTORS = {
            "fn": lambda p: _inv(p["pb"], positive_only=True)},
     "sp": {"label": L("营收市值比 SP (1/PS)", "Sales-to-price (1/PS)"), "group": "value", "direction": 1,
            "fn": lambda p: _inv(p["ps"], positive_only=True)},
+    "dy": {"label": L("股息率", "Dividend yield"), "group": "value", "direction": 1, "fn": dividend_yield,
+           "requires_div": True,
+           "desc": L("最近一年每股现金分红 / 不复权收盘价（年报与中期分红合计；送转折算）。需先在「数据」标签页下载分红数据",
+                     "cash dividends per share over the last year / raw close (annual + interim; adjusted for bonus "
+                     "shares). Download dividend data on the Data tab first")},
     # ---- 财务因子（需要下载财务数据；按首次公告日对齐） ----
     "roe": {"label": L("ROE（年化）", "ROE (annualized)"), "group": "quality", "direction": 1, "fn": _field("roe"),
             "requires_fin": True, "desc": L("累计 ROE 按季度折算成年化值", "year-to-date ROE scaled to a full year")},

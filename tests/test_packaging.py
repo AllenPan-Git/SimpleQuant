@@ -54,7 +54,7 @@ def test_selection_script_for_exe_mentions_exe_and_writes_next_to_itself():
     exec(compile(code, "x.py", "exec"), ns)          # 顶层可以执行（曾经把 JSON 的 true 直接写进 Python）
     assert ns["SPEC"] == spec
     assert r'"C:\App\SimpleQuant.exe" --run-script' in code
-    assert "NEEDS_FIN = True" in code and 'div=SPEC.get("dividend") == "cash"' in code and "OUT_DIR" in code
+    assert "NEEDS_FIN = True" in code and "NEEDS_DIV = True" in code and "div=NEEDS_DIV" in code and "OUT_DIR" in code
     # 界面里用这一行识别导出的选股脚本
     from gui.pages.selection import SCRIPT_MARKS
     assert SCRIPT_MARKS[0] in code

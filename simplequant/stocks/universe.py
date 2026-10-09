@@ -51,6 +51,7 @@ def data_files(universe: str, store: StockStore | None = None) -> list:
         return [root / "manifest.json", root / "info.parquet", root / "index.parquet"]
     st = store or StockStore()
     return [st.root / "manifest.json", st.root / "universe" / f"{universe}.parquet",
+            st.root / "index" / f"{UNIVERSES[universe]['index']}.parquet",
             st.root / "fin_manifest.json", st.root / "industry.parquet"]
 
 

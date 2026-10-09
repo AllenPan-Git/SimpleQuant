@@ -305,8 +305,35 @@ TEXT.update({
     # ---- 方案文件 ----
     "plan.import": L("导入方案", "Import plan"),
     "plan.import_title": L("导入回测方案", "Import a backtest plan"),
-    "plan.import_intro": L("方案文件（.sqplan）包含策略、标的、区间与费率设置，不包含行情数据与程序代码。导入后将还原这些设置并重新回测；本机缺少的数据可一键下载。",
-                           "A plan file (.sqplan) contains the strategy, assets, period and cost settings, but no market data or program code. Importing restores these settings and reruns the backtest; missing data can be downloaded in one step."),
+    "plan.import_intro": L("方案文件（.sqplan）包含策略、标的或股票池、区间与费率设置，不包含行情数据。导入后将还原这些设置并重新回测；本机缺少的数据可一键下载。择时方案与多因子选股方案均可导入。",
+                           "A plan file (.sqplan) contains the strategy, assets or stock universe, period and cost settings, but no market data. Importing restores these settings and reruns the backtest; missing data can be downloaded in one step. Both timing and multi-factor selection plans can be imported."),
+    "plan.export_help_sel": L("保存股票池、因子与权重、选股规则、区间与费率（含所用自定义因子的代码），可在其他电脑上导入并重新回测",
+                              "Saves the universe, factors and weights, selection rules, period and costs (including the code of any custom factors used) so the backtest can be imported and rerun on another computer"),
+    "plan.sel_review_title": L("导入选股方案：{name}", "Import selection plan: {name}"),
+    "plan.sel_need": L("需要下载：{what}", "to be downloaded: {what}"),
+    "plan.sel_miss_data": L("选股数据", "selection data"),
+    "plan.sel_miss_range": L("方案区间内的行情", "prices for the plan period"),
+    "plan.sel_miss_fin": L("财务数据", "financial data"),
+    "plan.sel_miss_div": L("分红数据", "dividend data"),
+    "plan.sel_miss_industry": L("行业分类", "industry classification"),
+    "plan.sel_warmup": L("因子自 {d} 起计算（回测开始前的数据仅用于预热因子）。",
+                         "Factors are computed from {d} (data before the backtest start is used only to warm up the factors)."),
+    "plan.sel_code_warning": L("该方案含有 {n} 个自定义因子的代码。导入后代码将在本机运行，权限与普通 Python 程序相同，可以读写文件、访问网络。请确认代码来源可信、内容无误后再继续。",
+                               "This plan contains the code of {n} custom factor(s). After import the code runs on this computer with the same permissions as any Python program, including reading and writing files and accessing the network. Continue only if you trust its source and have reviewed it."),
+    "plan.sel_trust": L("我已阅读以上代码，同意在本机保存并运行", "I have reviewed the code above and agree to save and run it on this computer"),
+    "plan.sel_download_note": L("将从方案的因子预热起始日下载到结束日。首次下载沪深300约需 8–10 分钟、约 80 MB（另含财务、分红数据时更久）；已有的数据只增量更新。如下载中断，再次点击即可从断点继续。",
+                                "Data will be downloaded from the factor warm-up start to the plan end. A first download of CSI 300 takes about 8–10 minutes and about 80 MB (longer with financial or dividend data); existing data is only updated incrementally. If the download is interrupted, click again to resume."),
+    "plan.sel_download_note_cb": L("将下载可转债列表、条款、指数与日线。首次下载约 40 MB，需 6–10 分钟；已有的数据只增量更新。",
+                                   "The bond list, terms, index and daily bars will be downloaded. A first download is about 40 MB and takes 6–10 minutes; existing data is only updated incrementally."),
+    "plan.sel_step_stocks": L("正在下载股票日线…", "Downloading daily bars…"),
+    "plan.sel_step_fin": L("正在下载财务数据…", "Downloading financials…"),
+    "plan.sel_step_div": L("正在下载分红送转数据…", "Downloading dividends…"),
+    "plan.err_universe": L("方案使用了当前版本不支持的股票池（{name}），请先更新软件。",
+                           "The plan uses a universe ({name}) that this version does not support; please update first."),
+    "plan.err_factor": L("方案使用了当前版本不存在的因子（{name}），请先更新软件。",
+                         "The plan uses a factor ({name}) that this version does not have; please update first."),
+    "plan.err_factor_code": L("方案中的自定义因子「{name}」代码有误：{detail}", "The custom factor \"{name}\" in the plan has an error: {detail}"),
+    "plan.err_factor_missing": L("策略用到的自定义因子（{name}）已被删除，无法导出。", "A custom factor used by the strategy ({name}) has been deleted and cannot be exported."),
     "plan.choose": L("选择方案文件", "Choose a plan file"),
     "plan.export": L("导出方案文件", "Export plan file"),
     "plan.export_help": L("保存策略、标的、区间与费率，可在其他电脑上导入并重新回测",
@@ -726,9 +753,11 @@ TEXT.update({
                            "Delete custom factor \"{name}\"? Saved selection strategies that use it will no longer run."),
     "cf.cheatsheet": L("""p["close"]  p["open"]  p["high"]  p["low"]        # 后复权价格；均为 日期 × 股票 的表
 p["volume"]  p["amount"]  p["turnover"]  p["pct_chg"]   # 成交量、成交额、换手率(%)、涨跌幅(%)
-p["pe"]  p["pb"]  p["ps"]                             # 估值（TTM / MRQ）
+p["pe"]  p["pb"]  p["ps"]  p["raw_close"]            # 估值（TTM / MRQ）、不复权收盘价
 p["roe"]  p["gross_margin"]  p["net_margin"]  p["np_yoy"]  p["rev_yoy"]  p["mcap"]
                                                      # 财务字段：需先在「数据」标签页下载财务数据
+p["div_cash"]  p["div_bonus"]  p["div_reserve"]      # 每股现金分红（税前）、送股、转增：只在除权除息日有值，其余为 0
+                                                     # 需先在「数据」标签页下载分红数据
 # 可转债（股票池选「可转债（全市场）」时）：
 p["raw_close"]  p["premium"]  p["bond_premium"]  p["double_low"]   # 不复权价、转股溢价率(%)、纯债溢价率(%)、双低
 p["conv_value"]  p["bond_value"]  p["conv_price"]  p["stock_close"]  # 转股价值、纯债价值、转股价、正股价
@@ -742,9 +771,11 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
 # 去极值与标准化由系统统一处理，无需自行实现""",
                        """p["close"]  p["open"]  p["high"]  p["low"]        # back-adjusted prices; each is a dates × stocks table
 p["volume"]  p["amount"]  p["turnover"]  p["pct_chg"]   # volume, value traded, turnover (%), change (%)
-p["pe"]  p["pb"]  p["ps"]                             # valuation (TTM / MRQ)
+p["pe"]  p["pb"]  p["ps"]  p["raw_close"]            # valuation (TTM / MRQ), unadjusted close
 p["roe"]  p["gross_margin"]  p["net_margin"]  p["np_yoy"]  p["rev_yoy"]  p["mcap"]
                                                      # financial fields: download financial data on the Data tab first
+p["div_cash"]  p["div_bonus"]  p["div_reserve"]      # cash dividend (pre-tax), bonus and capitalization shares per share;
+                                                     # non-zero only on ex-dates; download dividend data on the Data tab first
 # Convertible bonds (universe "Convertible bonds (all)"):
 p["raw_close"]  p["premium"]  p["bond_premium"]  p["double_low"]   # raw price, conversion premium (%), premium over bond floor (%), double-low
 p["conv_value"]  p["bond_value"]  p["conv_price"]  p["stock_close"]  # conversion value, bond floor, conversion price, stock price
@@ -848,6 +879,8 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
                           "Cash, taxed: cash arrives on the ex-date and waits until the next purchase; dividend tax is deducted "
                           "on sale by holding period (≤1 month 20%, up to 1 year 10%, over 1 year exempt; bonus shares taxed at "
                           "1 yuan par), matching JoinQuant and live trading. High-yield portfolios typically come out 0.5–1 pp/yr lower"),
+    "sp.need_div_factor": L("所选因子需要分红数据，请先在「数据」页勾选「同时下载分红送转数据」后下载；没有分红数据的股票不参与该因子排名。",
+                            "The selected factor requires dividend data. Download it on the Data tab with \"Also download dividends\" checked; stocks without dividend data are not ranked on it."),
     "sp.need_div": L("尚无分红数据，请先在「数据」页勾选「同时下载分红送转数据」后下载。",
                      "No dividend data yet. Download it on the Data tab with \"Also download dividends\" checked."),
     "sp.div_missing": L("{n} 只股票缺少分红数据，仍按分红再投资计算：{codes}",

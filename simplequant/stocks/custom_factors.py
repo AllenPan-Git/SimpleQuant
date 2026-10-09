@@ -32,7 +32,8 @@ FILENAME = "<factor-code>"
 GROUPS.setdefault("custom", L("自定义", "Custom"))
 # 用到这些字段就需要财务数据
 FIN_WORDS = set(FIN_FIELDS) | {"mcap"}
-STOCK_WORDS = {"pe", "pb", "ps", "turnover"}           # 只有股票有
+DIV_WORDS = {"div_cash", "div_bonus", "div_reserve"}    # 用到这些字段就需要分红数据
+STOCK_WORDS = {"pe", "pb", "ps", "turnover"} | DIV_WORDS    # 只有股票有
 CB_WORDS = {"premium", "bond_premium", "double_low", "conv_value", "bond_value", "conv_price", "stock_close",
             "remain_years", "issue_size", "remain_size", "rating_score"}     # 只有可转债有
 
@@ -86,6 +87,11 @@ def _uses(code: str, words: set) -> bool:
 def uses_fin(code: str) -> bool:
     """代码里以字符串形式用到了财务字段（p["roe"]、p["mcap"] 等）"""
     return _uses(code, FIN_WORDS)
+
+
+def uses_div(code: str) -> bool:
+    """代码里用到了分红送转字段（p["div_cash"] 等）"""
+    return _uses(code, DIV_WORDS)
 
 
 def assets_of(code: str) -> tuple:
@@ -159,7 +165,7 @@ def _entry(d: dict) -> dict:
     code = d["code"]
     return {"label": L(d["name"], d["name"]), "group": "custom", "direction": 1 if d.get("direction", 1) > 0 else -1,
             "fn": lambda p, code=code: evaluate(code, p), "desc": L(d.get("desc", ""), d.get("desc", "")),
-            "requires_fin": uses_fin(code), "custom": True, "code": code, "name": d["name"],
+            "requires_fin": uses_fin(code), "requires_div": uses_div(code), "custom": True, "code": code, "name": d["name"],
             "assets": assets_of(code)}
 
 
@@ -215,8 +221,10 @@ SKELETON = {
     "zh": '''def factor(p):
     """20 日均线乖离率：收盘价比 20 日均线高出多少（越低越超跌）"""
     # p["close"] 是 日期 × 股票 的表（后复权收盘价），每一列是一只股票
-    # 可用字段：open high low close volume amount turnover pe pb ps pct_chg
+    # 可用字段：open high low close volume amount turnover pe pb ps pct_chg raw_close（不复权收盘价）
     #          下载财务数据后还有：roe gross_margin net_margin np_yoy rev_yoy mcap
+    #          下载分红数据后还有：div_cash（每股现金分红，税前）div_bonus（每股送股）div_reserve（每股转增），
+    #          只在除权除息日有值，其余为 0
     # T 日的值只能用 T 日及以前的数据：可以 shift(5)（往回看），不要 shift(-5)（偷看未来）
     close = p["close"]
     ma = close.rolling(20, min_periods=15).mean()
@@ -225,8 +233,10 @@ SKELETON = {
     "en": '''def factor(p):
     """20-day MA deviation: how far the close is above its 20-day average (low = oversold)"""
     # p["close"] is a dates × stocks table (back-adjusted closes), one column per stock
-    # Fields: open high low close volume amount turnover pe pb ps pct_chg
+    # Fields: open high low close volume amount turnover pe pb ps pct_chg raw_close (unadjusted close)
     #         with financial data downloaded also: roe gross_margin net_margin np_yoy rev_yoy mcap
+    #         with dividend data downloaded also: div_cash (cash per share, pre-tax) div_bonus (bonus shares
+    #         per share) div_reserve (capitalization shares per share), non-zero only on ex-dates
     # Day T may only use data up to day T: shift(5) looks back, never shift(-5) (peeks into the future)
     close = p["close"]
     ma = close.rolling(20, min_periods=15).mean()

@@ -453,6 +453,30 @@ async def test_backtest_batch_mode(user: User, lib_dir):
     assert state.STATE["bt_ids"] == ["x_510300"] and state.STATE["bt_mode"] == "portfolio"
 
 
+async def test_backtest_same_symbol_two_datasets(user: User, lib_dir):
+    """同一代码的后复权与不复权两份数据：组合回测和分别回测都当作两个标的（第七期录屏发现只剩一份）"""
+    for i, adj in (("x_hfq", "hfq"), ("x_raw", "")):
+        library.save(make_prices(n=300, seed=7 if adj else 8),
+                     library.DatasetMeta(id=i, name="515080", symbol="515080", source="akshare", freq="1d", adjust=adj))
+    state.STATE["bt_ids"] = ["x_hfq", "x_raw"]
+    await user.open("/backtest")
+    user.find(marker="bt_strategy").elements.pop().set_value("tpl:buy_hold")
+    user.find(marker="run").click()
+    assert await _wait(lambda: state.STATE.get("bt", {}).get("result") is not None)
+    res = state.STATE["bt"]["result"]
+    assert sorted(res.prices) == ["515080 (不复权)", "515080 (后复权)"]
+    assert set(res.orders["symbol"]) == set(res.prices)
+
+    state.STATE.pop("bt", None)
+    state.STATE["bt_ids"] = ["x_hfq", "x_raw"]
+    await user.open("/backtest")
+    user.find(marker="bt_mode").elements.pop().set_value("batch")
+    await settle()
+    user.find(marker="run").click()
+    assert await _wait(lambda: state.STATE.get("bt", {}).get("batch") is not None)
+    assert len(state.STATE["bt"]["batch"]) == 2
+
+
 async def test_plan_export_and_import(user: User, lib_dir, monkeypatch):
     """回测后导出方案；在没有数据的电脑上导入：下载数据 → 还原设置 → 自动回测并与方案记录的结果核对"""
     from simplequant import plan as plan_mod
@@ -688,7 +712,7 @@ async def _open_selection(user: User, tab="bt"):
     SP["ranges"]["hs300"] = (dt.date(2022, 1, 4), dt.date(2100, 1, 1))     # 结束日会被截到数据末尾
     state.STATE["sp_tab"] = tab
     await user.open("/selection")
-    assert await _wait(lambda: state.STATE.get("sp_panel_key") is not None, n=1200), "面板没有载入"
+    assert await _wait(lambda: state.STATE.get("sp_panel_key") is not None, n=2400), "面板没有载入"
     await settle()
     return SP
 
@@ -716,6 +740,53 @@ async def test_selection_backtest(user: User):
     assert (buys["size"] % 100 == 0).all()
     await user.should_see("调仓次数")
     await user.should_see("可信度检查")
+
+
+@needs_stocks
+async def test_selection_plan_export_and_import(user: User, monkeypatch):
+    """选股回测后导出方案（含自定义因子代码）；换一台电脑导入：确认代码 → 登记因子 → 自动回测并核对结果"""
+    from simplequant import plan as plan_mod
+    from simplequant.stocks import FACTORS, custom_factors as cf
+    from gui.pages.selection import sp_state
+    code = 'def factor(p):\n    return p["close"] / p["close"].shift(60) - 1\n'
+    key = cf.save_factor("60日动量", code)
+    SP = sp_state()
+    SP["factors"] = [{"key": "ep", "weight": 1.0, "direction": 1}, {"key": key, "weight": 1.0, "direction": -1}]
+    SP["name"] = "低估值反转"
+    await _open_selection(user)
+    user.find(marker="sp_run").click()
+    assert await _wait(lambda: SP.get("result"), n=1200)
+    await settle()
+    got = {}
+    monkeypatch.setattr(ui.download, "content", lambda data, name, *a, **k: got.update(data=data, name=name))
+    user.find(marker="sp_exp_plan").click()
+    plan = plan_mod.loads(got["data"])
+    metrics = SP["result"][0].metrics
+    assert got["name"] == "低估值反转.sqplan" and plan["strategy"]["universe"] == "hs300"
+    assert plan["custom_factors"][key]["code"] == code
+    assert plan["result"]["total_return"] == metrics["total_return"]
+    assert plan["range"][0] == "2022-01-04" and plan["warmup_start"] <= "2022-01-04"
+
+    # 换一台「电脑」：自定义因子和界面状态都没有（选股数据相同）
+    cf.delete_factor(key)
+    state.reset()
+    await user.open("/backtest")                          # 回测页也能导入选股方案
+    user.find(marker="plan_import").click()
+    up = user.find(marker="plan_upload").elements.pop()
+    await up.handle_uploads([up.SmallFileUpload("x.sqplan", "application/json", got["data"])])
+    await user.should_see(marker="plan_review")
+    await user.should_see("60日动量")
+    go = user.find(marker="plan_go").elements.pop()
+    assert not go.enabled                                 # 先确认代码
+    user.find(marker="plan_trust").elements.pop().set_value(True)
+    await settle()
+    assert go.enabled
+    user.find(marker="plan_go").click()
+    assert await _wait(lambda: state.STATE.get("sp", {}).get("result"), n=2400)
+    SP = state.STATE["sp"]
+    assert key in FACTORS and FACTORS[key]["code"] == code
+    assert SP["plan_check"][0] == "same", (SP["result"][0].metrics["total_return"], metrics["total_return"])
+    await user.should_see("记录的结果一致")
 
 
 @needs_stocks

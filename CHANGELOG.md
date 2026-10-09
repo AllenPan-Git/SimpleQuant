@@ -5,6 +5,24 @@
 
 Changes in each release. `tools/release.py` copies the matching section into the GitHub release notes.
 
+## 0.2.5（2026-10-09）
+
+### 更新内容
+- 新增：多因子选股方案文件：在选股回测的「导出」菜单保存股票池、因子与权重、选股规则、区间与费率（可附带回测结果），在另一台电脑上「导入方案」即可还原设置、下载缺少的选股数据（含所需的财务、分红数据）并重新回测，回测后与方案记录的结果核对。策略用到的自定义因子连同代码一起保存；导入时显示代码，确认后才会保存和运行。回测页与选股页均可导入两种方案
+- 新增：内置「股息率」因子（价值类）：最近一年的每股现金分红（年报与中期分红合计，送股、转增已折算）除以不复权收盘价，需先下载分红数据
+- 改进：自定义因子编辑器与速查说明列出分红字段（div_cash、div_bonus、div_reserve）和股票的不复权收盘价 raw_close；用到分红字段的因子只适用于股票，选股、模拟盘与导出脚本会自动下载所需的分红数据
+- 改进：选择标的与数据库预览的下拉框中，不复权、前复权的在线数据标出复权方式，同一代码的多份数据可以区分
+- 修复：组合回测或分别回测同时选择同一代码的两份数据时，只回测了其中一份；现在两份分别计算，名称后标出复权方式
+- 修复：选股数据「下载 / 更新」时指数行情按本次区间整体覆盖，下载较短区间后更早的交易日被删除；现在与已有数据合并
+
+### Changes
+- New: multi-factor selection plan files: save the universe, factors and weights, selection rules, period and costs (optionally with the backtest result) from the Export menu of the selection backtest, then use Import plan on another computer to restore the settings, download any missing selection data (including the financial or dividend data needed), rerun the backtest and verify the result against the one recorded in the plan. Custom factors used by the strategy are saved with their code; on import the code is shown and is saved and run only after confirmation. Both kinds of plans can be imported on the Backtest and Selection pages
+- New: built-in Dividend yield factor (Value): cash dividends per share over the last year (annual plus interim, adjusted for bonus and capitalization shares) divided by the unadjusted close; requires dividend data
+- Improved: the custom factor editor and cheat sheet list the dividend fields (div_cash, div_bonus, div_reserve) and the unadjusted stock close raw_close; factors using dividend fields apply to stocks only, and selection, paper trading and exported scripts download the dividend data they need
+- Improved: unadjusted and forward-adjusted online data are labeled with their adjustment in the asset selector and the database preview, so several datasets of the same code can be told apart
+- Fixed: portfolio or separate backtests that included two datasets of the same code ran only one of them; both are now computed, with the adjustment shown after the name
+- Fixed: updating selection data overwrote the index prices with the requested period, so a shorter download removed earlier trading days; new data is now merged with what is already there
+
 ## 0.2.4（2026-10-07）
 
 ### 更新内容

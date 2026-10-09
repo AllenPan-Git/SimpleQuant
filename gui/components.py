@@ -130,7 +130,8 @@ def data_selector(by_id: dict, key: str, on_change) -> DataPick:
 
 
 def load_prices(by_id: dict, pick: DataPick) -> dict:
-    return shared.slice_prices({by_id[i].name: library.load(i) for i in pick.ids}, pick.date_range)
+    names = shared.asset_names(by_id, pick.ids, lang())
+    return shared.slice_prices({names[i]: library.load(i) for i in pick.ids}, pick.date_range)
 
 
 def prepare_prices(by_id: dict, pick: DataPick, broker: BrokerConfig, spec: dict | None = None) -> tuple[dict, dict, dict]:
@@ -143,8 +144,8 @@ def prepare_prices(by_id: dict, pick: DataPick, broker: BrokerConfig, spec: dict
     if broker.dividend != "cash":
         return prices, {}, {}
     from simplequant.data import cash_dividend
-    prices, skipped, patched = cash_dividend.prepare([(by_id[i].name, by_id[i], prices[by_id[i].name])
-                                                      for i in pick.ids])
+    names = shared.asset_names(by_id, pick.ids, lang())
+    prices, skipped, patched = cash_dividend.prepare([(names[i], by_id[i], prices[names[i]]) for i in pick.ids])
     return with_rates(prices, spec), skipped, patched
 
 

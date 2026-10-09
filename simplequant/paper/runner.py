@@ -124,7 +124,8 @@ def refresh_selection_data(acc: PaperAccount, store, done: set | None = None, wo
         store.update_fundamentals(codes, int(first[:4]) - 1, workers=workers)
     if (acc.spec.get("neutralize") or {}).get("industry"):
         store.update_industry()
-    if acc.spec.get("dividend") == "cash":
+    if acc.spec.get("dividend") == "cash" or \
+            any(FACTORS.get(f["key"], {}).get("requires_div") for f in acc.spec["factors"]):
         store.update_dividends(codes, int(first[:4]) - 1, workers=workers)
     done.add(acc.universe)
 

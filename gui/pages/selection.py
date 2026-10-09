@@ -27,6 +27,8 @@ from gui import state, history
 from gui.common import t, p, lang
 from gui.components import broker_settings, metric_tiles, metric_tile, walkforward_results, credibility_box
 from gui.layout import frame, page_title
+from gui.plan_io import import_button, export_selection_bytes, plan_filename, plan_check_notice
+from simplequant import plan as plan_mod
 from gui.widgets import section, df_table, fmt_table, plot, notice, download_btn, Progress, code_editor
 from ui.charts import ic_chart, quantile_chart, group_bar, equity_chart, corr_heatmap
 from ui.shared import export_filename, default_range, fmt_metric, pct, num, orders_table, logs_table
@@ -179,6 +181,9 @@ def page():
             span.text = t("gui.available", lo=ctx.lo, hi=ctx.hi)
             ctx.start, ctx.end = str(a), str(b)
             ctx.panel_start = max(str(ctx.lo), str((pd.Timestamp(ctx.start) - pd.Timedelta(days=WARMUP_DAYS)).date()))
+            pw = SP.get("plan_warm")          # 导入的方案：按方案的预热起始日取面板，因子值才与导出方一致
+            if pw and pw[0] == u and pw[1] == ctx.start:
+                ctx.panel_start = max(str(ctx.lo), pw[2])
             warm.set_visibility(ctx.panel_start == ctx.start and str(ctx.lo) == ctx.start)
             return True
 
@@ -253,6 +258,8 @@ def page():
                 with box:
                     if ctx.lo is None:
                         notice(t("sp.no_data"), "info")
+                        if box is bt_box:            # 没有数据也能导入方案（导入时下载）
+                            import_button().classes("self-start")
                     else:
                         with ui.row().classes("items-center gap-2"):
                             ui.spinner(size="sm")
@@ -270,7 +277,7 @@ def page():
                     with box:
                         notice(f"{type(e).__name__}: {e}", "error", "error")
                 return
-            if ctx.loading != key:          # 期间又换了区间，以最新的为准
+            if ctx.loading != key or panel is None:     # 期间又换了区间，以最新的为准；None = 程序退出时被取消
                 return
             ctx.panel = panel
             state.STATE["sp_panel_key"] = key
@@ -528,6 +535,9 @@ def _research(SP, ctx):
             if FACTORS[R["fkey"]].get("requires_fin") and not panel.has_fin:
                 with hint_box:
                     notice(t("sp.need_fin"), "warning", "warning")
+            if FACTORS[R["fkey"]].get("requires_div") and not panel.div_codes:
+                with hint_box:
+                    notice(t("sp.need_div_factor"), "warning", "warning")
         hints()
 
         def factor_values(k, mask):
@@ -1077,6 +1087,7 @@ def _backtest_form(SP, ctx, rebuild):
         with ui.button(t("exp.menu"), icon="ios_share").props("outline no-caps") as exp_btn:
             exp_menu = ui.menu()
         exp_menu.on("before-show", lambda: build_export_menu())
+        import_button()
     running = ui.row().classes("items-center gap-2")
     with running:
         ui.spinner(size="sm")
@@ -1100,6 +1111,9 @@ def _backtest_form(SP, ctx, rebuild):
         if not panel.has_fin and any(FACTORS[f["key"]].get("requires_fin") for f in SP["factors"]):
             with fin_warn:
                 notice(t("sp.need_fin"), "warning", "warning")
+        if not panel.div_codes and any(FACTORS[f["key"]].get("requires_div") for f in SP["factors"]):
+            with fin_warn:
+                notice(t("sp.need_div_factor"), "warning", "warning")
         div_warn.clear()
         if SP.get("dividend") == "cash" and not panel.div_codes and panel.kind == "stock":
             with div_warn:
@@ -1111,6 +1125,7 @@ def _backtest_form(SP, ctx, rebuild):
 
     async def do_run():
         spec, broker = current_spec(SP), make_broker()
+        plan_ctx = SP.pop("autorun", None)         # 刚导入的方案：回测后与其中记录的结果核对
         run_btn.disable()
         running.set_visibility(True)
         try:
@@ -1119,6 +1134,8 @@ def _backtest_form(SP, ctx, rebuild):
             SP["result"] = (res, spec, time.time() - t0)
             SP["explanation"] = None
             SP["result_range"] = (ctx.start, ctx.end, ctx.panel_start)
+            SP["result_broker"] = broker
+            SP["plan_check"] = (plan_mod.compare(plan_ctx.get("result"), res.metrics), plan_ctx) if plan_ctx else None
             uni = p(UNIVERSES[spec["universe"]]["label"])
             title = SP["name"].strip() or t("sel.kind")
             history.add("sel", title, f"{uni} · {ctx.start} ~ {ctx.end}", res.metrics, data=uni, strategy=title)
@@ -1129,6 +1146,7 @@ def _backtest_form(SP, ctx, rebuild):
             run_btn.enable()
             running.set_visibility(False)
         results.refresh()
+        build_export_menu()                 # 导出方案时附带刚得到的结果
 
     def build_export_menu():
         """每次打开菜单时按当前设置生成（刚跑完的回测名单才能写进文件）"""
@@ -1141,7 +1159,23 @@ def _backtest_form(SP, ctx, rebuild):
         same = res and res[1] == spec and SP.get("result_range") == (ctx.start, ctx.end, ctx.panel_start)
         expected = res[0].schedule.picks if same and res[0].schedule else None
         exp_menu.clear()
+
+        def export_plan():
+            """当前设置刚回测过（策略、区间、资金都没改）时附带结果，导入方回测后核对"""
+            result = res[0].metrics if same and SP.get("result_broker") == broker else None
+            try:
+                data = export_selection_bytes(title, spec, ctx.start, ctx.end, ctx.panel_start, broker, result)
+            except plan_mod.PlanError as e:
+                ui.notify(t(e.key, **e.kw), type="warning")
+                return
+            ui.download.content(data, plan_filename(title), "application/json")
+            if result is None:
+                ui.notify(t("plan.exported_no_result"), multi_line=True)
         with exp_menu, ui.column().classes("gap-1 p-2 w-[380px]"):
+            ui.button(t("plan.export"), icon="description", on_click=export_plan) \
+                .props("flat no-caps align=left").classes("w-full").tooltip(t("plan.export_help_sel")) \
+                .mark("sp_exp_plan")
+            ui.separator()
             ui.button(t("exp.button"), icon="code", on_click=lambda: ui.download.content(
                 selection_script(spec, asdict(broker), ctx.start, str(PROJECT_DIR), title=title, lang=lg,
                                  exe=sys.executable if FROZEN else None),
@@ -1179,12 +1213,15 @@ def _backtest_form(SP, ctx, rebuild):
                     ui.label(why).classes("text-warning text-xs px-2")
 
     changed()
+    build_export_menu()
 
     @ui.refreshable
     def results():
         if SP.get("result"):
             _selection_results(SP, ctx)
     results()
+    if SP.get("autorun") and SP["factors"]:          # 导入方案后自动回测一次
+        ui.timer(0.1, do_run, once=True)
 
 
 def _selection_results(SP, ctx):
@@ -1196,6 +1233,8 @@ def _selection_results(SP, ctx):
     with ui.column().classes("gap-1"):
         ui.label(strategies.describe(rspec, lg).replace("\n", " · ") + " · " + t("sp.took", s=f"{secs:.1f}")) \
             .classes("sq-muted text-sm")
+    if SP.get("plan_check") and SP["plan_check"][1]:
+        plan_check_notice(*SP["plan_check"], res.metrics)
     metric_tiles(res.metrics)
     with ui.grid().classes("w-full gap-3 grid-cols-2 md:grid-cols-5"):
         metric_tile(t("m.turnover_annual"), f"{res.metrics['turnover_annual']:.1f}×", help_text=t("sp.turnover_help"))

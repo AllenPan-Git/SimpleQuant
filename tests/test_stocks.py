@@ -135,8 +135,10 @@ def test_planted_factor_is_detected(panel):
 
 
 def test_every_factor_computes(panel):
-    """价量因子在合成数据上都有值（财务因子需要财务数据，见 test_fundamentals.py；可转债因子见 test_bonds.py）"""
-    for key in [k for k in F.factors_for("stock") if not F.FACTORS[k].get("requires_fin")]:
+    """价量因子在合成数据上都有值（财务因子需要财务数据，见 test_fundamentals.py；股息率需要分红数据，
+    见 test_custom_factors.py；可转债因子见 test_bonds.py）"""
+    for key in [k for k in F.factors_for("stock")
+                if not F.FACTORS[k].get("requires_fin") and not F.FACTORS[k].get("requires_div")]:
         v = F.compute(panel, key)
         assert v.shape == panel["close"].shape
         assert v.iloc[-1].notna().sum() > 30, key

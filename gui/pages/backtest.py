@@ -14,7 +14,7 @@ from simplequant.engine.credibility import check_backtest
 from simplequant.engine.native_plot import render as render_native, MAX_BARS as NATIVE_MAX_BARS
 from simplequant.export import PLATFORMS
 from gui import state, history
-from gui.plan_io import import_button, export_bytes, plan_filename
+from gui.plan_io import import_button, export_bytes, plan_filename, plan_check_notice
 from simplequant import plan as plan_mod
 from gui.common import t, p, lang
 from gui.components import (require_data, data_selector, strategy_selector, broker_settings, prepare_prices,
@@ -24,7 +24,7 @@ from gui.layout import frame, page_title
 from gui.widgets import df_table, fmt_table, plot, notice, download_btn
 from ui.charts import equity_chart, strategy_chart, batch_scatter
 from ui.shared import (export_script, export_filename, platform_export, orders_table, trades_table,
-                       logs_table, pct, num)
+                       logs_table, pct, num, asset_names)
 
 
 def page():
@@ -82,7 +82,7 @@ def page():
             preset = COST_PRESETS.get(b.get("preset"), {})
             items = [
                 ("data", t("bt.chip_batch", n=len(pick.ids)) if batch()
-                 else " · ".join(by_id[i].name for i in pick.ids) or "—"),
+                 else " · ".join(asset_names(by_id, pick.ids, lang()).values()) or "—"),
                 ("strategy", strat.get("name", "")),
                 ("range", f"{pick.start} ~ {pick.end}" if pick.date_range else "—"),
                 ("broker", t("bt.cash_wan", v=f"{(b.get('cash') or 0) / 1e4:g}")
@@ -229,7 +229,7 @@ def page():
                 BT.update(batch=df, summary=summarize(df), spec=spec, broker=broker,
                           name=strat.get("name", "") or strat["label"], freq=next(iter(pick.freqs)),
                           range=(pick.start, pick.end), div_notes=(skipped, patched),
-                          ids={by_id[i].name: i for i in pick.ids},
+                          ids={n: i for i, n in asset_names(by_id, pick.ids, lang()).items()},
                           time=dt.datetime.now().strftime("%Y-%m-%d %H:%M"))
                 setup.value = False
             except Exception as e:  # noqa: BLE001
@@ -355,7 +355,7 @@ def _remember(BT: dict, by_id: dict, pick, strat: dict):
     """记入首页「最近的报告」（只存摘要和重新运行所需的设置）"""
     res = BT["result"]
     name = strat.get("name") or strat["label"]
-    data = " · ".join(by_id[i].name for i in pick.ids)
+    data = " · ".join(asset_names(by_id, pick.ids, lang()).values())
     freq = next(iter(pick.freqs))
     history.add("bt", name, f"{data} · {freq_label(freq, lang())} · {pick.start} ~ {pick.end}", res.metrics,
                 restore={"spec": {"name": name, **strat["spec"]}, "ids": list(pick.ids),
@@ -426,7 +426,7 @@ def _results(BT: dict, exp_menu):
                     notice(t("bt.lot_too_big", names=", ".join(res.lot_too_big)), "savings", "warning")
             if BT.get("plan_check"):
                 with ui.column().classes("w-full pt-4"):
-                    _plan_check(*BT["plan_check"], res.metrics)
+                    plan_check_notice(*BT["plan_check"], res.metrics)
             with ui.column().classes("w-full pt-6"):
                 credibility_box(BT.get("checks", []))
             explain_out = ui.column().classes("w-full pt-4")
@@ -494,20 +494,6 @@ def _results(BT: dict, exp_menu):
             df_table(logs_table(res.logs, lg), rows_per_page=50)
         with ui.tab_panel(tab_n).classes("px-0 gap-3"):
             _native(BT)
-
-
-def _plan_check(status, ctx: dict, metrics: dict):
-    """导入方案后的第一次回测：与方案文件记录的结果核对"""
-    rec = ctx.get("result") or {}
-    if status == "same":
-        notice(t("plan.check_same", name=ctx["name"], ret=pct(rec["total_return"]), n=rec.get("trades", "?")),
-               "verified", "info")
-    elif status == "differs":
-        notice(t("plan.check_differs", name=ctx["name"], ret=pct(rec["total_return"]), n=rec.get("trades", "?"),
-                 now=pct(metrics["total_return"]), m=metrics["trades"])
-               + (t("plan.check_provider") if ctx.get("provider") else ""), "rule", "warning")
-    else:
-        notice(t("plan.check_none", name=ctx["name"]), "description", "info")
 
 
 def _next(no: str, title: str, body: str, on_click, rec: bool = False):

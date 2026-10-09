@@ -12,6 +12,7 @@ from simplequant import strategies
 from simplequant.engine import BrokerConfig
 from simplequant.export.selection_platforms import check_selection_exportable
 from simplequant.stocks import FACTORS, GROUPS, compute, run_selection, custom_factors as cf
+from simplequant.stocks.factors import factors_for
 from simplequant.stocks.custom_factors import FactorCodeError
 
 RET20 = 'def factor(p):\n    """20日收益"""\n    return p["close"] / p["close"].shift(20) - 1\n'
@@ -122,3 +123,45 @@ def test_skeleton_runs(panel):
     for lg in ("zh", "en"):
         out = cf.evaluate(cf.skeleton(lg), panel)
         assert out.notna().to_numpy().mean() > 0.9
+
+
+def test_dividend_fields_are_stock_only():
+    """用到分红字段的因子只适用于股票（可转债面板没有这些字段，第七期发现会报错）"""
+    code = 'def factor(p):\n    return p["div_cash"].rolling(250, min_periods=1).sum() / p["raw_close"]\n'
+    assert cf.assets_of(code) == ("stock",) and cf.uses_div(code) and not cf.uses_fin(code)
+    assert cf.assets_of('def factor(p):\n    return p["raw_close"]\n') == ("stock", "cb")
+    key = cf.save_factor("股息", code)
+    assert FACTORS[key]["requires_div"] and FACTORS[key]["assets"] == ("stock",)
+    assert "div_cash" in cf.skeleton("zh") and "div_cash" in cf.skeleton("en")
+
+
+def _with_dividends(panel, events: dict, have=None):
+    """events：{(日期序号, 代码): (每股现金, 每股送股, 每股转增)}"""
+    import dataclasses
+    fields = dict(panel.fields)
+    for k in ("cash", "bonus", "reserve"):
+        fields[f"div_{k}"] = panel["close"] * 0.0
+    for (i, c), vals in events.items():
+        for k, v in zip(("cash", "bonus", "reserve"), vals):
+            fields[f"div_{k}"].iloc[i, panel.codes.index(c)] = v
+    return dataclasses.replace(panel, fields=fields,
+                               div_codes=frozenset(panel.codes if have is None else have))
+
+
+def test_dividend_yield_factor(panel):
+    a, b, c = panel.codes[:3]
+    p = _with_dividends(panel, {(100, a): (0.3, 0, 0), (220, a): (0.2, 0, 0),       # 年报 + 中期
+                                (100, b): (0.5, 0, 0.5), (280, b): (0.4, 0, 0)},     # 10 转 5 后再分红
+                        have=[a, b])
+    dy = compute(p, "dy")
+    raw = p["raw_close"]
+    assert dy[a].iloc[99] == 0                                         # 还没分红
+    assert dy[a].iloc[150] == pytest.approx(0.3 / raw[a].iloc[150])
+    assert dy[a].iloc[250] == pytest.approx(0.5 / raw[a].iloc[250])   # 两次相隔不到 200 天，合计
+    assert dy[a].iloc[399] == pytest.approx(0.5 / raw[a].iloc[399])   # 最近一次（第 220 天）往前 200 天都算
+    # 转增后：之前那次 0.5 元/股按新股本折成 0.5 / 1.5
+    assert dy[b].iloc[300] == pytest.approx((0.5 / 1.5 + 0.4) / raw[b].iloc[300])
+    assert dy[b].iloc[150] == pytest.approx(0.5 / 1.5 / raw[b].iloc[150])        # 转增当天起按新股本
+    assert dy[c].isna().all()                                         # 没有分红数据：不参与排名，不是 0
+    assert compute(panel, "dy").isna().all().all()                    # 没下载分红数据
+    assert FACTORS["dy"]["requires_div"] and "dy" in factors_for("stock") and "dy" not in factors_for("cb")

@@ -33,7 +33,36 @@ ADJUST = {"hfq": "adj.hfq", "qfq": "adj.qfq", "": "adj.none"}
 
 # ---------------- 格式化 ----------------
 def dataset_label(m: library.DatasetMeta, lg: str) -> str:
-    return f"{m.name} · {freq_label(m.freq, lg)} · {m.start}~{m.end} · {tr('src.' + m.source, lg)}"
+    # 非后复权的在线数据标出复权方式，同一代码的两份数据才分得清（CSV 导入的复权方式未知，不标）
+    adj = f" · {tr(ADJUST.get(m.adjust, 'adj.none'), lg)}" if m.adjust != "hfq" and m.source != "csv" else ""
+    return f"{m.name} · {freq_label(m.freq, lg)}{adj} · {m.start}~{m.end} · {tr('src.' + m.source, lg)}"
+
+
+def asset_names(by_id: dict, ids: list, lg: str) -> dict:
+    """
+    所选数据在回测里用的名称 {数据 id: 名称}。回测引擎按名称区分标的，同一代码选了两份数据（如后复权和不复权）时
+    依次加上复权方式、数据源、区间直到能区分。括号前留空格：涨跌停、T+0 按空格分出的 6 位代码判断品种
+    """
+    names = {i: by_id[i].name for i in ids}
+    parts = (lambda m: "" if m.source == "csv" else tr(ADJUST.get(m.adjust, "adj.none"), lg),
+             lambda m: tr("src." + m.source, lg),
+             lambda m: f"{m.start}~{m.end}")
+    for part in parts:
+        groups = {}
+        for i in ids:
+            groups.setdefault(names[i], []).append(i)
+        for same in groups.values():
+            if len(same) > 1 and len({part(by_id[i]) for i in same}) > 1:
+                for i in same:
+                    if part(by_id[i]):
+                        names[i] += f" ({part(by_id[i])})"
+    seen = {}
+    for i in ids:                       # 仍然同名（不应出现）时编号
+        n = names[i]
+        seen[n] = seen.get(n, 0) + 1
+        if seen[n] > 1:
+            names[i] = f"{n} #{seen[n]}"
+    return names
 
 
 def pct(v, digits=2) -> str:
@@ -107,14 +136,14 @@ def export_script(spec: dict, label: str, by_id: dict, ids: list, date_range, br
     """回测页当前的数据、策略和费率 → 独立 Python 脚本"""
     from dataclasses import asdict
     from simplequant.export import single_asset_script
-    data = []
+    data, names = [], asset_names(by_id, ids, lg)
     for i in ids:
         m = by_id[i]
         if m.source in ("akshare", "baostock"):
-            data.append({"name": m.name, "source": m.source, "symbol": m.symbol, "asset": m.extra.get("asset", ""),
+            data.append({"name": names[i], "source": m.source, "symbol": m.symbol, "asset": m.extra.get("asset", ""),
                          "adjust": m.adjust, "start": str(date_range[0]), "end": str(date_range[1])})
         else:   # 本地数据：脚本读取同名 CSV（在数据页「下载 CSV」）
-            data.append({"name": m.name, "source": "csv", "path": f"{m.symbol}.csv"})
+            data.append({"name": names[i], "source": "csv", "path": f"{m.symbol}.csv"})
     return single_asset_script(spec, data, asdict(broker), title=label, lang=lg, filename=export_filename(label))
 
 

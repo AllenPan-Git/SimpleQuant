@@ -4,6 +4,7 @@
 - 交易次数太少：几笔交易的胜负很可能是偶然
 - 收益集中：去掉最好的 3 笔交易后还剩多少收益
 - 按交易重抽样（bootstrap）：把已平仓交易有放回地抽 N 笔、求和，重复多次，看累计收益的区间和亏损的概率
+- 期末未平仓：胜率、盈亏比只统计已平仓交易；期末持仓浮亏较大，或收益多半是还没兑现的浮盈时提示
 - 参数优化：试的组数多时最好的一组可能是运气；多数组合亏损；样本外明显比样本内差
 
 每条结果是 {"level": "warn" / "note" / "ok", "key": 文本键, "args": 参数}；
@@ -20,6 +21,7 @@ BOOT_MIN = 5             # 少于这个数不做重抽样
 BOOT_RUNS = 2000
 BOOT_CI = (0.05, 0.95)
 LOSS_PROB_WARN = 0.25    # 重抽样中亏损的比例达到这个数时警告
+OPEN_PNL = 0.03          # 期末持仓浮盈亏达到初始资金的这个比例才提示
 MANY_COMBOS = 20         # 参数优化试了这么多组起提示「最好的一组可能是运气」
 
 
@@ -31,7 +33,7 @@ def trade_stats(trades: pd.DataFrame, initial_cash: float, total_return: float, 
     """已平仓交易的统计：笔数、最好 N 笔的收益、去掉它们后的收益、重抽样区间与亏损概率"""
     pnl = trades["pnl_net"].astype(float).to_numpy() if len(trades) else np.zeros(0)
     n = len(pnl)
-    out = {"n": n}
+    out = {"n": n, "closed_return": float(pnl.sum() / initial_cash) if initial_cash else 0.0}
     if n == 0 or not initial_cash:
         return out
     # 未平仓部分（以及现金分红等不属于某笔交易的收益）= 总收益 − 已平仓交易的收益，各种算法里都保持不变
@@ -48,9 +50,17 @@ def trade_stats(trades: pd.DataFrame, initial_cash: float, total_return: float, 
     return out
 
 
-def check_backtest(metrics: dict, trades: pd.DataFrame, tried: int = 0) -> list[dict]:
+def open_pnl(positions: list | None, initial_cash: float) -> float:
+    """期末持仓按最后收盘价计的浮动盈亏，占初始资金的比例（成本不含买入手续费）"""
+    if not positions or not initial_cash:
+        return 0.0
+    return float(sum((p["price"] - p["cost"]) * p["size"] for p in positions) / initial_cash)
+
+
+def check_backtest(metrics: dict, trades: pd.DataFrame, tried: int = 0, positions: list | None = None) -> list[dict]:
     """
     :param tried: 这组参数是从多少组参数里挑出来的（从参数优化页带过来时），0 表示不知道 / 没优化过
+    :param positions: 期末持仓（BacktestResult.positions），用来提示未平仓的浮盈亏
     """
     total = float(metrics.get("total_return", 0.0))
     s = trade_stats(trades, float(metrics.get("initial_cash", 0.0)), total)
@@ -83,6 +93,15 @@ def check_backtest(metrics: dict, trades: pd.DataFrame, tried: int = 0) -> list[
             out.append(_f("boot_mixed", "note", **args))
         else:
             out.append(_f("boot_ok", "ok", **args))
+
+    if positions and n:          # 没有已平仓交易时 no_trades 已经说明收益全来自持仓
+        cash = float(metrics.get("initial_cash", 0.0))
+        u = open_pnl(positions, cash)
+        args = dict(k=len(positions), open=u, closed=float(s["closed_return"]), total=total)
+        if u <= -OPEN_PNL:
+            out.append(_f("open_loss", "warn", **args))
+        elif u >= OPEN_PNL and total > 0 and u > total / 2:
+            out.append(_f("open_gain", "note", **args))
 
     if metrics.get("limit_blocked"):
         out.append(_f("limit_blocked", "note", n=int(metrics["limit_blocked"])))

@@ -62,7 +62,8 @@ APP = DIST / "windows" / "SimpleQuant"
 OUT_ROOT = DIST / "release"
 API = f"https://api.github.com/repos/{os.environ.get('GITHUB_REPOSITORY') or cfg.REPO}"
 MAX_PATCHES = 5
-UNIX_TARGETS = ["macos-arm64", "macos-x86_64", "linux-x86_64"]     # 与 .github/workflows/build.yml 的矩阵一致
+UNIX_TARGETS = ["macos-arm64", "linux-x86_64"]     # 与 .github/workflows/build.yml 的矩阵一致（Intel Mac 最后支持 0.2.5）
+LAST_INTEL = "0.2.5"     # Intel Mac（macos-x86_64）最后支持的版本，发布说明里注明
 CI_WAIT_MIN = 45
 MIRROR_URL = "https://1829763294.share.123pan.cn/123pan/mv2ejv-wbhtA?pwd=ZfDO"     # 123 云盘（提取码 ZfDO），发新版时手动把安装包传进去
 # 固定的打包环境：两次打包同样的代码得到相同的文件（见文件开头）
@@ -233,23 +234,24 @@ def release_notes(version: str, installer: str) -> str:
     zh, en = changelog(version)
     # 附件列表按文件名排序、无法调整，安装包会排在 manifest 后面；所以下载表放在说明最前面，文件名直接做成链接
     base = f"https://github.com/{os.environ.get('GITHUB_REPOSITORY') or cfg.REPO}/releases/download/v{version}"
-    win, arm, x86, lin = installer, f"{n}-macos-arm64.dmg", f"{n}-macos-x86_64.dmg", f"{n}-linux-x86_64.tar.gz"
+    win, arm, lin = installer, f"{n}-macos-arm64.dmg", f"{n}-linux-x86_64.tar.gz"
     a = lambda f: f"[{f}]({base}/{f})"  # noqa: E731
+    intel = base.replace("/download/", "/tag/").rsplit("/", 1)[0] + f"/v{LAST_INTEL}"
     return (
         f"## 下载\n首次安装请点击下载（已安装 0.1.1 及以后版本的程序会自动检测并下载更新）：\n\n"
         f"| 系统 | 安装包 |\n|---|---|\n"
         f"| Windows 10 / 11（64 位，无需管理员权限） | {a(win)} |\n"
         f"| macOS 11 及以上（Apple 芯片：M1 / M2 / M3 / M4…） | {a(arm)} |\n"
-        f"| macOS 11 及以上（Intel 芯片） | {a(x86)} |\n"
         f"| Linux（x86_64） | {a(lin)} |\n\n"
+        f"Intel 芯片的 Mac 最后支持的版本是 [{LAST_INTEL}]({intel})，已安装的可以继续使用，此后的版本不再提供。\n\n"
         f"国内下载慢可以用 123 云盘：{MIRROR_URL}\n\n"
         f"macOS 版未经 Apple 公证，第一次打开会被拦下：请在「系统设置 → 隐私与安全性」中点「仍要打开」，"
         f"或在终端运行 `xattr -dr com.apple.quarantine /Applications/SimpleQuant.app`。\n\n"
         f"下方「Assets」中的其余文件（manifest、`-from-` 增量包）供程序自动更新使用，无需下载。\n\n"
         f"## 更新内容\n{zh}\n\n"
         f"> 本软件仅供学习与研究使用，不构成任何投资建议。\n\n---\n\n"
-        f"## Download\nFor a fresh install: {a(win)} (Windows), {a(arm)} / {a(x86)} (macOS, Apple silicon / Intel) "
-        f"or {a(lin)} (Linux). Installed copies (0.1.1 or later) update themselves. The macOS app is not notarized: "
+        f"## Download\nFor a fresh install: {a(win)} (Windows), {a(arm)} (macOS, Apple silicon) "
+        f"or {a(lin)} (Linux). Intel Macs are supported up to [{LAST_INTEL}]({intel}). Installed copies (0.1.1 or later) update themselves. The macOS app is not notarized: "
         f"on first launch, allow it under System Settings → Privacy & Security → Open Anyway. "
         f"The other assets are used by the auto-updater.\n\n"
         f"## Changes\n{en}\n\n"
@@ -359,7 +361,7 @@ def sign_unix(version: str, token: str, out_root: Path = OUT_ROOT, wait_min: flo
     out.mkdir(parents=True, exist_ok=True)
     pending = list(UNIX_TARGETS)
     deadline = time.time() + wait_min * 60
-    print(f"\n等待 GitHub Actions 打包 macOS / Linux 版（通常 15~25 分钟，最多等 {wait_min} 分钟）…")
+    print(f"\n等待 GitHub Actions 打包 macOS / Linux 版（通常 15~20 分钟，最多等 {wait_min} 分钟）…")
     while pending:
         rel = find_release(s, tag)
         if not rel:
@@ -402,7 +404,7 @@ def publish(version: str, token: str, wait_min: float = CI_WAIT_MIN):
     body = release_notes(version, f"SimpleQuant-{version}-Setup.exe")
     sha = git("rev-list", "-n", "1", tag)
     deadline = time.time() + wait_min * 60
-    print(f"等待 {tag} 的 GitHub Actions 全部结束（Intel Mac 最慢，整个运行约 25 分钟）…")
+    print(f"等待 {tag} 的 GitHub Actions 全部结束（整个运行约 20 分钟）…")
     while True:
         # 公开仓库查询运行状态不需要令牌（fine-grained 令牌未必有 Actions 权限）
         runs = requests.get(f"{API}/actions/runs", params={"head_sha": sha, "event": "push"},

@@ -3,11 +3,10 @@
 用于在 Mac 上验证安装版。每一步如有异常，请截图（`Cmd + Shift + 4` 选取区域，`Cmd + Shift + 3` 全屏，图片保存在桌面），并记下步骤编号。全部完成约需 20～30 分钟。
 
 ## 0. 准备
-1. 点左上角苹果图标 →「关于本机」，记下**芯片**（Apple M1/M2/M3… 或 Intel）和 **macOS 版本**。
+1. 点左上角苹果图标 →「关于本机」，记下**芯片**（Apple M1/M2/M3…）和 **macOS 版本**。Intel 芯片的 Mac 最后支持的版本是 0.2.5，之后不再打包，无需测试。
 2. 用浏览器打开 GitHub 上最新一次 Actions 运行（**Actions → Build macOS / Linux**，选最新一条成功的记录），登录后在页面底部 **Artifacts** 下载：
-   - Apple 芯片：`SimpleQuant-macos-arm64`
-   - Intel 芯片：`SimpleQuant-macos-x86_64`
-3. 下载得到 zip，双击解压，在 `dist/macos/` 下找到 `SimpleQuant-<版本>-macos-<芯片>.dmg`。
+   - `SimpleQuant-macos-arm64`
+3. 下载得到 zip，双击解压，在 `dist/macos/` 下找到 `SimpleQuant-<版本>-macos-arm64.dmg`。
 
 ## 1. 安装与首次打开
 1. 双击 dmg，将 SimpleQuant 拖到「Applications / 应用程序」。若提示没有权限（非管理员账户），改为拖到桌面，并记下这一点。

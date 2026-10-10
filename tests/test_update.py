@@ -246,6 +246,15 @@ def test_bad_signature_is_rejected(server, installed, tmp_path):
     assert not (tmp_path / "work" / "ready.json").exists()
 
 
+def test_release_without_this_platform(server, installed, tmp_path):
+    """新版本不再打包本平台（如 0.2.5 之后的 Intel Mac）：报 platform，不当成出错"""
+    _publish(server, tmp_path)
+    u = _updater(server, installed, tmp_path, system="macos", target="macos-x86_64")
+    with pytest.raises(client.UpdateError) as e:
+        u.check()
+    assert e.value.kind == "platform" and u.status.version == "1.1.0"
+
+
 def test_network_error_and_background_status(installed, tmp_path):
     u = Updater(app_dir=installed, work=tmp_path / "work", frozen=True, current="1.0.0",
                 sources=["http://127.0.0.1:9/latest"], public_key=PUB, system="windows")
@@ -564,6 +573,8 @@ def test_release_targets_match_workflow(monkeypatch):
     monkeypatch.setattr(release, "changelog", lambda v: ("- 中文条目", "- English item"))
     notes = release.release_notes("1.2.3", "SimpleQuant-1.2.3-Setup.exe")
     assert all(f"SimpleQuant-1.2.3-{t}" in notes for t in release.UNIX_TARGETS)
+    assert "macos-x86_64" not in wf and "macos-x86_64" not in notes     # Intel Mac 最后支持 0.2.5
+    assert f"/releases/tag/v{release.LAST_INTEL})" in notes
     assert "## 更新内容\n- 中文条目\n" in notes and "## Changes\n- English item\n" in notes
 
 

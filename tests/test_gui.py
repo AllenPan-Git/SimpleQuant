@@ -605,7 +605,10 @@ async def test_backtest_ai_explain(user: User, lib_dir, monkeypatch):
     import simplequant.llm as llm
 
     class Fake:
+        sent = []
+
         def chat(self, system, messages, schema=None):
+            Fake.sent.append(messages[-1]["content"])
             return "- 表现一般\n- 回撤可控"
     monkeypatch.setattr(llm, "load_config", lambda: llm.LLMConfig.from_preset("deepseek", api_key="x"))
     monkeypatch.setattr(llm, "get_provider", lambda cfg: Fake())
@@ -619,6 +622,7 @@ async def test_backtest_ai_explain(user: User, lib_dir, monkeypatch):
     await user.should_see(marker="explain")
     user.find(marker="explain").click()
     await user.should_see("回撤可控")
+    assert "Trade details" in Fake.sent[-1] and "closed_trades" in Fake.sent[-1]     # 交易明细与期末持仓一起发给模型
 
 
 # ---------------- 参数优化页 ----------------
@@ -844,6 +848,59 @@ async def test_selection_custom_factor(user: User):
     assert all(f["key"] in FACTORS for f in SP["factors"]) and SP["res"]["fkey"] == "ep"
 
 
+
+CF_AI_CODE = ('def factor(p):\n    """近 20 天上涨日成交额占比"""\n'
+              '    up = p["amount"].where(p["close"] > p["close"].shift(1), 0.0)\n'
+              '    total = p["amount"].rolling(20, min_periods=15).sum()\n'
+              '    return up.rolling(20, min_periods=15).sum() / total.where(total > 0)\n')
+
+
+@needs_stocks
+async def test_selection_custom_factor_ai(user: User, monkeypatch):
+    import json
+    import simplequant.llm as llm
+    from simplequant.stocks import custom_factors
+
+    class Fake:
+        sent = []
+
+        def chat(self, system, messages, schema=None):
+            Fake.sent.append(messages[-1]["content"])
+            code = CF_AI_CODE if len(Fake.sent) == 1 else CF_AI_CODE.replace("shift(1)", "shift(-1)")
+            return json.dumps({"name": "放量上涨", "understood": "上涨日成交额占 20 天总成交额的比例。",
+                               "unsupported": ["新闻情绪"], "code": code, "direction": "higher",
+                               "desc": "上涨日成交额占比"}, ensure_ascii=False)
+    monkeypatch.setattr(llm, "load_config", lambda: llm.LLMConfig.from_preset("deepseek", api_key="x"))
+    monkeypatch.setattr(llm, "get_provider", lambda cfg: Fake())
+    SP = await _open_selection(user, tab="cf")
+    user.find(marker="cf_ai_text").type("近20天放量上涨的程度，加上新闻情绪")
+    user.find(marker="cf_ai_go").click()
+    assert await _wait(lambda: SP["cf_ai"]["result"])
+    await user.should_see("新闻情绪")
+    await user.should_see("不会自动运行")
+    assert SP["cf"]["code"] != CF_AI_CODE                            # 点「填入编辑器」之前不动编辑器
+    user.find(marker="cf_ai_apply").click()
+    await settle()
+    assert SP["cf"]["code"] == CF_AI_CODE and SP["cf"]["name"] == "放量上涨" and SP["cf"]["key"] is None
+    user.find(marker="cf_trial").click()
+    assert await _wait(lambda: SP.get("cf_trial"), n=600)
+    user.find(marker="cf_save").click()
+    (key, d), = custom_factors.list_factors().items()
+    assert d["name"] == "放量上涨" and d["desc"] == "上涨日成交额占比"
+    # 在编辑器的代码基础上修改：代码一起发给模型；修正不了的偷看未来在编辑器下方提示
+    user.find(marker="cf_ai_base").elements.pop().set_value(True)
+    user.find(marker="cf_ai_go").click()
+    assert await _wait(lambda: len(Fake.sent) >= 3)
+    assert Fake.sent[1].startswith("Current code:") and "rolling(20" in Fake.sent[1]
+    await _wait(lambda: not SP["cf_ai"]["result"].ok)
+    user.find(marker="cf_ai_apply").click()
+    await settle()
+    assert SP["cf"]["key"] == key and "shift(-1)" in SP["cf"]["code"]
+    await user.should_see("会用到未来的数据")
+    custom_factors.delete_factor(key)
+    SP["cf_ai"].update(text="", base=False, result=None)
+
+
 SEL_AI_REPLY = {"name": "低估值高质量", "understood": "每月选 15 只 EP 高、ROE 高的股票，行业中性。",
                 "unsupported": ["股息率"], "universe": "hs300",
                 "factors": [{"key": "ep", "direction": "higher", "weight": 1}, {"key": "roe", "direction": "higher", "weight": 1}],
@@ -861,6 +918,7 @@ async def test_selection_ai_and_ic_weighting(user: User, monkeypatch):
 
         def chat(self, system, messages, schema=None):
             if schema is None:
+                Fake.explained = messages[-1]["content"]
                 return "- 跑赢基准\n- 换手偏高"
             Fake.sent.append(messages[-1]["content"])
             return json.dumps(SEL_AI_REPLY, ensure_ascii=False)
@@ -887,6 +945,7 @@ async def test_selection_ai_and_ic_weighting(user: User, monkeypatch):
     await user.should_see(marker="sp_explain")                     # AI 解读选股回测结果
     user.find(marker="sp_explain").click()
     assert await _wait(lambda: SP.get("explanation"))
+    assert "open_positions_at_end" in Fake.explained and "pnl_by_symbol_top" in Fake.explained
     from simplequant.stocks import StockStore
     ind = StockStore().load_industry()
     for codes in list(res.schedule.picks.values())[-5:]:

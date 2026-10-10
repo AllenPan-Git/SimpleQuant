@@ -3,7 +3,7 @@
 
 流程：用户描述 → 大模型按 LLM_SCHEMA 输出 JSON → 转成规则 → 用 rules.validate 校验
       → 若有错误，把错误发回模型修正一次 → 返回 NLResult 给界面确认
-大模型只生成规则数据，不生成任何代码。
+择时规则和选股方案只生成数据，不生成代码；自定义因子（generate_factor）生成代码，但只做静态检查，不自动运行。
 
 LLM_SCHEMA 专门为大模型设计：所有字段必填、没有可变键（参数用 [{name, value}] 列表），
 这样能满足 Claude / OpenAI 严格 JSON Schema 模式的要求；再由 to_rule() 转成内部规则格式。
@@ -363,22 +363,184 @@ def translate_selection(text: str, provider: Provider, lang: str = "zh", repair_
                     unsupported=list(out.get("unsupported") or []), errors=validate_selection(spec, lang), raw=out)
 
 
+# ---------------- 自然语言 → 自定义因子代码 ----------------
+# 和上面两种不同，这里生成的是代码。代码不会自动运行：只做静态检查（custom_factors.review），
+# 填进编辑器后由用户看过、点「试算」才在本机运行
+FACTOR_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "name": {"type": "string"}, "understood": {"type": "string"},
+        "unsupported": {"type": "array", "items": {"type": "string"}},
+        "code": {"type": "string"},
+        "direction": {"type": "string", "enum": ["higher", "lower"]},
+        "desc": {"type": "string"},
+    },
+    "required": ["name", "understood", "unsupported", "code", "direction", "desc"],
+    "additionalProperties": False,
+}
+
+_STOCK_FIELDS = """- open, high, low, close: back-adjusted prices
+- raw_close, raw_open: unadjusted prices
+- volume (shares), amount (value traded, CNY), turnover (turnover rate, %), pct_chg (daily change, %)
+- pe (TTM), pb (MRQ), ps (TTM): valuation ratios; may be NaN or negative for loss-making companies
+- financial fields, only after the user downloads financial data, forward-filled from each announcement date: roe (annualized, %), gross_margin (%), net_margin (%), np_yoy (net profit YoY growth, %), rev_yoy (revenue YoY growth, %), total_share (total shares), mcap (total market value = raw_close * total_share)
+- dividend fields, only after the user downloads dividend data: div_cash (pre-tax cash dividend per share), div_bonus (bonus shares per share), div_reserve (capitalization shares per share); non-zero only on ex-dates, 0 on other days"""
+_CB_FIELDS = """- open, high, low, close: adjusted prices; raw_close: unadjusted bond price (CNY per 100 face value)
+- volume, amount, pct_chg (daily change, %); turnover is not available (all NaN)
+- premium (conversion premium, %), bond_premium (premium over bond floor, %), double_low (raw_close + premium)
+- conv_value (conversion value), bond_value (bond floor), conv_price (conversion price), stock_close (underlying stock price)
+- remain_years (years to maturity), issue_size (issue size, 100M CNY), remain_size (outstanding size, 100M CNY)
+- rating_score (credit rating as a number, higher is better) is today's rating copied to every past day, which leaks future information into backtests: use it only if the user explicitly asks, and then warn about it in \"understood\"."""
+
+
+def factor_system_prompt(lang: str = "zh", kind: str = "stock") -> str:
+    language = LANG_NAMES.get(lang, "English")
+    what = "convertible bonds" if kind == "cb" else "Chinese A-share stocks"
+    fields = _CB_FIELDS if kind == "cb" else _STOCK_FIELDS
+    return f"""You write a custom factor for the SimpleQuant multi-factor stock picker ({what}) from a plain-language idea. The code runs on the user's own computer after they read it.
+
+Write exactly one function:
+
+def factor(p):
+    ...
+    return df
+
+- p["field"] is a pandas DataFrame: index = trading days (ascending), columns = security codes. Return one DataFrame of the same shape with the factor value of each security on each day (float, NaN where it cannot be computed).
+- Available fields ({what}):
+{fields}
+- np (numpy), pd (pandas) and math are already available. Do not import anything, read or write files, or use the network.
+- No look-ahead: the value on day T may use only data up to and including day T. shift(n), pct_change(n) and diff(n) with positive n only; never bfill or rolling(center=True).
+- Time-series operations work down each column (x.rolling(20, min_periods=15).mean(), x.shift(5), x.pct_change(20, fill_method=None)); cross-sectional operations across codes on the same day use axis=1 (x.rank(axis=1, pct=True), x.sub(x.mean(axis=1), axis=0)).
+- Use min_periods on rolling windows (about 3/4 of the window) so new listings get values sooner. Avoid division by zero: x.where(x > 0) or .replace(0, np.nan) on the denominator. Replace inf with NaN.
+- The system winsorizes and standardizes the factor each day and applies the direction; do not do that yourself.
+- Keep the code short and readable for a non-programmer: a docstring explaining the idea in {language}, and brief comments in {language}.
+
+Be honest about limits: anything the fields above cannot express (news, sentiment, analyst ratings, fund holdings, industry names, intraday data, data for other markets) goes into "unsupported" as short phrases in {language}. List only parts of what the user actually asked for; never add things they did not mention (leave the list empty when everything was computed). Never use another field as a silent stand-in; if you approximate, say exactly how in "understood". If nothing in the request can be computed (or it is not a factor idea at all), return an empty code string.
+Editing: if the message starts with "Current code", change that code only as the "Change request" asks and keep the rest.
+
+Other fields:
+- direction: "higher" if larger factor values should be preferred when picking, else "lower".
+- name: a short factor name in {language} (at most about 12 characters in Chinese).
+- desc: one short sentence in {language} for the factor list.
+- understood: one short paragraph in {language} explaining what the factor measures and how it is computed (when editing, begin with what you changed)."""
+
+
+def to_factor_spec(out: dict) -> dict:
+    return {"kind": "factor", "code": (out.get("code") or "").strip() + "\n" if (out.get("code") or "").strip() else "",
+            "direction": -1 if out.get("direction") == "lower" else 1, "desc": (out.get("desc") or "").strip()}
+
+
+def validate_factor(spec: dict, lang: str = "zh") -> list[str]:
+    from ..stocks import custom_factors
+    return custom_factors.check_syntax(spec["code"], lang) or custom_factors.review(spec["code"], lang, strict=True)
+
+
+def generate_factor(text: str, provider: Provider, lang: str = "zh", kind: str = "stock", repair_rounds: int = 1,
+                    base_code: str | None = None) -> NLResult:
+    """自然语言 → 自定义因子代码（只检查不运行）；给了 base_code 则把这段话当作对这段代码的修改"""
+    msg = text.strip()
+    if base_code and base_code.strip():
+        msg = "Current code:\n" + base_code.strip() + "\n\nChange request:\n" + msg
+    out = _generate(msg, provider, factor_system_prompt(lang, kind), FACTOR_SCHEMA, to_factor_spec, validate_factor,
+                    repair_rounds, lambda o: not (o.get("code") or "").strip())
+    spec = to_factor_spec(out)
+    errors = validate_factor(spec, lang) if spec["code"] else []
+    return NLResult(spec=spec, name=(out.get("name") or "").strip(), understood=out.get("understood") or "",
+                    unsupported=list(out.get("unsupported") or []), errors=errors, raw=out)
+
+
 def explain_system_prompt(lang: str = "zh") -> str:
-    return f"""You are a careful, candid quantitative analyst explaining a backtest to a non-programmer, who may act on what you say. Write in {LANG_NAMES.get(lang, 'English')}, 4-6 short bullet points: the overall verdict, absolute and relative return, risk, trading behaviour, one or two concrete ideas to try next, and a reminder about overfitting if relevant. Do not invent numbers that are not given.
+    return f"""You are a careful, candid quantitative analyst explaining a backtest to a non-programmer, who may act on what you say. Write in {LANG_NAMES.get(lang, 'English')}, 4-7 short bullet points: the overall verdict, absolute and relative return, risk, trading behaviour (including open positions at the end when they matter), one or two concrete ideas to try next, and a reminder about overfitting if relevant. Do not invent numbers that are not given.
 
 Judge it by these yardsticks, and say plainly when it is weak:
 - Absolute return first: compare the annualized return (cagr) with a risk-free rate of about 2% a year (government bonds, money-market funds). An annualized return near or below that means the strategy earned little or nothing for the risk taken, whatever the excess return.
 - Sharpe ratio: below 0.5 is weak, 0.5-1 is moderate, above 1 is good (for a backtest, before real-world frictions). Calmar ratio (cagr / max drawdown): below 0.5 is weak, 0.5-1 is moderate, above 1 is good.
 - If the benchmark return is negative, point out that part of the excess return comes from the benchmark falling, not from the strategy making money; never present a large excess return as strong performance on its own.
 - Low volatility or a small drawdown is not good risk control by itself; it only counts together with an adequate return (a strategy that barely moves will also show low risk).
-- Keep the tone neutral. Do not use praise words for weak numbers, and do not soften a weak verdict."""
+- Keep the tone neutral. Do not use praise words for weak numbers, and do not soften a weak verdict.
+- All results are already net of the commission, stamp duty and slippage the user set; do not say costs are missing. High turnover still deserves a note, since real slippage and market impact can be larger.
+- The numbers you receive are ratios; write them as percentages (0.0354 → 3.54%).
+
+When trade details are given, use them; they show what the summary metrics hide:
+- Win rate, profit factor and the trade count cover closed trades only; total return also includes positions still open at the end, valued at the last close. If open positions carry a sizeable unrealized loss or gain (say more than a few percent of capital), say so and how it changes the picture (e.g. a high win rate with a large open loss, or a return that mostly sits in one unrealized position).
+- If the return without the top trades is near zero or negative, or the bootstrap range is wide or crosses zero, say that the result depends on a few trades or on luck.
+- Name a specific trade or security only when it matters to the verdict; at most two or three examples.
+- If orders were blocked by price limits or suspensions, mention briefly that real trading would face the same problem."""
 
 
-def explain_result(provider: Provider, spec_text: str, metrics: dict, lang: str = "zh") -> str:
-    """用大白话解读回测结果"""
+def _r(v, n=4):
+    return round(float(v), n) if v is not None and v == v else None
+
+
+def trade_details(result, names: dict | None = None, extremes: int = 3) -> dict:
+    """
+    给 AI 解读用的交易摘要（汇总指标看不到的部分）：
+    已平仓交易的分布与最好 / 最差几笔、收益集中度与重抽样区间（与可信度检查同一算法）、期末未平仓持仓的浮动盈亏。
+    金额都换算成占初始资金的比例
+    """
+    from ..engine.credibility import trade_stats
+    names = names or {}
+    cash = float(result.metrics.get("initial_cash") or 0) or 1.0
+    total = float(result.metrics.get("total_return") or 0)
+
+    def label(sym):
+        return f"{names[sym]}({str(sym).split('.')[-1]})" if sym in names else str(sym)
+
+    out = {}
+    tr = result.trades
+    if tr is not None and len(tr):
+        pnl = tr["pnl_net"].astype(float)
+        wins, losses = pnl[pnl > 0], pnl[pnl < 0]
+        bars = tr["bars"].astype(float)
+        stats = trade_stats(tr, cash, total)
+        closed = {"count": int(len(tr)), "closed_pnl_return": _r(pnl.sum() / cash),
+                  "avg_win_return": _r(wins.mean() / cash) if len(wins) else None,
+                  "avg_loss_return": _r(losses.mean() / cash) if len(losses) else None,
+                  "median_holding_bars": _r(bars.median(), 1), "max_holding_bars": int(bars.max()),
+                  "top_trades_return": _r(stats.get("top_return")), "return_without_top_trades": _r(stats.get("ex_top_return"))}
+        if "boot_lo" in stats:
+            closed.update(bootstrap_90pct_range=[_r(stats["boot_lo"]), _r(stats["boot_hi"])],
+                          bootstrap_loss_probability=_r(stats["boot_loss"], 3))
+
+        def rows(df):
+            return [{"symbol": label(r.symbol), "open": str(r.open_time)[:10], "close": str(r.close_time)[:10],
+                     "bars": int(r.bars), "pnl_return": _r(r.pnl_net / cash)} for r in df.itertuples()]
+        order = tr.assign(pnl_net=pnl).sort_values("pnl_net")
+        closed["best"] = rows(order[order["pnl_net"] > 0].tail(extremes).iloc[::-1])
+        closed["worst"] = rows(order[order["pnl_net"] < 0].head(extremes))
+        if "symbol" in tr and tr["symbol"].nunique() > 1:
+            by = pnl.groupby(tr["symbol"]).sum().sort_values()
+            closed["pnl_by_symbol_top"] = {label(k): _r(v / cash) for k, v in by.iloc[::-1].head(extremes).items()}
+            closed["pnl_by_symbol_bottom"] = {label(k): _r(v / cash) for k, v in by.head(extremes).items()}
+        out["closed_trades"] = closed
+    else:
+        out["closed_trades"] = {"count": 0}
+
+    pos = []
+    for p_ in result.positions or []:
+        size, price, cost = float(p_["size"]), float(p_["price"]), float(p_["cost"])
+        pos.append({"symbol": label(p_["symbol"]), "unrealized_return": _r((price - cost) * size / cash),
+                    "price_vs_cost": _r(price / cost - 1) if cost else None})
+    if pos:
+        unreal = sum(x["unrealized_return"] or 0 for x in pos)
+        pos.sort(key=lambda x: x["unrealized_return"] or 0)
+        out["open_positions_at_end"] = {"count": len(pos), "unrealized_return": _r(unreal),
+                                        "positions": pos if len(pos) <= 2 * extremes else
+                                        pos[:extremes] + pos[-extremes:]}
+    if result.metrics.get("limit_blocked"):
+        out["orders_blocked_by_limit_or_suspension"] = int(result.metrics["limit_blocked"])
+    return out
+
+
+def explain_result(provider: Provider, spec_text: str, metrics: dict, lang: str = "zh",
+                   details: dict | None = None) -> str:
+    """用大白话解读回测结果；details = trade_details(...)：交易明细摘要与期末未平仓"""
     system = explain_system_prompt(lang)
     user = f"Strategy:\n{spec_text}\n\nMetrics (ratios, not percents):\n" + json.dumps(
         {k: (round(v, 4) if isinstance(v, float) else v) for k, v in metrics.items()}, ensure_ascii=False)
+    if details:
+        user += ("\n\nTrade details (returns are ratios of initial cash; bars = trading days held):\n"
+                 + json.dumps(details, ensure_ascii=False))
     return provider.chat(system, [{"role": "user", "content": user}], None).strip()
 
 

@@ -40,6 +40,8 @@ def _message(s) -> tuple[str, str, str]:
     if s.state == "ready":
         return t("upd.ready", v=s.version), "system_update_alt", "info"
     if s.state == "error":
+        if s.error == "platform":
+            return t("upd.err_platform"), "info", "info"
         key = {"network": "upd.err_network", "verify": "upd.err_verify"}.get(s.error, "upd.err_other")
         return t(key, detail=s.detail), "error_outline", "warning"
     return "", "", ""

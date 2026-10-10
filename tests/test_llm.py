@@ -436,3 +436,99 @@ def test_migrate_legacy_copies_once(tmp_path):
     legacy.write_text('{"provider": "openai", "model": "m2"}', encoding="utf-8")
     assert not config.migrate_legacy(new, legacy)               # 新位置已有设置：不覆盖
     assert config.load_config(new).model == "m1"
+
+
+# ---------------- 自然语言 → 自定义因子代码 ----------------
+def factor_output(code, direction="higher", unsupported=()):
+    return {"name": "放量上涨", "understood": "……", "unsupported": list(unsupported), "code": code,
+            "direction": direction, "desc": "上涨日成交额占比"}
+
+
+UP_VOLUME = ('def factor(p):\n'
+             '    """近 20 天上涨日成交额占比"""\n'
+             '    up = p["amount"].where(p["close"] > p["close"].shift(1), 0.0)\n'
+             '    total = p["amount"].rolling(20, min_periods=15).sum()\n'
+             '    return up.rolling(20, min_periods=15).sum() / total.where(total > 0)\n')
+
+
+def test_factor_schema_is_strict_mode_compatible():
+    from simplequant.llm import FACTOR_SCHEMA
+    for obj in _walk(FACTOR_SCHEMA):
+        assert obj.get("additionalProperties") is False and set(obj["required"]) == set(obj["properties"])
+
+
+def test_generate_factor_repairs_lookahead_and_runs():
+    from simplequant.llm import generate_factor
+    from simplequant.stocks import custom_factors
+    from test_stocks import make_panel
+    bad = factor_output(UP_VOLUME.replace("shift(1)", "shift(-1)"))
+    fake = FakeProvider([json.dumps(bad), json.dumps(factor_output(UP_VOLUME, unsupported=["新闻情绪"]))])
+    res = generate_factor("近20天放量上涨的程度，再加上新闻情绪", fake)
+    assert res.ok and len(fake.calls) == 2 and res.unsupported == ["新闻情绪"] and res.name == "放量上涨"
+    assert "shift" in fake.calls[1]["messages"][-1]["content"]           # 偷看未来的错误发回模型修正
+    assert "amount (value traded" in fake.calls[0]["system"] and "No look-ahead" in fake.calls[0]["system"]
+    assert res.spec == {"kind": "factor", "code": UP_VOLUME, "direction": 1, "desc": "上涨日成交额占比"}
+    out = custom_factors.evaluate(res.spec["code"], make_panel())
+    assert out.notna().mean().mean() > 0.5
+
+
+def test_generate_factor_unsupported_and_still_bad():
+    from simplequant.llm import generate_factor
+    fake = FakeProvider([json.dumps(factor_output("", unsupported=["分析师评级"]))])
+    res = generate_factor("分析师评级上调的股票", fake)
+    assert len(fake.calls) == 1 and res.ok and res.spec["code"] == ""        # 做不到就不写代码，也不要求修正
+    imp = factor_output("import os\ndef factor(p):\n    return p['close']\n", direction="lower")
+    fake = FakeProvider([json.dumps(imp)] * 2)
+    res = generate_factor("收盘价", fake, lang="en")
+    assert len(fake.calls) == 2 and not res.ok and "import" in res.errors[0] and res.spec["direction"] == -1
+
+
+def test_generate_factor_modifies_code_and_cb_prompt():
+    from simplequant.llm import generate_factor
+    fake = FakeProvider([json.dumps(factor_output(UP_VOLUME))])
+    generate_factor("窗口改成60天", fake, kind="cb", base_code=UP_VOLUME)
+    msg = fake.calls[0]["messages"][0]["content"]
+    assert msg.startswith("Current code:\n") and msg.endswith("Change request:\n窗口改成60天")
+    assert "double_low" in fake.calls[0]["system"] and "roe" not in fake.calls[0]["system"]
+
+
+# ---------------- AI 解读：交易明细与期末未平仓 ----------------
+def test_trade_details_closed_and_open():
+    from simplequant.llm import trade_details
+    res = run_backtest({"A": make_prices()}, *resolve({"kind": "rule", "rule": to_rule(MACD_STOP)}))
+    d = trade_details(res)
+    c = d["closed_trades"]
+    assert c["count"] == len(res.trades) > 0 and len(c["best"]) <= 3 and len(c["worst"]) <= 3
+    assert all(x["pnl_return"] > 0 for x in c["best"]) and all(x["pnl_return"] < 0 for x in c["worst"])
+    assert c["closed_pnl_return"] == pytest.approx(res.trades["pnl_net"].sum() / res.metrics["initial_cash"], abs=1e-4)
+    # 只买不卖：没有已平仓交易，收益全在期末持仓里
+    hold = to_rule(llm_output(buy=[{"left": operand("close"), "op": ">", "right": operand(value=0)}]))
+    res = run_backtest({"A": make_prices()}, *resolve({"kind": "rule", "rule": hold}))
+    d = trade_details(res)
+    assert d["closed_trades"] == {"count": 0}
+    op = d["open_positions_at_end"]
+    assert op["count"] == 1 and op["positions"][0]["symbol"] == "A"
+    assert op["unrealized_return"] == pytest.approx(res.metrics["total_return"], abs=0.01)   # 差的是手续费
+
+
+def test_trade_details_names_and_explain_message():
+    import pandas as pd
+    from types import SimpleNamespace
+    from simplequant.llm import trade_details, explain_result
+    trades = pd.DataFrame({"symbol": ["sh.600000", "sh.600000", "sz.000001"], "open_time": ["2024-01-02"] * 3,
+                           "close_time": ["2024-02-01"] * 3, "bars": [20, 10, 5], "pnl": [5000, -2000, 1000],
+                           "pnl_net": [5000.0, -2000.0, 1000.0]})
+    res = SimpleNamespace(trades=trades, metrics={"initial_cash": 100000, "total_return": -0.06, "limit_blocked": 2},
+                          positions=[{"symbol": "sz.000001", "size": 1000, "price": 9.0, "cost": 19.0}])
+    d = trade_details(res, {"sh.600000": "浦发银行", "sz.000001": "平安银行"})
+    assert d["closed_trades"]["best"][0] == {"symbol": "浦发银行(600000)", "open": "2024-01-02", "close": "2024-02-01",
+                                             "bars": 20, "pnl_return": 0.05}
+    assert d["closed_trades"]["pnl_by_symbol_top"] == {"浦发银行(600000)": 0.03, "平安银行(000001)": 0.01}
+    assert d["open_positions_at_end"]["unrealized_return"] == -0.1
+    assert d["open_positions_at_end"]["positions"][0]["price_vs_cost"] == pytest.approx(-0.5263, abs=1e-4)
+    assert d["orders_blocked_by_limit_or_suspension"] == 2
+    fake = FakeProvider(["- 期末浮亏"])
+    explain_result(fake, "择时", {"win_rate": 0.67}, "zh", d)
+    msg, system = fake.calls[0]["messages"][0]["content"], fake.calls[0]["system"]
+    assert "Trade details" in msg and '"unrealized_return": -0.1' in msg and "平安银行(000001)" in msg
+    assert "closed trades only" in system and "positions still open at the end" in system

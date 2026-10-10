@@ -41,7 +41,7 @@ Four ways to build a strategy:
 - **Write Python**: write a strategy class; board lots, T+1 and trading costs still apply, and its parameters can be optimized.
 
 ### 03 · Backtest
-Multiple assets (capital split equally), custom date range and costs, and a choice of dividend handling (reinvest, or cash dividends with dividend tax). The report opens with a plain-language summary, followed by return, CAGR, Sharpe, drawdown, win rate and profit factor, plus the equity curve, trades on the price chart, P&L per trade and the full fill list; the native Backtrader chart is also available. The report also includes a **credibility assessment**: whether there are enough trades, whether returns are concentrated in a few trades, and a bootstrap range of returns. With a language model configured, AI can explain the results: it compares the annualized return with the risk-free rate, rates Sharpe and Calmar against common yardsticks, and points out how much excess return comes from a falling benchmark.
+Multiple assets (capital split equally), custom date range and costs, and a choice of dividend handling (reinvest, or cash dividends with dividend tax). The report opens with a plain-language summary, followed by return, CAGR, Sharpe, drawdown, win rate and profit factor, plus the equity curve, trades on the price chart, P&L per trade and the full fill list; the native Backtrader chart is also available. The report also includes a **credibility assessment**: whether there are enough trades, whether returns are concentrated in a few trades, a bootstrap range of returns, and whether positions still open at the end carry a large unrealized loss. With a language model configured, AI can explain the results: it compares the annualized return with the risk-free rate, rates Sharpe and Calmar against common yardsticks, and points out how much excess return comes from a falling benchmark; it also looks at the trades, noting when returns rest on a few of them or when positions still open at the end carry a large unrealized loss.
 
 A-share rules: 100-share board lots, T+1 by product type (stocks and domestic equity ETFs are T+1; bond, money-market, gold, commodity and cross-border ETFs and convertibles are T+0, detected from the code and name), stamp duty on sells, minimum commission and slippage. Signals form at a bar's close and fill at the next bar's open.
 
@@ -77,14 +77,15 @@ The interface is available in **Chinese and English**, with light and dark theme
 
 ## Installation
 
-SimpleQuant runs on Windows 10 / 11 (64-bit), macOS 11 or later (Apple silicon and Intel) and Linux (x86_64). Download the file for your system from this repository's **Releases** page:
+SimpleQuant runs on Windows 10 / 11 (64-bit), macOS 11 or later (Apple silicon) and Linux (x86_64). Download the file for your system from this repository's **Releases** page:
 
 | System | File |
 |---|---|
 | Windows | `SimpleQuant-<version>-Setup.exe` |
 | macOS (Apple silicon: M1 and later) | `SimpleQuant-<version>-macos-arm64.dmg` |
-| macOS (Intel) | `SimpleQuant-<version>-macos-x86_64.dmg` |
 | Linux | `SimpleQuant-<version>-linux-x86_64.tar.gz` |
+
+Intel Macs are supported up to [0.2.5](https://github.com/AllenPan-Git/SimpleQuant/releases/tag/v0.2.5); installed copies keep working, but later versions are not built for them.
 
 After installing, download the data you need on the "01 Data" page (AKShare and BaoStock are free).
 
@@ -142,7 +143,7 @@ PyInstaller cannot cross-compile, so each system's version is built on that syst
 - **IC/ICIR weighting**: each factor's weight and direction come from its average Rank IC (or IC / std) over the past N trading days, using only ICs already fully realized at the time.
 - **Selection backtest**: monthly, weekly or every N days, stocks are scored at the rebalance-day close and the top N are traded at the next open; dropped stocks are sold first, then new picks are bought in equal amounts. Suspended or limit-down stocks cannot be sold (retried daily) and suspended or limit-up stocks cannot be bought; the benchmark is the corresponding index.
 - **Dividends**: "reinvest" (back-adjusted) by default. "Cash dividends, taxed" pays cash on the ex-date, adds bonus shares, and deducts dividend tax on sale by holding period (≤1 month 20%, 1 month–1 year 10%, over 1 year exempt), matching JoinQuant and live trading. Special and interim dividends missing from BaoStock's dividend table are filled in from the exchange's ex-dividend reference prices.
-- Also: describing a selection in words (AI; tick "Modify the current settings" to make changes such as "add a low-volatility factor, hold 30 stocks" — only what you mention changes), AI explanation of selection backtest results, industry breakdown of each period's picks, and custom factors (write `def factor(p)` and preview coverage, IC and group returns).
+- Also: describing a selection in words (AI; tick "Modify the current settings" to make changes such as "add a low-volatility factor, hold 30 stocks" — only what you mention changes), AI explanation of selection backtest results, industry breakdown of each period's picks, and custom factors (write `def factor(p)` and preview coverage, IC and group returns, or describe one in words and let AI write the code for you to read before the trial run).
 </details>
 
 <details>
@@ -234,7 +235,7 @@ simplequant/bonds/          convertible-bond data and panels, rates and credit s
 simplequant/paper/         paper trading: accounts, replay and ledger, allocation portfolio accounts, trading calendar, scheduled task, health checks
 simplequant/allocation/    asset allocation: risk assessment, candidates and risk grades, reference allocation, portfolio backtest
 simplequant/export/        export: Python scripts, JoinQuant / MyQuant / QMT
-simplequant/llm/           LLM access: presets and config, Claude / OpenAI / LiteLLM adapters, natural language to rules
+simplequant/llm/           LLM access: presets and config, Claude / OpenAI / LiteLLM adapters, natural language to rules, selections and factor code
 simplequant/update/        automatic updates: check and download, signed manifest verification, file replacement script
 installer/                 installer script (Inno Setup)
 tools/                     release (release.py), macOS / Linux builds (build_unix.sh, smoke_test.py), icon, README images and other helper scripts

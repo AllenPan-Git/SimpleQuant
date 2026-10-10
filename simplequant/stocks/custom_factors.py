@@ -103,6 +103,75 @@ def assets_of(code: str) -> tuple:
     return ("stock", "cb")
 
 
+def known_fields() -> set:
+    from .panel import PRICE_FIELDS, OTHER_FIELDS
+    return set(PRICE_FIELDS) | set(OTHER_FIELDS) | FIN_WORDS | {"total_share", "raw_high", "raw_low"} | DIV_WORDS | CB_WORDS
+
+
+LOOKAHEAD_CALLS = {"shift", "pct_change", "diff"}      # 参数为负数时用到未来数据
+BACKFILL_CALLS = {"bfill", "backfill"}                 # 用后面的值往前填
+UNSAFE_NAMES = {"open", "eval", "exec", "compile", "__import__", "getattr", "setattr", "delattr", "globals", "locals",
+                "vars", "input", "breakpoint", "exit", "quit"}
+IO_ATTRS = {"to_csv", "to_excel", "to_pickle", "to_parquet", "to_json", "to_sql", "to_hdf", "to_feather", "to_html",
+            "to_clipboard", "tofile", "save", "savez", "load", "loadtxt", "fromfile", "genfromtxt", "system", "popen"}
+
+
+def _negative(node) -> bool:
+    return (isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub)
+            and isinstance(node.operand, ast.Constant) and isinstance(node.operand.value, (int, float))
+            and node.operand.value > 0)
+
+
+def review(code: str, lang: str = "zh", strict: bool = False) -> list[str]:
+    """
+    静态检查（不运行代码）：偷看未来（shift(-n)、bfill、center=True）、p[...] 用了不存在的字段。
+    strict=True 时再检查 import、open / eval 等和 __ 开头的属性（AI 生成的代码用；自己写的代码可以 import）
+    """
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return []
+    fn = next((n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "factor"), None)
+    arg = fn.args.args[0].arg if fn and fn.args.args else None
+    fields = known_fields()
+    out = []
+
+    def add(node, zh, en):
+        item = (getattr(node, "lineno", 0), _where(getattr(node, "lineno", None), lang) + _msg(zh, en, lang))
+        if item not in out:
+            out.append(item)
+
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute):
+            name = n.func.attr
+            if name in LOOKAHEAD_CALLS:
+                periods = n.args[0] if n.args else next((k.value for k in n.keywords if k.arg == "periods"), None)
+                if periods is not None and _negative(periods):
+                    add(n, f"{name}(负数) 会用到未来的数据，回测会失真；只能往回看（正数）",
+                        f"{name}(negative) uses future data and distorts the backtest; only look back (positive)")
+            if name in BACKFILL_CALLS or (name == "fillna" and any(
+                    k.arg == "method" and isinstance(k.value, ast.Constant) and k.value.value in BACKFILL_CALLS
+                    for k in n.keywords)):
+                add(n, "bfill 用后面的值往前填，会用到未来的数据；可以用 ffill",
+                    "bfill fills from later values and uses future data; use ffill instead")
+            if name == "rolling" and any(k.arg == "center" and isinstance(k.value, ast.Constant) and k.value.value
+                                         for k in n.keywords):
+                add(n, "rolling(center=True) 会用到未来的数据", "rolling(center=True) uses future data")
+        if (arg and isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name) and n.value.id == arg
+                and isinstance(n.slice, ast.Constant) and isinstance(n.slice.value, str)
+                and n.slice.value not in fields):
+            add(n, f"没有字段 {arg}[\"{n.slice.value}\"]", f"There is no field {arg}[\"{n.slice.value}\"]")
+        if not strict:
+            continue
+        if isinstance(n, (ast.Import, ast.ImportFrom)):
+            add(n, "不要 import：np、pd、math 已经可以直接使用", "No imports: np, pd and math are already available")
+        elif isinstance(n, ast.Name) and n.id in UNSAFE_NAMES:
+            add(n, f"不允许使用 {n.id}", f"{n.id} is not allowed")
+        elif isinstance(n, ast.Attribute) and (n.attr.startswith(("__", "read_")) or n.attr in IO_ATTRS):
+            add(n, f"不允许使用 {n.attr}", f"{n.attr} is not allowed")
+    return [m for _, m in sorted(out, key=lambda x: x[0])]
+
+
 _CACHE: dict[str, object] = {}
 
 

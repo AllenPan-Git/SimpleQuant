@@ -231,7 +231,7 @@ def page():
                 ok = df[O["metric"]].notna().sum() if O["metric"] in df else 0
                 # 最优参数自身的交易检查只列出问题（样本内的成绩本来就偏乐观，不说「通过」）
                 checks = check_grid(df, O["metric"], compare) + \
-                    [c for c in check_backtest(is_res.metrics, is_res.trades) if c["level"] != "ok"]
+                    [c for c in check_backtest(is_res.metrics, is_res.trades, positions=is_res.positions) if c["level"] != "ok"]
                 return dict(df=df, axes=list(ax), is_int=is_int, labels=labels, metric=O["metric"], spec=spec,
                             spec_label=strat["label"], best_spec=best_spec, compare=compare, cut=cut,
                             start=min(d.index[0] for d in prices.values()),

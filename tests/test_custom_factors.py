@@ -165,3 +165,30 @@ def test_dividend_yield_factor(panel):
     assert dy[c].isna().all()                                         # 没有分红数据：不参与排名，不是 0
     assert compute(panel, "dy").isna().all().all()                    # 没下载分红数据
     assert FACTORS["dy"]["requires_div"] and "dy" in factors_for("stock") and "dy" not in factors_for("cb")
+
+
+def test_review_flags_lookahead_and_unknown_fields():
+    assert cf.review(RET20) == [] and cf.review(cf.skeleton("zh")) == [] and cf.review(cf.skeleton("en")) == []
+    code = ('def factor(q):\n'
+            '    a = q["close"].shift(-5)\n'
+            '    b = q["close"].pct_change(periods=-1)\n'
+            '    c = q["volume"].bfill() + q["amount"].fillna(method="backfill")\n'
+            '    d = q["close"].rolling(5, center=True).mean()\n'
+            '    return a + b + c + d + q["roe"] + q["nope"]\n')
+    msgs = cf.review(code)
+    assert len(msgs) == 5, msgs                       # 按行排列；同一行同样的问题只报一次
+    assert msgs[0].startswith("第 2 行") and "shift" in msgs[0] and "pct_change" in msgs[1]
+    assert "bfill" in msgs[2] and "center=True" in msgs[3] and msgs[4].startswith("第 6 行") and 'q["nope"]' in msgs[4]
+    assert cf.review('def factor(p):\n    return p["close"].shift(5) + p["div_cash"] + p["premium"]\n') == []
+
+
+def test_review_strict_blocks_imports_and_io():
+    code = ('import os\n'
+            'def factor(p):\n'
+            '    open("x.txt").read()\n'
+            '    pd.read_csv("x.csv")\n'
+            '    p["close"].to_csv("y.csv")\n'
+            '    return p["close"].__class__\n')
+    assert cf.review(code) == []                      # 自己写的代码可以 import、读写文件
+    msgs = cf.review(code, "en", strict=True)
+    assert len(msgs) == 5 and msgs[0].startswith("Line 1:") and "import" in msgs[0], msgs

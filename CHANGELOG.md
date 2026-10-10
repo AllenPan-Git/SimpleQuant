@@ -5,6 +5,24 @@
 
 Changes in each release. `tools/release.py` copies the matching section into the GitHub release notes.
 
+## 0.3.0（2026-10-10）
+
+### 更新内容
+- 不再提供 Intel 芯片 Mac 的安装包：0.2.5 是最后一个支持 Intel Mac 的版本，已安装的可以继续使用。以后的版本在新版本没有本系统安装包时，设置页的「检查更新」会说明情况，不再显示为出错
+- 改进：多因子选股回测的「运行日志」显示股票或转债名称（如「搜特转债(128100) 停牌或开盘跌停，无法卖出」），与成交记录一致；此前只显示代码
+- 新增：用一句话描述自定义因子（AI）：在选股页「自定义因子」中描述计算思路（如「近 20 天上涨日成交额占总成交额的比例」），由大模型写出 factor(p) 代码，并列出无法用现有数据计算的部分；可勾选「在编辑器中的代码基础上修改」。生成的代码不会自动运行，填入编辑器、阅读后点击「试算」才在本机运行；生成时会检查偷看未来（shift(-n)、bfill 等）、不存在的字段、import 与读写文件，发现问题先让模型修正
+- 改进：自定义因子编辑器在代码用到未来数据（shift(-n)、bfill、rolling(center=True)）或不存在的字段时，在编辑器下方提示
+- 改进：AI 解读回测结果（择时回测与多因子选股回测）时，除汇总指标外还参考交易明细：最好与最差的几笔交易、按标的的盈亏、去掉最好几笔后的收益与重抽样区间，以及期末未平仓持仓的浮动盈亏（胜率、盈亏比只统计已平仓交易，期末浮亏较大时会指出）；并说明回测已扣除所设的手续费、印花税和滑点
+- 改进：回测「可信度检查」新增期末未平仓提示（择时回测、多因子选股回测、参数优化结果）：期末仍持有的仓位按最后收盘价计浮亏达到初始资金的 3% 时警告，并列出已平仓交易的合计收益（胜率与盈亏比只统计已平仓交易）；收益一半以上是尚未兑现的浮盈时也会说明
+
+### Changes
+- Intel Macs are no longer supported: 0.2.5 is the last version built for them, and installed copies keep working. From now on, when a newer release has no package for your system, "Check for updates" in Settings explains this instead of reporting an error
+- Improved: the Log tab of the selection backtest shows stock and bond names (as in Fills) instead of codes only
+- New: describe a custom factor in plain language (AI): on the Custom factors tab of the Selection page, describe how it is computed (e.g. "the share of the last 20 days' trading value that came on up days") and the model writes the factor(p) code and lists anything the available data cannot compute; tick "Modify the code in the editor" to change existing code. Generated code never runs by itself: it is placed in the editor and runs on this computer only when you click Trial run. Generation checks for look-ahead (shift(-n), bfill and similar), unknown fields, imports and file access, and asks the model to fix them first
+- Improved: the custom factor editor warns below the code when it uses future data (shift(-n), bfill, rolling(center=True)) or a field that does not exist
+- Improved: the AI explanation of backtest results (timing and multi-factor selection) now looks beyond the summary metrics at the trades: the best and worst trades, P&L by security, the return without the top trades and the bootstrap range, and the unrealized P&L of positions still open at the end (win rate and profit factor cover closed trades only, so a large open loss is pointed out); it also knows the results are already net of the commission, stamp duty and slippage you set
+- Improved: the credibility assessment (timing and selection backtests, optimization results) now covers positions still open at the end: it warns when their unrealized loss at the last close reaches 3% of starting capital and shows what the closed trades made (win rate and profit factor cover closed trades only); it also points out when more than half of the return is an unrealized gain
+
 ## 0.2.5（2026-10-09）
 
 ### 更新内容

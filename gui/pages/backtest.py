@@ -205,7 +205,7 @@ def page():
                 BT.clear()
                 BT.update(result=res, title=(strat["label"], list(prices), next(iter(pick.freqs))), spec=spec,
                           broker=broker, name=strat.get("name", ""), div_notes=(skipped, patched),
-                          checks=check_backtest(res.metrics, res.trades, tried), sig=sig)
+                          checks=check_backtest(res.metrics, res.trades, tried, res.positions), sig=sig)
                 if plan_ctx:
                     BT["plan_check"] = (plan_mod.compare(plan_ctx.get("result"), res.metrics), plan_ctx)
                 _remember(BT, by_id, pick, strat)
@@ -525,7 +525,7 @@ def _explain(BT: dict, out):
         try:
             BT["explanation"] = await run.io_bound(
                 llm.explain_result, llm.get_provider(cfg), strategies.describe(BT["spec"], lang()),
-                BT["result"].metrics, lang())
+                BT["result"].metrics, lang(), llm.trade_details(BT["result"]))
         except llm.LLMError as e:
             ui.notify(str(e), type="negative", multi_line=True)
         except Exception as e:  # noqa: BLE001

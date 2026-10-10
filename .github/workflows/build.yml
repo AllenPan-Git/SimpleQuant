@@ -54,10 +54,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14              # Apple 芯片
+          - os: macos-14              # Apple 芯片（Intel Mac 最后支持的版本是 0.2.5，之后不再打包）
             target: macos-arm64
-          - os: macos-15-intel        # Intel
-            target: macos-x86_64
           - os: ubuntu-22.04          # glibc 2.35：较老的系统也能运行
             target: linux-x86_64
     runs-on: ${{ matrix.os }}

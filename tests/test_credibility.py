@@ -86,3 +86,21 @@ def test_losing_backtest_only_gives_range():
     pnl = [5000, -5200] * 20
     k = keys(check_backtest({"total_return": sum(pnl) / 1e5, "initial_cash": 1e5}, trades(pnl)))
     assert k["boot_neg"]["level"] == "note" and "boot_bad" not in k
+
+
+def test_open_positions_loss_and_gain():
+    from simplequant.engine.credibility import open_pnl
+    pnl = [3000, 2000, 1000, -500, 1500, 800]                      # 已平仓 +7.8%
+    lose = [{"symbol": "A", "size": 1000, "price": 9.0, "cost": 15.0}]      # 浮亏 6000 = -6%
+    assert open_pnl(lose, 1e5) == -0.06
+    k = keys(check_backtest({"total_return": 0.018, "initial_cash": 1e5}, trades(pnl), positions=lose))
+    assert k["open_loss"]["level"] == "warn"
+    assert k["open_loss"]["args"] == {"k": 1, "open": -0.06, "closed": 0.078, "total": 0.018}
+    gain = [{"symbol": "A", "size": 1000, "price": 25.0, "cost": 15.0}]     # 浮盈 10%，超过总收益一半
+    k = keys(check_backtest({"total_return": 0.178, "initial_cash": 1e5}, trades(pnl), positions=gain))
+    assert k["open_gain"]["level"] == "note" and "open_loss" not in k
+    small = [{"symbol": "A", "size": 100, "price": 14.0, "cost": 15.0}]     # 浮亏 0.1%：不提示
+    k = keys(check_backtest({"total_return": 0.077, "initial_cash": 1e5}, trades(pnl), positions=small))
+    assert "open_loss" not in k and "open_gain" not in k
+    k = keys(check_backtest({"total_return": -0.06, "initial_cash": 1e5}, trades([]), positions=lose))
+    assert set(k) == {"no_trades"}                                   # 没有已平仓交易：只说 no_trades

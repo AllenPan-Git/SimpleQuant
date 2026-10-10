@@ -52,7 +52,7 @@ def strip_download(notes: str) -> str:
 
 
 class UpdateError(Exception):
-    """kind：network（连不上 / 下载失败）、verify（签名或校验值不对）、other"""
+    """kind：network（连不上 / 下载失败）、verify（签名或校验值不对）、platform（新版本没有本平台的清单）、other"""
 
     def __init__(self, kind: str, detail: str = ""):
         super().__init__(detail or kind)
@@ -217,7 +217,7 @@ class Updater:
         urls = rel["assets"]
         name, sig_name = mf.manifest_name(self.target), mf.signature_name(self.target)
         if name not in urls or sig_name not in urls:
-            raise UpdateError("other", "release has no manifest")
+            raise UpdateError("platform", "release has no manifest")     # 例如 0.2.5 之后不再打包 Intel Mac
         data = self._get(urls[name]).content
         sig = self._get(urls[sig_name]).text
         try:

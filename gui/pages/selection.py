@@ -68,6 +68,7 @@ def sp_state() -> dict:
         # 自定义因子编辑区（key 为空 = 新建）
         "cf": {"key": None, "name": "", "code": "", "direction": 1, "desc": ""}, "cf_trial": None,
     })
+    sp.setdefault("cf_ai", {"text": "", "base": False, "result": None})
     # 可转债的选股条件（价格上限等；None = 不限）；旧版保存的界面状态里没有这两项
     sp.setdefault("cbf", {k: v for k, v in CB_DEFAULT_FILTERS.items() if k in CB_FILTERS})
     sp.setdefault("forms", {})
@@ -699,6 +700,8 @@ def _custom_factors(SP, ctx):
                         .props("flat no-caps dense color=negative").mark(f"cf_del:{k}")
         saved_list()
 
+    _custom_factor_ai(SP, lambda res: fill_from_ai(res))
+
     with ui.card().classes("w-full gap-3"):
         editing = ui.label().classes("font-semibold")
         with ui.row().classes("w-full items-end gap-3"):
@@ -712,12 +715,19 @@ def _custom_factors(SP, ctx):
 
         def on_code(e):
             C["code"] = e.value or ""
-            errs = custom_factors.check_syntax(C["code"], lg)
-            err_label.text = errs[0] if errs else ""
-            err_label.set_visibility(bool(errs))
+            check_code()
         editor = code_editor(C["code"], on_code, height=360).mark("cf_code")
         err_label = ui.label().classes("text-negative text-sm")
-        err_label.set_visibility(False)
+        warn_label = ui.label().classes("text-warning text-sm whitespace-pre-line").mark("cf_warn")
+
+        def check_code():
+            errs = custom_factors.check_syntax(C["code"], lg)
+            warns = [] if errs else custom_factors.review(C["code"], lg)     # 偷看未来、不存在的字段
+            err_label.text = errs[0] if errs else ""
+            err_label.set_visibility(bool(errs))
+            warn_label.text = "\n".join(warns)
+            warn_label.set_visibility(bool(warns))
+        check_code()
         with ui.expansion(t("code.cheatsheet"), icon="menu_book").classes("w-full").props("dense"):
             ui.label(t("cf.cheatsheet")).classes("sq-code w-full whitespace-pre text-xs overflow-x-auto")
         with ui.row().classes("items-center gap-3"):
@@ -741,7 +751,21 @@ def _custom_factors(SP, ctx):
         SP["cf_trial"] = None
         name.value, direction.value, desc.value, editor.value = C["name"], C["direction"], C["desc"], C["code"]
         sync()
+        check_code()
         trial_box.refresh()
+
+    def fill_from_ai(res):
+        """AI 生成的代码填进编辑器（不运行）；「在现有代码基础上修改」时仍在编辑原来那个因子"""
+        if not SP["cf_ai"]["base"]:
+            C["key"] = None
+        C.update(code=res.spec["code"], direction=res.spec["direction"], desc=res.spec["desc"] or C["desc"],
+                 name=C["name"] if SP["cf_ai"]["base"] and C["name"] else res.name)
+        SP["cf_trial"] = None
+        name.value, direction.value, desc.value, editor.value = C["name"], C["direction"], C["desc"], C["code"]
+        sync()
+        check_code()
+        trial_box.refresh()
+        ui.notify(t("cf.ai_filled"), type="info")
 
     def save():
         sync()
@@ -827,6 +851,72 @@ def _custom_factors(SP, ctx):
                 with ui.card().classes("p-2").style("flex: 2; min-width: 280px"):
                     plot(group_bar(rep.annual, lg))
     trial_box()
+
+
+def _custom_factor_ai(SP, fill):
+    """用一句话描述因子 → AI 写 factor(p) 代码；只做静态检查，填进编辑器后由用户试算"""
+    lg = lang()
+    A = SP["cf_ai"]
+    cfg = llm.load_config()
+    ready = bool(cfg and cfg.ready)
+    with ui.expansion(t("cf.ai"), icon="auto_awesome", value=bool(A["result"])).classes("w-full q-card"):
+        if not ready:
+            with ui.row().classes("w-full items-center gap-3 no-wrap"):
+                notice(t("ai.need_config"), "key")
+                ui.button(t("nav.go_settings"), on_click=lambda: ui.navigate.to("/settings")) \
+                    .props("flat no-caps dense color=primary icon-right=arrow_forward")
+
+        def placeholder():
+            return t("cf.ai_base_placeholder") if A["base"] else t("cf.ai_placeholder")
+        ai_text = ui.textarea(t("cf.ai_describe"), value=A["text"], placeholder=placeholder()) \
+            .props("outlined autogrow").classes("w-full").mark("cf_ai_text")
+
+        def on_base(e):
+            A["base"] = bool(e.value)
+            ai_text.props(f'placeholder="{placeholder()}"')
+
+        async def ai_go():
+            A["text"] = ai_text.value or ""
+            ai_btn.disable()
+            try:
+                A["result"] = await run.io_bound(llm.generate_factor, A["text"], llm.get_provider(cfg), lg,
+                                                 U.kind(SP["universe"]),
+                                                 base_code=SP["cf"]["code"] if A["base"] else None)
+            except llm.LLMError as e:
+                A["result"] = None
+                ui.notify(str(e), type="negative", multi_line=True)
+            except Exception as e:  # noqa: BLE001
+                A["result"] = None
+                ui.notify(f"{type(e).__name__}: {e}", type="negative", multi_line=True)
+            finally:
+                ai_btn.enable()
+            ai_result.refresh()
+        with ui.row().classes("items-center gap-4"):
+            ai_btn = ui.button(t("cf.ai_generate"), icon="auto_awesome", on_click=ai_go).props("outline no-caps") \
+                .mark("cf_ai_go")
+            ui.checkbox(t("cf.ai_base"), value=A["base"], on_change=on_base).tooltip(t("cf.ai_base_help")) \
+                .mark("cf_ai_base")
+        ai_btn.set_enabled(ready and bool(A["text"].strip()))
+        ai_text.on_value_change(lambda e: ai_btn.set_enabled(ready and bool((e.value or "").strip())))
+
+        @ui.refreshable
+        def ai_result():
+            res = A.get("result")
+            if not res:
+                return
+            notice(res.understood or "—", "psychology")
+            if res.unsupported:
+                notice(t("ai.unsupported") + "\n\n" + "\n".join(f"- {u}" for u in res.unsupported), "block",
+                       "warning")
+            if not res.spec["code"]:
+                notice(t("cf.ai_empty"), "block", "warning")
+                return
+            for e in res.errors:
+                notice(e, "error", "error")
+            notice(t("cf.ai_review"), "visibility", "info")
+            ui.button(t("cf.ai_apply"), icon="input", on_click=lambda: fill(res)).props("unelevated no-caps") \
+                .classes("self-start").mark("cf_ai_apply")
+        ai_result()
 
 
 # ================= 选股回测 =================
@@ -1252,8 +1342,8 @@ def _selection_results(SP, ctx):
         sep = "、" if lg == "zh" else ", "
         eg = sep.join(f"{res.names.get(r.code, r.code)} {r.ex_date:%Y-%m-%d} {r.cash:g}" for r in cash.head(5).itertuples())
         notice(t("sp.div_patched", n=len(cash), m=len(rights), eg=eg + ("…" if len(cash) > 5 else "")), "info", "info")
-    credibility_box(check_backtest(res.metrics, res.trades))
-    _explain(SP, rspec, res.metrics)
+    credibility_box(check_backtest(res.metrics, res.trades, positions=res.positions))
+    _explain(SP, rspec, res)
     bench_label = t("cb.bench_label") if U.kind(rspec["universe"]) == "cb" else \
         t("sp.bench_label", name=p(UNIVERSES[rspec["universe"]]["label"]))
     with ui.card().classes("w-full p-2"):
@@ -1283,10 +1373,13 @@ def _selection_results(SP, ctx):
                 df_table(fmt_table(orders_table(o, lg), {t("col.price"): "{:.2f}", t("col.value"): "{:,.0f}",
                                                          t("col.commission"): "{:.2f}"}), rows_per_page=30)
         with ui.tab_panel(tab_l).classes("px-0"):
-            df_table(logs_table(res.logs, lg), rows_per_page=50)
+            def named(kw):          # 日志里的代码换成「名称(代码)」，与成交记录一致
+                c = kw.get("name")
+                return {**kw, "name": f"{res.names.get(c, c)}({c.split('.')[-1]})"} if isinstance(c, str) else kw
+            df_table(logs_table([(d, k, named(kw)) for d, k, kw in res.logs], lg), rows_per_page=50)
 
 
-def _explain(SP, rspec: dict, metrics: dict):
+def _explain(SP, rspec: dict, res):
     """AI 解读本次选股回测结果（未配置大模型时不显示）"""
     cfg = llm.load_config()
     if not (cfg and cfg.ready):
@@ -1296,7 +1389,8 @@ def _explain(SP, rspec: dict, metrics: dict):
         btn.disable()
         try:
             SP["explanation"] = await run.io_bound(
-                llm.explain_result, llm.get_provider(cfg), strategies.describe(rspec, lang()), metrics, lang())
+                llm.explain_result, llm.get_provider(cfg), strategies.describe(rspec, lang()), res.metrics, lang(),
+                llm.trade_details(res, res.names))
         except llm.LLMError as e:
             ui.notify(str(e), type="negative", multi_line=True)
         except Exception as e:  # noqa: BLE001

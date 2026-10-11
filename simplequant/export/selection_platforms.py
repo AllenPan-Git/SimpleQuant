@@ -32,6 +32,10 @@ def check_selection_exportable(spec: dict, platform: str, follow: bool = False, 
                                 "order APIs are unverified); use the standalone Python script"), lang))
     if follow:
         return
+    if spec.get("weighting") == "ml":
+        raise ValueError(pick(L("机器学习合成因子需要在本机训练模型，无法转换为平台代码，请使用「按名单调仓」方式导出",
+                                "Machine-learning factor combination trains models locally and can't be translated for "
+                                "platforms; use the 'follow picks' export instead"), lang))
     keys = [f["key"] for f in spec["factors"]]
     custom = [k for k in keys if k.startswith("u_")]
     if custom:

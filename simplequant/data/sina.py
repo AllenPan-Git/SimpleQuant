@@ -10,7 +10,8 @@
 不直接用 akshare 的对应函数：它们不设超时、不检查 HTTP 状态（被封时无法识别），并用 eval 解析复权表。
 复权口径：
 - 股票：等比复权（不复权价 × 后复权因子），与 BaoStock 一致（600519、300750 逐日收益率一致）
-- ETF：加法复权（不复权价 + 累计分红），与东方财富一致（510300 共 1635 个交易日，误差不超过 0.001）
+- ETF：加法复权（不复权价 + 累计分红），与东方财富一致（510300 共 1635 个交易日，误差不超过 0.001）。
+  份额拆分 / 折算新浪不给比例，只在复权表里留一行累计分红不变的记录，比例按当天收盘价跳空推算（见 etf_splits）
 成交量换算成「手」、换手率为百分比，与东方财富一致。
 """
 
@@ -144,11 +145,39 @@ def fund_dividends(symbol: str) -> pd.DataFrame:
     return pd.DataFrame({"date": table.index, "cum": table["u"].values})
 
 
+# 份额拆分 / 折算：复权表里累计分红不变的一行（510500：2015-04-15 合并、2022-08-29 拆分）。
+# 比例按前一日收盘 / 当天收盘推算，即假定当天涨跌为 0；误差等于当天的真实涨跌（510500 2022-08-29 为 0.05%）。
+# 跳空不到 MIN_SPLIT 的不当作拆分（分不清是拆分还是行情）
+MIN_SPLIT = 0.05
+MAX_MOVE = 0.25        # 复权后单日涨跌仍超过这么多：有新浪数据解释不了的除权，不使用这份数据
+
+
+def etf_splits(df: pd.DataFrame, table: pd.DataFrame) -> pd.Series:
+    """份额拆分 / 折算的日期 → 每份变成几份（价格除以它）"""
+    if table.empty:
+        return pd.Series(dtype=float)
+    u = table["u"] if "u" in table else pd.Series(0.0, index=table.index)
+    same = u.ffill().fillna(0.0).diff().fillna(u.fillna(0.0)).abs() < 1e-9
+    close = df["close"]
+    out = {}
+    for d in table.index[same.values]:
+        if d not in close.index:
+            continue
+        i = close.index.get_loc(d)
+        if i == 0:
+            continue
+        ratio = float(close.iloc[i - 1] / close.iloc[i])
+        if abs(ratio - 1) >= MIN_SPLIT:
+            out[d] = ratio
+    return pd.Series(out, dtype=float)
+
+
 def etf(symbol: str, adjust: str = "") -> pd.DataFrame:
     """
-    ETF 日线。复权按东方财富的口径（加法调整）：
-    - 后复权 = 不复权价 + 截至当天（含除息日）的累计分红
-    - 前复权 = 不复权价 − 当天之后还会发生的分红
+    ETF 日线。复权按东方财富的口径（加法调整），价格以第一天的一份为单位（M = 截至当天的累计拆分倍数，
+    没有拆分时 M = 1，即 不复权价 + 累计分红）：
+    - 后复权 = 不复权价 × M + 截至当天（含除息日）的 Σ 每份分红 × 除息日的 M
+    - 前复权 = (不复权价 × M − 当天之后还会发生的 Σ 每份分红 × 除息日的 M) / 最新的 M
     """
     sym = symbol_of(symbol, "etf")
     df = kline(sym)
@@ -159,14 +188,27 @@ def etf(symbol: str, adjust: str = "") -> pd.DataFrame:
         return df
     _check_adjust(adjust)
     table = adjust_table(sym)
+    splits = etf_splits(df, table)
+    m = as_of(splits.cumprod(), df.index).fillna(1.0) if len(splits) else pd.Series(1.0, index=df.index)
     if "u" in table and table["u"].notna().any():
-        cum = as_of(table["u"], df.index).fillna(0.0)
-        total = float(table["u"].dropna().iloc[-1])
+        u = table["u"].dropna()
+        cash = u.diff().fillna(u)
+        cash = cash[cash.abs() > 1e-9]
+        cum_m = (cash * as_of(splits.cumprod(), cash.index).fillna(1.0) if len(splits) else cash).cumsum()
+        cum = as_of(cum_m, df.index).fillna(0.0)
+        total = float(cum_m.iloc[-1]) if len(cum_m) else 0.0
     else:
         cum, total = pd.Series(0.0, index=df.index), 0.0
-    shift = cum if adjust == "hfq" else cum - total
+    last_m = float(m.iloc[-1])
     for c in ("open", "high", "low", "close"):
-        df[c] = (df[c] + shift).round(3)
+        hfq = df[c] * m + cum
+        df[c] = (hfq if adjust == "hfq" else (hfq - total) / last_m).round(3)
+    move = df["close"].pct_change().abs()
+    if (move > MAX_MOVE).any():
+        days = ", ".join(d.strftime("%Y-%m-%d") for d in move.index[move > MAX_MOVE][:3])
+        raise ValueError(f"Sina data for {symbol} has unexplained price gaps ({days}), probably a share split; "
+                         f"please retry Eastmoney later / 新浪 {symbol} 的复权价在 {days} 有无法解释的跳空"
+                         f"（可能是份额拆分或折算），请稍后再用东方财富下载")
     return df
 
 

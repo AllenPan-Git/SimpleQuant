@@ -6,6 +6,7 @@
 - 按交易重抽样（bootstrap）：把已平仓交易有放回地抽 N 笔、求和，重复多次，看累计收益的区间和亏损的概率
 - 期末未平仓：胜率、盈亏比只统计已平仓交易；期末持仓浮亏较大，或收益多半是还没兑现的浮盈时提示
 - 参数优化：试的组数多时最好的一组可能是运气；多数组合亏损；样本外明显比样本内差
+- 机器学习合成因子：样本外 IC 是否为正、比训练集 IC 低多少（过拟合）、是否不如 ICIR 合成
 
 每条结果是 {"level": "warn" / "note" / "ok", "key": 文本键, "args": 参数}；
 args 里的浮点数一律是比例（界面显示成百分数），整数原样显示。
@@ -23,6 +24,8 @@ BOOT_CI = (0.05, 0.95)
 LOSS_PROB_WARN = 0.25    # 重抽样中亏损的比例达到这个数时警告
 OPEN_PNL = 0.03          # 期末持仓浮盈亏达到初始资金的这个比例才提示
 MANY_COMBOS = 20         # 参数优化试了这么多组起提示「最好的一组可能是运气」
+ML_FEW = 12              # 机器学习样本外不足这么多期：IC 均值误差大
+ML_OVERFIT = 0.5         # 样本外 IC 不到训练集 IC 的这个比例：过拟合
 
 
 def _f(key: str, level: str, **args) -> dict:
@@ -137,4 +140,29 @@ def check_grid(df: pd.DataFrame, metric: str, compare: dict) -> list[dict]:
             out.append(_f("oos_ok", "ok", **args))
     elif n >= MANY_COMBOS:
         out.append(_f("no_oos", "note"))
+    return out
+
+
+def check_ml(summary: dict) -> list[dict]:
+    """机器学习合成因子（stocks/ml.summary 的结果）。IC 以字符串传给界面（不是比例，不显示成百分数）"""
+    out = []
+    oos = summary.get("oos") or {}
+    ml_ic, icir_ic, train = oos.get("ml", np.nan), oos.get("icir", np.nan), summary.get("train_ic", np.nan)
+    ic = lambda v: f"{v:.3f}"
+    if summary.get("n_fallback"):
+        out.append(_f("ml_fallback", "note", n=int(summary["n_fallback"])))
+    if not np.isfinite(ml_ic):
+        out.append(_f("ml_no_oos", "note"))
+        return out
+    n = int(summary.get("n_oos", 0))
+    if n < ML_FEW:
+        out.append(_f("ml_few", "note", n=n))
+    if ml_ic <= 0:
+        out.append(_f("ml_oos_neg", "warn", oos=ic(ml_ic), n=n))
+    elif np.isfinite(train) and train > 0 and ml_ic < train * ML_OVERFIT:
+        out.append(_f("ml_overfit", "warn", train=ic(train), oos=ic(ml_ic)))
+    else:
+        out.append(_f("ml_oos_ok", "ok", train=ic(train) if np.isfinite(train) else "—", oos=ic(ml_ic), n=n))
+    if np.isfinite(icir_ic) and ml_ic < icir_ic:
+        out.append(_f("ml_below_icir", "note", oos=ic(ml_ic), icir=ic(icir_ic)))
     return out

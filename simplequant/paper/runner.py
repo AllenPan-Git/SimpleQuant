@@ -23,7 +23,7 @@ from .account import PaperAccount, NAV_COLUMNS, new_id
 from .calendar import load_calendar, next_trading_day, next_trading_days, latest_expected_day
 
 HISTORY_DAYS = 800        # 单标的：开始日之前取多少天历史用于预热指标
-PANEL_WARMUP_DAYS = 400   # 选股：同上
+PANEL_WARMUP_DAYS = 400   # 选股：同上（机器学习合成因子要更长，见 stocks.selection.panel_warmup_days）
 
 
 # ---------------- 开户 ----------------
@@ -103,13 +103,14 @@ def refresh_selection_data(acc: PaperAccount, store, done: set | None = None, wo
                            calendar: pd.DatetimeIndex | None = None) -> None:
     """选股账户：增量更新股票池数据（同一次运行中同一个股票池只更新一次）"""
     from ..stocks import UNIVERSES, FACTORS, universe
+    from ..stocks.selection import panel_warmup_days
     done = done if done is not None else set()
     if acc.universe in done:
         return
     # 只更新到"此刻应有数据"的最新交易日：数据已到这天的股票会被跳过，周末/盘中重复运行很快
     today = latest_expected_day(calendar if calendar is not None else load_calendar()).date().isoformat()
     if universe.kind(acc.universe) == "cb":          # 可转债：列表、条款、指数、日线一起增量更新
-        first = (pd.Timestamp(acc.start) - pd.Timedelta(days=PANEL_WARMUP_DAYS)).date().isoformat()
+        first = (pd.Timestamp(acc.start) - pd.Timedelta(days=panel_warmup_days(acc.spec))).date().isoformat()
         universe.update(acc.universe, first, today, workers=workers)
         done.add(acc.universe)
         return
@@ -132,8 +133,9 @@ def refresh_selection_data(acc: PaperAccount, store, done: set | None = None, wo
 
 def load_selection_panel(acc: PaperAccount, store):
     from ..stocks import universe
+    from ..stocks.selection import panel_warmup_days
     idx = universe.load_benchmark(acc.universe, store)
-    start = max(idx.index[0], pd.Timestamp(acc.start) - pd.Timedelta(days=PANEL_WARMUP_DAYS))
+    start = max(idx.index[0], pd.Timestamp(acc.start) - pd.Timedelta(days=panel_warmup_days(acc.spec)))
     return universe.build(acc.universe, start.date().isoformat(), idx.index[-1].date().isoformat(), store)
 
 

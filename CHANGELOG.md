@@ -5,6 +5,18 @@
 
 Changes in each release. `tools/release.py` copies the matching section into the GitHub release notes.
 
+## 1.0.0（2026-10-11）
+
+### 更新内容
+- 新增：多因子选股的「因子加权方式」增加「机器学习」：以所选因子为特征、未来持有期收益的排名为目标，在每个调仓日只用当时已知的数据训练模型（默认 3 年滚动窗口，最多每 20 个交易日重新训练），以模型的预测值选股。可选岭回归、K 近邻、随机森林、梯度提升树四种模型，均在本机计算，无需额外安装，结果可复现。结果页新增样本外 IC 对比（模型、ICIR 加权与各单因子）和因子重要性；可信度检查提示样本外 IC 不为正、训练集 IC 远高于样本外 IC（过拟合）、模型不如 ICIR 加权等情况。机器学习的参数可用于滚动优化，策略可开设模拟账户、导出方案文件与 Python 脚本（导出到聚宽 / 掘金 / QMT 时请用「按名单调仓」）。含机器学习设置的方案文件需要本版本或更新的版本才能导入
+- 修复：东方财富无法连接、ETF 改用新浪财经下载时，复权价没有处理份额拆分与折算（如 510500 在 2015-04-15 单日 +249%、2022-08-29 单日 -13%）。现在按新浪复权表标出的日期和当天价格跳空推算比例；仍有无法解释的跳空时不使用新浪数据并提示稍后重试。此前用新浪下载过拆分过的 ETF 复权数据的，请在数据页重新下载
+- 修复：自定义因子或代码策略运行出错时，错误信息里附带的那一行代码有时是另一段代码的（先后试算过几段代码后，较早那段出错时显示了后来那段的同一行号）；行号本身是对的
+
+### Changes
+- New: "Machine learning" as a factor weighting method in stock selection. The chosen factors are features and the rank of the next holding-period return is the target; on every rebalance date a model is trained only on data known at the time (3-year rolling window by default, retrained at most every 20 trading days) and its predictions pick the stocks. Choose ridge regression, k-nearest neighbors, random forest or gradient boosting; everything runs locally with no extra install and is reproducible. Results add an out-of-sample IC comparison (model, ICIR weighting, single factors) and factor importance; the credibility check flags non-positive out-of-sample IC, overfitting (training IC far above out-of-sample IC) and models that do worse than ICIR weighting. Model parameters can be walk-forward optimized, and such strategies can be paper traded and exported as plan files or Python scripts (use "follow picks" for JoinQuant / MyQuant / QMT). Plan files with machine-learning settings need this version or later
+- Fixed: when Eastmoney is unreachable and ETF data comes from Sina Finance, adjusted prices ignored share splits (e.g. 510500 showed +249% on 2015-04-15 and -13% on 2022-08-29). Split ratios are now inferred from the price gap on the dates in Sina's adjustment table; if an unexplained gap remains, the Sina data is rejected with a message to retry later. Re-download adjusted ETF data previously fetched from Sina for funds that had splits
+- Fixed: when a custom factor or code strategy failed, the source line quoted in the error could come from different code (after several snippets had been run, an error in an earlier one showed the same line number of a later one); the line number itself was right
+
 ## 0.3.0（2026-10-10）
 
 ### 更新内容

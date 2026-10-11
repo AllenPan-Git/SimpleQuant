@@ -12,13 +12,15 @@ import pandas as pd
 from nicegui import background_tasks, run, ui
 
 from simplequant import llm, strategies
-from simplequant.engine.credibility import check_backtest
+from simplequant.engine.credibility import check_backtest, check_ml
 from simplequant.engine.optimize import value_range, default_workers
 from simplequant.engine.walkforward import make_windows
 from simplequant.stocks import (StockStore, UNIVERSES, FACTORS, GROUPS, REBALANCE, WEIGHTING, DIVIDEND,
                                 DEFAULT_FILTERS, analyze, compute, run_selection, today, factor_zscores,
                                 factor_correlation, sample_dates)
 from simplequant.stocks import custom_factors, universe as U, factors_for
+from simplequant.stocks import ml as ML
+from simplequant.stocks.selection import panel_warmup_days
 from simplequant.bonds.panel import CB_FILTERS, CB_DEFAULT_FILTERS
 from simplequant.system import open_folder
 from simplequant.stocks.walkforward import (walk_forward_selection, selection_tunables, selection_grid,
@@ -34,7 +36,7 @@ from ui.charts import ic_chart, quantile_chart, group_bar, equity_chart, corr_he
 from ui.shared import export_filename, default_range, fmt_metric, pct, num, orders_table, logs_table
 
 DENSE = "outlined dense options-dense"
-WARMUP_DAYS = 400          # 面板往前多取约 400 天，只用来预热因子；研究与回测从所选开始日起算
+WARMUP_DAYS = 400          # 面板往前多取约 400 天，只用来预热因子；研究与回测从所选开始日起算（机器学习另取更长的面板）
 SEL_DEFAULT = [{"key": "ep", "weight": 1.0, "direction": 1}, {"key": "ret20", "weight": 1.0, "direction": -1}]
 CB_SEL_DEFAULT = [{"key": "cb_double_low", "weight": 1.0, "direction": -1}]       # 可转债「双低」
 # 股票与可转债各自记住的表单项（切换股票池时互换）
@@ -72,6 +74,9 @@ def sp_state() -> dict:
     # 可转债的选股条件（价格上限等；None = 不限）；旧版保存的界面状态里没有这两项
     sp.setdefault("cbf", {k: v for k, v in CB_DEFAULT_FILTERS.items() if k in CB_FILTERS})
     sp.setdefault("forms", {})
+    sp.setdefault("ml_model", ML.DEFAULT_MODEL)
+    sp.setdefault("ml_window", ML.DEFAULT_WINDOW)
+    sp.setdefault("ml_params", {m: dict(v) for m, v in ML.DEFAULTS.items()})
     sp.setdefault("ai_base", False)
     sp.setdefault("explanation", None)
     sp["dl"].setdefault("cb_start", "2017-01-01")
@@ -111,6 +116,26 @@ def data_version(st: StockStore, universe: str) -> str:
     """数据有更新时让缓存的面板失效"""
     files = U.data_files(universe, st)
     return "|".join(str(f.stat().st_mtime) if f.exists() else "-" for f in files)
+
+
+def spec_panel_start(SP, ctx, spec: dict) -> str:
+    """
+    回测这个策略用的面板起始日：一般就是 ctx.panel_start；
+    机器学习要容下训练窗口，往前取得更多（有数据的话），导入的方案按方案记录的预热起始日
+    """
+    if spec.get("weighting") != "ml":
+        return ctx.panel_start
+    pw = SP.get("plan_warm")
+    if pw and pw[0] == SP["universe"] and pw[1] == ctx.start:
+        return max(str(ctx.lo), pw[2])
+    return max(str(ctx.lo), str((pd.Timestamp(ctx.start) - pd.Timedelta(days=panel_warmup_days(spec))).date()))
+
+
+async def spec_panel(SP, ctx, spec: dict):
+    ps = spec_panel_start(SP, ctx, spec)
+    if ps == ctx.panel_start:
+        return ctx.panel, ps
+    return await run.io_bound(get_panel, SP["universe"], ps, ctx.end), ps
 
 
 def get_panel(universe: str, start: str, end: str):
@@ -930,6 +955,8 @@ def current_spec(SP) -> dict:
             "rebalance": SP["reb"] if SP["reb"] != "n" else int(SP["reb_n"]),
             "filters": filters,
             "position_pct": int(SP["pos"]), "weighting": SP["weighting"], "ic_lookback": int(SP["lookback"]),
+            **({"ml": {"model": SP["ml_model"], "window": int(SP["ml_window"]), **SP["ml_params"][SP["ml_model"]]}}
+               if SP["weighting"] == "ml" else {}),
             "neutralize": {"industry": bool(SP["ni"]), "size": bool(SP["ns"])},
             **({"dividend": "cash"} if SP.get("dividend") == "cash" and not cb else {})}
 
@@ -954,6 +981,10 @@ def apply_spec(SP, spec: dict, name: str = ""):
     SP["pos"] = int(spec.get("position_pct", 95))
     SP["weighting"] = spec.get("weighting", "manual")
     SP["lookback"] = int(spec.get("ic_lookback", 252))
+    if spec.get("weighting") == "ml" and spec.get("ml"):     # AI 生成的策略不带模型设置：沿用表单里的
+        cfg = ML.config(spec)
+        SP["ml_model"], SP["ml_window"] = cfg["model"], cfg["window"]
+        SP["ml_params"][cfg["model"]] = {k: v for k, v in cfg.items() if k not in ("model", "window")}
     neutral = spec.get("neutralize") or {}
     SP["ni"], SP["ns"] = bool(neutral.get("industry")), bool(neutral.get("size"))
     SP["dividend"] = spec.get("dividend", "reinvest")
@@ -1069,7 +1100,8 @@ def _backtest_form(SP, ctx, rebuild):
         with ui.row().classes("w-full items-center gap-4"):
             def on_weighting(e):
                 SP["weighting"] = e.value
-                lookback.set_enabled(e.value != "manual")
+                lookback.set_enabled(e.value in ("ic", "icir"))
+                ml_box.set_visibility(e.value == "ml")
                 factor_note.text = note_text()
                 changed()
             with ui.column().classes("gap-0"):
@@ -1079,7 +1111,11 @@ def _backtest_form(SP, ctx, rebuild):
             lookback = ui.number(t("sp.lookback"), value=SP["lookback"], min=60, max=1000, step=21, precision=0,
                                  on_change=lambda e: set_sp("lookback", e.value, int)) \
                 .props("outlined dense").classes("w-36").tooltip(t("sp.lookback_help"))
-            lookback.set_enabled(SP["weighting"] != "manual")
+            lookback.set_enabled(SP["weighting"] in ("ic", "icir"))
+        ml_box = ui.column().classes("w-full gap-1").mark("sp_ml_box")
+        with ml_box:
+            _ml_form(SP, lambda: changed())
+        ml_box.set_visibility(SP["weighting"] == "ml")
 
         @ui.refreshable
         def factor_rows():
@@ -1102,6 +1138,8 @@ def _backtest_form(SP, ctx, rebuild):
         factor_rows()
 
         def note_text():
+            if SP["weighting"] == "ml":
+                return t("sp.ml_note")
             return t("sp.factor_note") + ("" if SP["weighting"] == "manual" else " " + t("sp.ic_fallback_note"))
         factor_note = ui.label(note_text()).classes("sq-muted text-xs")
         with ui.row().classes("items-center gap-6"):
@@ -1220,10 +1258,11 @@ def _backtest_form(SP, ctx, rebuild):
         running.set_visibility(True)
         try:
             t0 = time.time()
-            res = await run.io_bound(run_selection, panel, spec, broker, start=ctx.start)
+            run_panel, ps = await spec_panel(SP, ctx, spec)
+            res = await run.io_bound(run_selection, run_panel, spec, broker, start=ctx.start)
             SP["result"] = (res, spec, time.time() - t0)
             SP["explanation"] = None
-            SP["result_range"] = (ctx.start, ctx.end, ctx.panel_start)
+            SP["result_range"] = (ctx.start, ctx.end, ps)
             SP["result_broker"] = broker
             SP["plan_check"] = (plan_mod.compare(plan_ctx.get("result"), res.metrics), plan_ctx) if plan_ctx else None
             uni = p(UNIVERSES[spec["universe"]]["label"])
@@ -1246,7 +1285,8 @@ def _backtest_form(SP, ctx, rebuild):
         title = SP["name"].strip() or t("sel.kind")
         stem = export_filename(title)[:-3]
         res = SP.get("result")
-        same = res and res[1] == spec and SP.get("result_range") == (ctx.start, ctx.end, ctx.panel_start)
+        panel_start = spec_panel_start(SP, ctx, spec)
+        same = res and res[1] == spec and SP.get("result_range") == (ctx.start, ctx.end, panel_start)
         expected = res[0].schedule.picks if same and res[0].schedule else None
         exp_menu.clear()
 
@@ -1254,7 +1294,7 @@ def _backtest_form(SP, ctx, rebuild):
             """当前设置刚回测过（策略、区间、资金都没改）时附带结果，导入方回测后核对"""
             result = res[0].metrics if same and SP.get("result_broker") == broker else None
             try:
-                data = export_selection_bytes(title, spec, ctx.start, ctx.end, ctx.panel_start, broker, result)
+                data = export_selection_bytes(title, spec, ctx.start, ctx.end, panel_start, broker, result)
             except plan_mod.PlanError as e:
                 ui.notify(t(e.key, **e.kw), type="warning")
                 return
@@ -1284,7 +1324,7 @@ def _backtest_form(SP, ctx, rebuild):
             follow.on_value_change(lambda e: SP.__setitem__("follow", e.value))
             for key, meta in PLATFORMS.items():
                 def make(key=key):
-                    code = selection_platform_script(key, spec, asdict(broker), ctx.start, ctx.end, ctx.panel_start,
+                    code = selection_platform_script(key, spec, asdict(broker), ctx.start, ctx.end, panel_start,
                                                      expected=expected, follow=follow.value and expected is not None,
                                                      title=title, lang=lg)
                     return encode_script(code, key)
@@ -1342,8 +1382,12 @@ def _selection_results(SP, ctx):
         sep = "、" if lg == "zh" else ", "
         eg = sep.join(f"{res.names.get(r.code, r.code)} {r.ex_date:%Y-%m-%d} {r.cash:g}" for r in cash.head(5).itertuples())
         notice(t("sp.div_patched", n=len(cash), m=len(rights), eg=eg + ("…" if len(cash) > 5 else "")), "info", "info")
-    credibility_box(check_backtest(res.metrics, res.trades, positions=res.positions))
+    ml_info = res.schedule.ml if res.schedule else None
+    credibility_box(check_backtest(res.metrics, res.trades, positions=res.positions)
+                    + (check_ml(ml_info["summary"]) if ml_info else []))
     _explain(SP, rspec, res)
+    if ml_info:
+        _ml_results(ml_info, rspec)
     bench_label = t("cb.bench_label") if U.kind(rspec["universe"]) == "cb" else \
         t("sp.bench_label", name=p(UNIVERSES[rspec["universe"]]["label"]))
     with ui.card().classes("w-full p-2"):
@@ -1377,6 +1421,80 @@ def _selection_results(SP, ctx):
                 c = kw.get("name")
                 return {**kw, "name": f"{res.names.get(c, c)}({c.split('.')[-1]})"} if isinstance(c, str) else kw
             df_table(logs_table([(d, k, named(kw)) for d, k, kw in res.logs], lg), rows_per_page=50)
+
+
+def _ml_form(SP, changed):
+    """机器学习：模型、训练窗口与该模型的参数"""
+    @ui.refreshable
+    def params():
+        m = SP["ml_model"]
+        with ui.row().classes("w-full items-center gap-4"):
+            ui.number(p(ML.PARAM_LABELS["window"]), value=SP["ml_window"], min=120, max=2520, step=63, precision=0,
+                      on_change=lambda e: set_v("ml_window", e.value, int)) \
+                .props("outlined dense").classes("w-44").tooltip(t("sp.ml_window_help")).mark("sp_ml_window")
+            for k, v in SP["ml_params"][m].items():
+                lo, hi, is_int = ML.PARAM_RANGES[k]
+                ui.number(p(ML.PARAM_LABELS[k]), value=v, min=lo, max=hi, precision=0 if is_int else None,
+                          step=1 if is_int else (0.01 if k == "lr" else 0.1),
+                          on_change=lambda e, k=k: set_param(k, e.value)) \
+                    .props("outlined dense").classes("w-36").tooltip(t(f"sp.ml_{k}_help")).mark(f"sp_ml_{k}")
+        ui.label(t(f"sp.ml_about_{m}")).classes("sq-muted text-xs")
+
+    def set_v(k, v, cast):
+        if v is not None:
+            SP[k] = cast(v)
+            changed()
+
+    def set_param(k, v):
+        if v is None:
+            return
+        is_int = ML.PARAM_RANGES[k][2]
+        SP["ml_params"][SP["ml_model"]][k] = int(v) if is_int else float(v)
+        changed()
+
+    def on_model(e):
+        SP["ml_model"] = e.value
+        params.refresh()
+        changed()
+    ui.select({m: p(v) for m, v in ML.MODELS.items()}, label=t("sp.ml_model"), value=SP["ml_model"],
+              on_change=on_model).props(DENSE).classes("w-48").mark("sp_ml_model")
+    params()
+
+
+def _ml_results(info: dict, rspec: dict):
+    """机器学习：训练与样本外 IC 对比、因子重要性"""
+    sm = info["summary"]
+    model = p(ML.MODELS[info["model"]])
+    with ui.element("div").classes("sq-sec"):
+        ui.label(t("sp.ml_title", model=model)).classes("sq-h2")
+    ui.label(t("sp.ml_caption")).classes("sq-muted text-sm")
+    with ui.grid().classes("w-full gap-3 grid-cols-2 md:grid-cols-4"):
+        metric_tile(t("sp.ml_trainings"), str(sm["n_train"]))
+        metric_tile(t("sp.ml_train_ic"), num(sm["train_ic"], 3), help_text=t("sp.ml_train_ic_help"))
+        metric_tile(t("sp.ml_oos_ic"), num(sm["oos"].get("ml", float("nan")), 3), help_text=t("sp.ml_oos_ic_help"))
+        metric_tile(t("sp.ml_icir_ic"), num(sm["oos"].get("icir", float("nan")), 3),
+                    help_text=t("sp.ml_icir_ic_help"))
+    ic = info["ic"]
+    names = {"ml": t("sp.ml_row_model", model=model), "icir": t("sp.ml_row_icir")}
+    for f in rspec["factors"]:
+        names[f["key"]] = t("sp.ml_row_factor", name=factor_label(f["key"]))
+    rows = [{t("sp.ml_col_method"): names.get(c, c), t("sp.ml_col_ic"): ic[c].mean(),
+             t("sp.ml_col_pos"): float((ic[c].dropna() > 0).mean()) if ic[c].notna().any() else float("nan"),
+             t("sp.ml_col_n"): int(ic[c].notna().sum())} for c in ic.columns]
+    with ui.row().classes("w-full gap-6 items-start"):
+        with ui.column().classes("grow gap-1"):
+            ui.label(t("sp.ml_ic_table")).classes("font-semibold")
+            df_table(fmt_table(pd.DataFrame(rows), {t("sp.ml_col_ic"): "{:.3f}", t("sp.ml_col_pos"): "{:.0%}"})) \
+                .mark("sp_ml_ic")
+        if info.get("importance"):
+            with ui.column().classes("gap-1"):
+                ui.label(t("sp.ml_importance")).classes("font-semibold")
+                imp = sorted(info["importance"].items(), key=lambda kv: -kv[1])
+                df_table(fmt_table(pd.DataFrame([{t("sp.ml_col_factor"): factor_label(k), t("sp.ml_col_share"): v}
+                                                 for k, v in imp]), {t("sp.ml_col_share"): "{:.0%}"})) \
+                    .mark("sp_ml_imp")
+                ui.label(t(f"sp.ml_importance_help_{'ridge' if info['model'] == 'ridge' else 'tree'}")) \
+                    .classes("sq-muted text-xs max-w-sm")
 
 
 def _explain(SP, rspec: dict, res):
@@ -1629,7 +1747,8 @@ def _walkforward(SP, ctx):
                 prog.set(0.1 + 0.9 * d / n, t("spwf.progress_bt", d=d, n=n))
         try:
             t0 = time.time()
-            res = await run.io_bound(walk_forward_selection, panel, spec, ax, broker, W["metric"], int(W["train"]),
+            wf_panel, _ = await spec_panel(SP, ctx, spec)
+            res = await run.io_bound(walk_forward_selection, wf_panel, spec, ax, broker, W["metric"], int(W["train"]),
                                      int(W["test"]), W["window"] == "anchored", ctx.start, int(W["workers"]), progress)
             SP["wf"] = dict(res=res, labels={k: labels_all[k] for k in ax}, is_int=is_int, metric=W["metric"],
                             spec=spec, range=(ctx.start, ctx.end), secs=time.time() - t0)

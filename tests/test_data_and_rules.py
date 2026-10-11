@@ -107,6 +107,28 @@ def test_akshare_sina_fallback_rebuilds_adjusted_prices(fake_akshare):
     assert (hfq["close"] - qfq["close"]).round(6).nunique() == 1             # 两种复权只差一个常数
 
 
+def test_sina_etf_share_split(fake_akshare, monkeypatch):
+    """新浪 ETF 份额拆分：复权表里累计分红不变的一行，比例按收盘价跳空推算；拆分后的分红按拆分前的份额折算"""
+    from simplequant.data import AKShareSource, sina
+    bars = pd.DataFrame({"open": 4.0, "high": 4.0, "low": 4.0, "close": [4.0, 4.0, 2.0, 2.0, 1.9],
+                         "volume": 1e6}, index=pd.bdate_range("2024-01-02", periods=5))
+    monkeypatch.setattr(sina, "kline", lambda sym, index=False: bars.copy())
+    # 1/4 一拆二（u 不变），1/8 除息每份 0.1
+    monkeypatch.setattr(sina, "adjust_table", lambda sym: pd.DataFrame(
+        {"f": 1.0, "u": [0.0, 0.1]}, index=pd.to_datetime(["2024-01-04", "2024-01-08"])))
+    src = AKShareSource()
+    hfq = src.fetch("510500", "2024-01-01", "2024-01-31", adjust="hfq", asset="etf")
+    # 1/8：1.9 × 2 + 0.1 × 2 = 4.0（除息当天复权价不变）
+    assert hfq["close"].round(3).tolist() == [4.0, 4.0, 4.0, 4.0, 4.0]
+    qfq = src.fetch("510500", "2024-01-01", "2024-01-31", adjust="qfq", asset="etf")
+    assert qfq["close"].round(3).tolist() == [1.9, 1.9, 1.9, 1.9, 1.9]
+    # 复权表没有记录的跳空：拒绝这份数据
+    monkeypatch.setattr(sina, "adjust_table", lambda sym: pd.DataFrame(columns=["f", "u"]))
+    with pytest.raises(RuntimeError, match="跳空"):
+        src.fetch("510500", "2024-01-01", "2024-01-31", adjust="hfq", asset="etf")
+    assert src.fetch("510500", "2024-01-01", "2024-01-31", adjust="", asset="etf")["close"].iloc[2] == 2.0
+
+
 def test_eastmoney_paused_after_failure(fake_akshare):
     """东方财富重试后仍连不上：之后直接用新浪，不再每次先等东方财富失败"""
     from simplequant.data import AKShareSource, net

@@ -96,6 +96,15 @@ def test_runtime_errors_point_at_line(panel):
         cf.evaluate('def factor(p):\n    return p["close"].reset_index(drop=True)\n', panel)
 
 
+def test_runtime_error_shows_own_source_after_other_code_compiled(panel):
+    """编译过的函数有缓存：先编译 A、再编译 B，A 运行出错时显示的仍是 A 的那一行"""
+    a = 'def factor(p):\n    x = p["close"]\n    return x.get_nothing()\n'
+    cf.compile_factor(a)
+    cf.evaluate('def factor(p):\n    y = p["open"]\n    return y * 2\n', panel)
+    with pytest.raises(FactorCodeError) as ei:
+        cf.evaluate(a, panel)
+    assert "第 3 行" in str(ei.value) and "x.get_nothing()" in str(ei.value)
+
 def test_result_is_aligned_to_panel(panel):
     code = 'def factor(p):\n    return p["close"].iloc[:, :5]\n'           # 只算了 5 只股票
     out = cf.evaluate(code, panel)

@@ -45,6 +45,12 @@ def selection_tunables(spec: dict, lang: str = "zh") -> list[Tunable]:
                 out.append(Tunable(f"factors.{i}.weight",
                                    pick(L("权重", "Weight"), lang) + " · " + pick(FACTORS.get(f["key"], {}).get("label", f["key"]), lang),
                                    float(f.get("weight", 1.0)), False, 0.0, 10.0))
+    elif spec.get("weighting") == "ml":
+        from .ml import PARAM_LABELS, PARAM_RANGES, config
+        for k, v in config(spec).items():
+            if k != "model":
+                lo, hi, is_int = PARAM_RANGES[k]
+                out.append(Tunable(f"ml.{k}", pick(PARAM_LABELS[k], lang), v, is_int, lo, hi))
     else:
         out.append(Tunable("ic_lookback", pick(L("IC 回看（交易日）", "IC lookback (days)"), lang),
                            int(spec.get("ic_lookback", 252)), True, 60, 1000))

@@ -28,7 +28,7 @@ from .factors import FACTORS, GROUPS
 from .fundamentals import FIELDS as FIN_FIELDS
 
 KEY_PREFIX = "u_"
-FILENAME = "<factor-code>"
+FILENAME = "<factor-code>"    # 每段代码编译时用 FILENAME 加代码哈希作文件名（_filename），出错信息按它找源码行
 GROUPS.setdefault("custom", L("自定义", "Custom"))
 # 用到这些字段就需要财务数据
 FIN_WORDS = set(FIN_FIELDS) | {"mcap"}
@@ -48,12 +48,22 @@ def _msg(zh: str, en: str, lang: str) -> str:
     return pick(L(zh, en), lang)
 
 
-def _user_line(tb) -> int | None:
-    line = None
+def _filename(code: str) -> str:
+    """每段代码一个文件名：编译过的函数有缓存，若共用一个名字，linecache 里的源码会被后编译的代码覆盖"""
+    return FILENAME[:-1] + "-" + hashlib.sha1(code.encode("utf-8")).hexdigest()[:12] + ">"
+
+
+def _user_frame(tb) -> tuple[int | None, str | None]:
+    """traceback 中最后一个位于用户代码里的（行号, 文件名）"""
+    line, name = None, None
     for frame in traceback.extract_tb(tb):
-        if frame.filename == FILENAME:
-            line = frame.lineno
-    return line
+        if frame.filename.startswith(FILENAME[:-1]):
+            line, name = frame.lineno, frame.filename
+    return line, name
+
+
+def _user_line(tb) -> int | None:
+    return _user_frame(tb)[0]
 
 
 def _where(line, lang):
@@ -183,9 +193,10 @@ def compile_factor(code: str, lang: str = "zh"):
     if errors:
         raise FactorCodeError(errors[0])
     ns = namespace()
-    linecache.cache[FILENAME] = (len(code), None, code.splitlines(True), FILENAME)
+    name = _filename(code)
+    linecache.cache[name] = (len(code), None, code.splitlines(True), name)
     try:
-        exec(compile(code, FILENAME, "exec"), ns)  # noqa: S102 - 用户在本机运行自己的因子代码
+        exec(compile(code, name, "exec"), ns)  # noqa: S102 - 用户在本机运行自己的因子代码
     except Exception as e:  # noqa: BLE001
         line = _user_line(e.__traceback__)
         raise FactorCodeError(_where(line, lang) + f"{type(e).__name__}: {e}", line) from e
@@ -204,8 +215,8 @@ def evaluate(code: str, panel, lang: str = "zh") -> pd.DataFrame:
     except FactorCodeError:
         raise
     except Exception as e:  # noqa: BLE001
-        line = _user_line(e.__traceback__)
-        src = linecache.getline(FILENAME, line).strip() if line else ""
+        line, name = _user_frame(e.__traceback__)
+        src = linecache.getline(name, line).strip() if line else ""
         raise FactorCodeError(_where(line, lang) + f"{type(e).__name__}: {e}" + (f"\n    {src}" if src else ""),
                               line) from e
     if not isinstance(out, pd.DataFrame):

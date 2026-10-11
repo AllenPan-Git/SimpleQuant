@@ -396,6 +396,7 @@ def selection_script(spec: dict, broker: dict, start: str, project_dir: str, tit
     :param exe: 打包版 SimpleQuant 可执行文件的路径；给出时说明改为用它运行（自带引擎，不需要装 Python）
     """
     from ..stocks import FACTORS
+    from ..stocks.selection import panel_warmup_days
     needs_fin = any(FACTORS.get(f["key"], {}).get("requires_fin") for f in spec["factors"]) or \
         bool((spec.get("neutralize") or {}).get("size"))
     needs_div = spec.get("dividend") == "cash" or \
@@ -434,6 +435,7 @@ BROKER = BrokerConfig(**{broker!r})
 START = "{start}"
 NEEDS_FIN = {needs_fin!r}
 NEEDS_DIV = {needs_div!r}
+WARMUP_DAYS = {panel_warmup_days(spec)!r}       # 机器学习合成因子要容下训练窗口，其余为 400
 OUT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -443,7 +445,7 @@ if __name__ == "__main__":
     print("updating data / 更新数据…", flush=True)
     universe.update(SPEC["universe"], START, end, store, fin=NEEDS_FIN, div=NEEDS_DIV)
     first = universe.load_benchmark(SPEC["universe"], store).index[0]
-    first = max(first, pd.Timestamp(START) - pd.Timedelta(days=400))    # 面板往前多取约 400 天预热因子
+    first = max(first, pd.Timestamp(START) - pd.Timedelta(days=WARMUP_DAYS))    # 面板往前多取一段预热因子
     print("backtesting / 回测…", flush=True)
     panel = universe.build(SPEC["universe"], str(first.date()), end, store)
     res = run_selection(panel, SPEC, BROKER, start=max(START, str((first + pd.Timedelta(days=400)).date())))

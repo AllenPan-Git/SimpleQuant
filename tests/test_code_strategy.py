@@ -141,6 +141,16 @@ def test_runtime_error_points_at_line():
     assert cs.explain_error(ValueError("x")) == "x"                   # 不是用户代码里的错误：原样
 
 
+def test_runtime_error_shows_own_source_after_other_code_compiled():
+    """先编译 A、再编译 B，A 回测出错时显示的仍是 A 的那一行"""
+    a = cs.skeleton().replace("holding = self.getposition(d).size > 0", "holding = 1 / 0")
+    cs.compile_strategy(a)
+    cs.compile_strategy(cs.skeleton().replace("holding = self.getposition(d).size > 0",
+                                              "holding = self.getposition(d).size >= 1"))
+    with pytest.raises(ZeroDivisionError) as ei:
+        run_backtest(PRICES, *strategies.resolve(code_spec(a)), BROKER)
+    assert "1 / 0" in cs.explain_error(ei.value)
+
 def test_optimize_reports_code_error_per_combo():
     code = cs.skeleton().replace("def next(self):", "def next(self):\n        assert self.p.fast != 3")
     df = optimize({"A": make_prices(n=300)}, code_spec(code), {"params.fast": [3, 5]}, BrokerConfig(), workers=1)

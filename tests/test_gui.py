@@ -794,6 +794,34 @@ async def test_selection_plan_export_and_import(user: User, monkeypatch):
 
 
 @needs_stocks
+async def test_selection_ml_weighting(user: User, monkeypatch):
+    """机器学习合成：选岭回归 → 回测 → 显示样本外 IC 对比与因子重要性；导出的方案为第 3 版"""
+    from simplequant import plan as plan_mod
+    SP = await _open_selection(user)
+    user.find(marker="sp_weighting").elements.pop().set_value("ml")
+    await settle()
+    user.find(marker="sp_ml_model").elements.pop().set_value("ridge")
+    await settle()
+    await user.should_see("岭回归：线性模型")
+    user.find(marker="sp_run").click()
+    assert await _wait(lambda: SP.get("result"), n=2400)
+    await settle()
+    res, spec, _ = SP["result"]
+    assert spec["ml"] == {"model": "ridge", "window": 756, "alpha": 1.0}
+    assert res.schedule.ml["model"] == "ridge" and res.schedule.ml["trainings"]
+    await user.should_see("机器学习模型：岭回归")
+    await user.should_see("样本外 IC 对比")
+    await user.should_see("因子重要性")
+    assert SP["result_range"][2] <= SP["result_range"][0]         # 有更早的数据时面板往前多取训练窗口
+    got = {}
+    monkeypatch.setattr(ui.download, "content", lambda data, name, *a, **k: got.update(data=data))
+    user.find(marker="sp_exp_plan").click()
+    plan = plan_mod.loads(got["data"])
+    assert plan["version"] == 3 and plan["strategy"]["ml"]["model"] == "ridge"
+    assert plan["warmup_start"] == SP["result_range"][2] and plan["result"]
+
+
+@needs_stocks
 async def test_selection_cash_dividend(user: User):
     SP = await _open_selection(user)
     user.find(marker="sp_dividend").elements.pop().set_value("cash")

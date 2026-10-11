@@ -27,7 +27,7 @@ from ..i18n import L, pick
 from .factors import KDJ, OBV
 from .templates import _PerAsset
 
-FILENAME = "<strategy-code>"
+FILENAME = "<strategy-code>"    # 每段代码编译时用 FILENAME 加代码哈希作文件名（_filename），出错信息按它找源码行
 BASE_PARAMS = set(BaseStrategy.params._getkeys())        # 引擎内部参数，不给用户调
 PerAsset = _PerAsset
 
@@ -58,13 +58,23 @@ def namespace() -> dict:
 _CACHE: dict[str, type] = {}
 
 
+def _filename(code: str) -> str:
+    """每段代码一个文件名：编译过的类有缓存，若共用一个名字，linecache 里的源码会被后编译的代码覆盖"""
+    return FILENAME[:-1] + "-" + hashlib.sha1(code.encode("utf-8")).hexdigest()[:12] + ">"
+
+
+def _user_frame(tb) -> tuple[int | None, str | None]:
+    """traceback 中最后一个位于用户代码里的（行号, 文件名）"""
+    line, name = None, None
+    for frame in traceback.extract_tb(tb):
+        if frame.filename.startswith(FILENAME[:-1]):
+            line, name = frame.lineno, frame.filename
+    return line, name
+
+
 def _user_line(tb) -> int | None:
     """traceback 中最后一个位于用户代码里的行号"""
-    line = None
-    for frame in traceback.extract_tb(tb):
-        if frame.filename == FILENAME:
-            line = frame.lineno
-    return line
+    return _user_frame(tb)[0]
 
 
 def check_syntax(code: str, lang: str = "zh") -> list[str]:
@@ -95,9 +105,10 @@ def compile_strategy(code: str, lang: str = "zh") -> type:
     module = types.ModuleType(mod_name)
     module.__dict__.update(namespace())
     sys.modules[mod_name] = module
-    linecache.cache[FILENAME] = (len(code), None, code.splitlines(True), FILENAME)
+    name = _filename(code)
+    linecache.cache[name] = (len(code), None, code.splitlines(True), name)
     try:
-        exec(compile(code, FILENAME, "exec"), module.__dict__)  # noqa: S102 - 用户在本机运行自己的策略代码
+        exec(compile(code, name, "exec"), module.__dict__)  # noqa: S102 - 用户在本机运行自己的策略代码
     except Exception as e:  # noqa: BLE001
         sys.modules.pop(mod_name, None)
         raise CodeError(_where(_user_line(e.__traceback__), lang) + f"{type(e).__name__}: {e}",
@@ -122,10 +133,10 @@ def check(code: str, lang: str = "zh") -> list[str]:
 
 def explain_error(exc: BaseException, lang: str = "zh") -> str:
     """回测时出错：若错误来自用户代码，指出行号和那一行的内容"""
-    line = _user_line(exc.__traceback__)
+    line, name = _user_frame(exc.__traceback__)
     if line is None:
         return str(exc)
-    src = linecache.getline(FILENAME, line).strip()
+    src = linecache.getline(name, line).strip()
     head = _msg(f"策略代码第 {line} 行出错", f"Error in strategy code, line {line}", lang)
     return f"{head}: {type(exc).__name__}: {exc}" + (f"\n    {src}" if src else "")
 

@@ -59,9 +59,14 @@ def describe_selection(spec: dict, lang: str = "zh") -> str:
             tr("sel.factor_item", lang, name=pick(FACTORS.get(f["key"], {}).get("label", f["key"]), lang),
                dir=tr("sel.dir_up" if f.get("direction", 1) > 0 else "sel.dir_down", lang), w=f"{f.get('weight', 1):g}")
             for f in spec["factors"])
-    else:   # IC 加权：方向和权重由历史 IC 自动决定，只列因子名
+    else:   # IC 加权 / 机器学习：方向和权重由历史数据自动决定，只列因子名
         names = sep.join(pick(FACTORS.get(f["key"], {}).get("label", f["key"]), lang) for f in spec["factors"])
-        how = pick(WEIGHTING[weighting], lang)
+        how = pick(WEIGHTING.get(weighting, WEIGHTING["manual"]), lang)
+        if weighting == "ml":
+            from ..stocks.ml import MODELS, PARAM_LABELS, config
+            cfg = config(spec)
+            how = pick(MODELS[cfg["model"]], lang) + ("，" if lang == "zh" else ", ") +                 ("，" if lang == "zh" else ", ").join(f"{pick(PARAM_LABELS[k], lang)} {v:g}"
+                                                     for k, v in cfg.items() if k != "model")
         facs = f"{names}（{how}）" if lang == "zh" else f"{names} ({how})"
     neutral = [tr(f"sel.neutral_{k}", lang) for k, v in (spec.get("neutralize") or {}).items() if v]
     text = (f"【{tr('sel.kind', lang)}】{pick(UNIVERSES[spec['universe']]['label'], lang)} · {reb_text} · "

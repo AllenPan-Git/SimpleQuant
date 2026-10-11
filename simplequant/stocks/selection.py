@@ -10,8 +10,9 @@
   "rebalance": "monthly",          # monthly / weekly / 整数（每 N 个交易日）
   "filters": {"exclude_st": true, "min_list_days": 250},
   "position_pct": 95,
-  "weighting": "manual",           # manual / ic / icir（按过去一段时间的 IC 自动定权重和方向）
+  "weighting": "manual",           # manual / ic / icir（按过去一段时间的 IC 自动定权重和方向）/ ml（机器学习，见 ml.py）
   "ic_lookback": 252,              # IC 加权回看的交易日数
+  "ml": {"model": "rf", "window": 756, "trees": 100, "depth": 5},   # 机器学习的模型与参数（weighting 为 ml 时）
   "neutralize": {"industry": false, "size": false},  # 行业 / 市值中性化
   "dividend": "reinvest"           # reinvest：后复权（分红全额再投资、不扣税）/ cash：现金分红并扣红利税
 }
@@ -62,8 +63,20 @@ def rebalance_horizon(rule) -> int:
     return {"monthly": 20, "weekly": 5}.get(rule, None) or int(rule)
 
 
+WARMUP_DAYS = 400          # 面板在回测开始前多取的自然日数：预热因子（最长回看 120 个交易日）与 IC 加权的回看期
+
+
+def panel_warmup_days(spec: dict) -> int:
+    """面板要在回测开始前多取多少个自然日；机器学习还要容下训练窗口和目标的 h+1 天延迟（约 240 个交易日 / 年）"""
+    if spec.get("weighting") != "ml":
+        return WARMUP_DAYS
+    from .ml import config
+    h = rebalance_horizon(spec.get("rebalance", "monthly"))
+    return WARMUP_DAYS + int((config(spec)["window"] + h + 1) * 365 / 240)
+
+
 WEIGHTING = {"manual": L("手动权重", "Manual weights"), "ic": L("按 IC 加权", "IC-weighted"),
-             "icir": L("按 ICIR 加权", "ICIR-weighted")}
+             "icir": L("按 ICIR 加权", "ICIR-weighted"), "ml": L("机器学习", "Machine learning")}
 
 
 @dataclass
@@ -71,6 +84,7 @@ class Schedule:
     picks: dict                     # 调仓日 -> [代码]（按得分从高到低）
     scores: dict                    # 调仓日 -> {代码: 得分}
     skipped: list = field(default_factory=list)   # 可选股票不足而跳过的调仓日
+    ml: dict | None = None          # 机器学习合成：训练信息与样本外 IC（ml.ml_scores / ml.summary）
 
 
 def effective_filters(panel, spec: dict) -> dict:
@@ -104,9 +118,7 @@ def build_schedule(panel, spec: dict, start=None, next_days=None, cache: dict | 
     if "mask" not in sub:
         sub["mask"] = eligible_mask(panel, filters)
     mask = sub["mask"]
-    score = F.composite(panel, spec["factors"], mask, weighting=spec.get("weighting", "manual"),
-                        neutral=spec.get("neutralize"), horizon=rebalance_horizon(spec.get("rebalance", "monthly")),
-                        lookback=int(spec.get("ic_lookback", 252)), cache=sub)
+    horizon = rebalance_horizon(spec.get("rebalance", "monthly"))
     top_n = int(spec["top_n"])
     picks, scores, skipped = {}, {}, []
     cal = panel.calendar
@@ -116,6 +128,16 @@ def build_schedule(panel, spec: dict, start=None, next_days=None, cache: dict | 
     dates = dates[dates <= panel.calendar[-1]]
     if start is not None:
         dates = dates[dates >= pd.Timestamp(start)]
+    ml_info = None
+    if spec.get("weighting") == "ml":
+        from . import ml
+        score, info = ml.ml_scores(panel, spec, mask, dates, horizon, cache=sub)
+        ic = ml.oos_ic(panel, spec, mask, score, horizon, info["fallback"], cache=sub)
+        ml_info = {**info, "ic": ic, "summary": ml.summary(info, ic)}
+    else:
+        score = F.composite(panel, spec["factors"], mask, weighting=spec.get("weighting", "manual"),
+                            neutral=spec.get("neutralize"), horizon=horizon,
+                            lookback=int(spec.get("ic_lookback", 252)), cache=sub)
     for d in dates:
         row = score.loc[d].dropna()
         if len(row) < top_n:
@@ -124,7 +146,7 @@ def build_schedule(panel, spec: dict, start=None, next_days=None, cache: dict | 
         best = row.sort_values(ascending=False).head(top_n)
         picks[d] = list(best.index)
         scores[d] = best.to_dict()
-    return Schedule(picks=picks, scores=scores, skipped=skipped)
+    return Schedule(picks=picks, scores=scores, skipped=skipped, ml=ml_info)
 
 
 # ---------------- Backtrader ----------------

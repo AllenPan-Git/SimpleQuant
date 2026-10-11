@@ -246,7 +246,7 @@ Conventions:
 - "small caps / 小盘" → size lower; "large caps / 大盘" → size higher. "low volatility / 低波动" → vol60 lower. "low turnover / 冷门" → turn20 lower.
 - "short-term reversal / 超跌反弹" → ret20 lower (or ret5 lower). "momentum / 强者恒强" → mom_120_20 higher.
 - direction is "higher" or "lower" (higher/lower factor values are better). weight defaults to 1; use larger weights only when the user stresses a factor.
-- weighting: "manual" unless the user asks to let the data decide weights ("按 IC 加权" → "ic", "按 ICIR" → "icir"). With ic/icir the directions are learned from past IC.
+- weighting: "manual" unless the user asks to let the data decide weights ("按 IC 加权" → "ic", "按 ICIR" → "icir", "机器学习 / 模型合成 / 随机森林 / 梯度提升 / 岭回归 / K 近邻" → "ml"). With ic/icir/ml the directions are learned from past data. For "ml" the model is set in the form, not here.
 - rebalance: "monthly" by default; "weekly"; or "days" with rebalance_days = N for "every N trading days" (otherwise set rebalance_days to 20).
 - top_n default 10; "hold 20 stocks / 持有20只" → 20. exclude_st default true. min_list_days default 250 ("exclude new listings under a year").
 - "industry neutral / 行业中性 / 各行业分散" → neutralize_industry true. "size neutral / 市值中性" → neutralize_size true. Default false.

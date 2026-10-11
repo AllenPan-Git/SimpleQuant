@@ -19,11 +19,11 @@ class AKShareSource(DataSource):
     label = L("AKShare（免费，日线）", "AKShare (free, daily)")
     freqs = ("1d",)
     description = L("ETF 及股票优先使用东方财富日线（支持复权）；东方财富无法连接时自动改用新浪财经，并在随后 15 分钟内直接使用新浪。"
-                    "新浪 ETF 复权价由行情与累计分红计算，与东方财富逐日一致；新浪股票复权为等比复权，与 BaoStock 一致。"
+                    "新浪 ETF 复权价由行情与累计分红计算，与东方财富逐日一致（份额拆分或折算按当天价格跳空推算比例）；新浪股票复权为等比复权，与 BaoStock 一致。"
                     "指数优先使用新浪财经，中证指数官网备用。数据库中记录每份数据实际使用的接口。",
                     "ETFs and stocks use Eastmoney daily bars (with price adjustment) first. If Eastmoney is unreachable, "
                     "Sina Finance is used instead, and directly for the next 15 minutes. Sina ETF adjusted prices are rebuilt "
-                    "from prices plus cumulative dividends and match Eastmoney day by day; Sina stock adjustment is proportional, "
+                    "from prices plus cumulative dividends and match Eastmoney day by day (share split ratios are inferred from the price gap); Sina stock adjustment is proportional, "
                     "matching BaoStock. Indices use Sina Finance first, with the CSI website as a fallback. "
                     "The library records which interface each dataset came from.")
 

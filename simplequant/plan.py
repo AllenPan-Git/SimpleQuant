@@ -20,9 +20,10 @@ from . import __version__
 from .engine.runner import BrokerConfig
 
 FORMAT = "simplequant-plan"
-VERSION = 2                     # 能读取的最高版本
+VERSION = 3                     # 能读取的最高版本
 TIMING_VERSION = 1              # 择时方案仍写 1，旧版软件也能导入
 SELECTION_VERSION = 2           # 选股方案：0.2.4 及以前的版本会提示「请先更新软件」
+ML_VERSION = 3                  # 用机器学习合成因子的选股方案：0.3.0 及以前的版本会提示「请先更新软件」
 SUFFIX = ".sqplan"
 DOWNLOADABLE = ("akshare", "baostock")          # 导入时可以自动下载的数据源
 RESULT_KEYS = ("total_return", "benchmark_return", "max_drawdown", "trades")
@@ -82,7 +83,8 @@ def make_selection_plan(name: str, spec: dict, start, end, warmup_start, broker:
                 raise PlanError("plan.err_factor_missing", name=f["key"])
             custom[f["key"]] = {k: d.get(k, "") for k in ("name", "code", "direction", "desc")}
     plan = {
-        "format": FORMAT, "version": SELECTION_VERSION, "app": __version__,
+        "format": FORMAT, "version": ML_VERSION if spec.get("weighting") == "ml" else SELECTION_VERSION,
+        "app": __version__,
         "created": dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
         "name": name, "strategy": spec,
         "range": [str(start), str(end)], "warmup_start": str(warmup_start),
@@ -171,6 +173,15 @@ def _check_selection(plan: dict):
         int(spec.get("top_n", 0))
     except (TypeError, ValueError):
         raise PlanError("plan.err_format") from None
+    if spec.get("weighting") == "ml":
+        from .stocks.ml import MODELS, config
+        ml = spec.get("ml")
+        if not isinstance(ml, dict) or ml.get("model") not in MODELS:
+            raise PlanError("plan.err_format")
+        try:
+            config(spec)
+        except (TypeError, ValueError):
+            raise PlanError("plan.err_format") from None
 
 
 def _check_common(plan: dict) -> dict:

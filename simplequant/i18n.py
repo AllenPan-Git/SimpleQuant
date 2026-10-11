@@ -104,6 +104,7 @@ TEXT = {
     "reason.fw_buy": L("低配，增至目标比例 {w:.1f}%", "underweight, adding to target {w:.1f}%"),
     "reason.rule_buy": L("满足买入规则", "buy rule met"),
     "reason.rule_sell": L("满足卖出规则", "sell rule met"),
+    "reason.rule_add": L("分批建仓，第 {k} 次加仓", "scale in, add #{k}"),
 
     # ---- 多因子选股 ----
     "m.turnover_annual": L("年化换手率", "Annual turnover"),
@@ -141,6 +142,12 @@ TEXT = {
     "rule.and": L(" 并且 ", " AND "),
     "rule.or": L(" 或者 ", " OR "),
     "rule.template": L("模板", "Template"),
+    "rule.days": L("（连续 {n} 根 K 线）", " (for {n} bars in a row)"),
+    "rule.scale_title": L("分批建仓", "Scale in"),
+    "rule.scale": L("仓位分 {parts} 份，首次买入 1 份；{when}时加仓 1 份，最多加 {k} 次",
+                    "position split into {parts} parts; buy 1 part first, add 1 part when {when}, up to {k} times"),
+    "rule.cooldown_title": L("冷却", "Cooldown"),
+    "rule.cooldown": L("卖出后 {n} 根 K 线内不再买入", "no new buy within {n} bars after a sell"),
 
     # ---- 规则校验 ----
     "err.logic": L("{side}：逻辑必须是 all 或 any", "{side}: logic must be 'all' or 'any'"),
@@ -154,6 +161,13 @@ TEXT = {
     "err.left_ind": L("左边必须是指标", "left side must be an indicator"),
     "err.pnl_cross": L("持仓收益率不能用于上穿/下穿，请用大于/小于",
                        "position P&L cannot be used with cross above/below; use > or <"),
+    "err.days": L("连续 K 线数必须是 1~{max} 的整数", "bars in a row must be an integer from 1 to {max}"),
+    "err.days_cross": L("上穿 / 下穿只在穿越当天成立，不能设置连续 K 线数", "crosses happen on a single bar; bars in a row cannot be set"),
+    "err.days_pnl": L("持仓收益率不能设置连续 K 线数", "position P&L cannot be combined with bars in a row"),
+    "err.cooldown": L("卖出后不再买入的 K 线数必须是 0~{max} 的整数", "cooldown after a sell must be an integer from 0 to {max} bars"),
+    "err.adds": L("加仓次数必须是 1~{max} 的整数", "number of adds must be an integer from 1 to {max}"),
+    "err.add_when": L("加仓时机必须是上涨、下跌或买入条件再次满足", "add trigger must be rise, fall or buy conditions met again"),
+    "err.add_pct": L("加仓的涨跌幅必须在 0~100% 之间", "add trigger % must be between 0 and 100"),
     "err.sel_no_factor": L("至少需要一个因子", "At least one factor is required"),
     "err.sel_factor_kind": L("因子「{name}」不适用于所选股票池（股票与可转债的因子不同）",
                              "Factor \"{name}\" does not apply to this universe (stocks and convertibles use different factors)"),

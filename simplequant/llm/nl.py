@@ -13,7 +13,8 @@ import json
 from dataclasses import dataclass, field
 
 from ..i18n import pick
-from ..rules import INDICATORS, OPS, LOGICS, validate, default_params, default_line, describe_rule
+from ..rules import INDICATORS, OPS, LOGICS, CROSS_OPS, validate, default_params, default_line, describe_rule
+from ..rules.schema import ADD_WHEN, MAX_DAYS, MAX_COOLDOWN, MAX_ADDS
 from .providers import Provider, extract_json
 
 IND_KEYS = list(INDICATORS)
@@ -36,8 +37,9 @@ _OPERAND = {
 }
 _CONDITION = {
     "type": "object",
-    "properties": {"left": _OPERAND, "op": {"type": "string", "enum": list(OPS)}, "right": _OPERAND},
-    "required": ["left", "op", "right"],
+    "properties": {"left": _OPERAND, "op": {"type": "string", "enum": list(OPS)}, "right": _OPERAND,
+                   "days": {"type": "integer"}},
+    "required": ["left", "op", "right", "days"],
     "additionalProperties": False,
 }
 _SIDE = {
@@ -57,8 +59,13 @@ LLM_SCHEMA = {
         "buy": _SIDE,
         "sell": _SIDE,
         "position_pct": {"type": "number"},
+        "cooldown": {"type": "integer"},
+        "scale": {"type": "object",
+                  "properties": {"adds": {"type": "integer"}, "when": {"type": "string", "enum": ["none", *ADD_WHEN]},
+                                 "pct": {"type": "number"}},
+                  "required": ["adds", "when", "pct"], "additionalProperties": False},
     },
-    "required": ["name", "understood", "symbols", "unsupported", "buy", "sell", "position_pct"],
+    "required": ["name", "understood", "symbols", "unsupported", "buy", "sell", "position_pct", "cooldown", "scale"],
     "additionalProperties": False,
 }
 
@@ -89,6 +96,11 @@ Each condition is: left operand, op, right operand.
 - operand kind "indicator": set ind (from the catalog), line (only for multi-line indicators, else ""), params as [{{"name","value"}}] using only that indicator's parameter names (omit a parameter to use its default); set value to 0.
 - operand kind "value": a plain number in value; set ind to "close", line "", params [].
 - The left operand must be an indicator.
+- days: how many bars in a row (including the current one) a >, <, >=, <= condition must hold; 1 = just the current bar. "N days in a row / 连续N天" → days N. Must be 1 for cross_above / cross_below and for pnl_pct.
+
+Pacing (rule-level):
+- cooldown: after a sell, no new buy for this many bars ("wait N days after selling / 卖出后N天内不买"); 0 = none.
+- scale: scaling into a position. adds = how many extra buys after the first (1-5); the position is split into adds + 1 equal parts. when = "gain" (add after the price rises pct % from the last buy, pyramiding / 浮盈加仓), "drop" (add after it falls pct %, 越跌越买 / 摊低成本), "signal" (add when the buy conditions hold again; pct ignored). If the user does not ask for scaling in, use adds 0, when "none", pct 0.
 
 Indicator catalog (key: English / Chinese name; params with defaults):
 {_catalog()}
@@ -101,7 +113,7 @@ Translation conventions:
 - Valuation (pe, pb, ps) and turnover only work when the data has those columns; still use them if the user asks.
 
 Be honest about limits:
-- Anything the catalog and rule format cannot express (e.g. ROE or other financial-statement factors, ranking/selecting among many stocks, holding-period or calendar exits, pyramiding or dynamic sizing, short selling, market-wide filters) goes into "unsupported" as short phrases, and is left out of the rule. Never silently approximate; if you do approximate something, say exactly how in "understood".
+- Anything the catalog and rule format cannot express (e.g. ROE or other financial-statement factors, ranking/selecting among many stocks, holding-period or calendar exits, dynamic sizing other than the scale-in described above, short selling, market-wide filters) goes into "unsupported" as short phrases, and is left out of the rule. Never silently approximate; if you do approximate something, say exactly how in "understood".
 - If the description is not a trading strategy at all, return empty condition lists and explain in "unsupported".
 
 Other fields:
@@ -136,9 +148,26 @@ def to_rule(out: dict) -> dict:
             "conditions": [{"left": _operand(c.get("left") or {}), "op": c.get("op"), "right": _operand(c.get("right") or {})}
                            for c in block.get("conditions") or []],
         }
+    for side in ("buy", "sell"):
+        for c, raw in zip(rule[side]["conditions"], (out.get(side) or {}).get("conditions") or []):
+            days = _int(raw.get("days"), 1, MAX_DAYS)
+            if days > 1 and c["op"] not in CROSS_OPS and "pnl_pct" not in (c["left"].get("ind"), c["right"].get("ind")):
+                c["days"] = days
     pct = out.get("position_pct", 95)
     rule["position_pct"] = float(pct) if isinstance(pct, (int, float)) and 0 < pct <= 100 else 95.0
+    if cooldown := _int(out.get("cooldown"), 0, MAX_COOLDOWN):
+        rule["cooldown"] = cooldown
+    scale = out.get("scale") or {}
+    if scale.get("when") in ADD_WHEN and (adds := _int(scale.get("adds"), 0, MAX_ADDS)):
+        rule["scale"] = {"adds": adds, "when": scale["when"]}
+        if scale["when"] != "signal":
+            rule["scale"]["pct"] = float(scale.get("pct") or 0)          # 没给幅度时校验会报错，发回模型修正
     return rule
+
+
+def _int(v, lo: int, hi: int) -> int:
+    """模型给的整数：不是数字时取下限，超出范围的截到范围内"""
+    return max(lo, min(hi, int(round(v)))) if isinstance(v, (int, float)) and not isinstance(v, bool) else lo
 
 
 @dataclass

@@ -246,6 +246,35 @@ async def test_strategy_rule_builder(user: User, lib_dir):
     assert state.STATE["current_spec"]["kind"] == "rule"
 
 
+async def test_strategy_rule_pacing(user: User, lib_dir):
+    """条件「连续 N 根 K 线」、卖出后冷却、分批建仓：界面改的设置进入规则和预览"""
+    await user.open("/strategy")
+    user.find(marker="mode").elements.pop().set_value("rule")
+    await settle()
+    S = state.strategy()
+    user.find(marker="preset").elements.pop().set_value("breakout")       # 突破：大于 / 小于，可以设连续
+    user.find("载入示例").click()
+    await settle()
+    user.find(marker="days").elements.pop().set_value(3)
+    user.find(marker="cooldown").elements.pop().set_value(10)
+    user.find(marker="scale").elements.pop().set_value(True)
+    await settle()
+    rule = S["rule"]
+    assert any(c.get("days") == 3 for side in ("buy", "sell") for c in rule[side]["conditions"])
+    assert rule["cooldown"] == 10 and rule["scale"] == {"adds": 2, "when": "drop", "pct": 5.0}
+    await user.should_see("连续 3 根 K 线")
+    await user.should_see("卖出后 10 根 K 线内不再买入")
+    await user.should_see("仓位分 3 份")
+    user.find(marker="scale_when").elements.pop().set_value("signal")
+    await settle()
+    assert "pct" not in rule["scale"]
+    await user.should_see("买入条件再次满足时加仓 1 份")
+    user.find(marker="scale").elements.pop().set_value(False)
+    user.find(marker="cooldown").elements.pop().set_value(0)
+    await settle()
+    assert "scale" not in rule and "cooldown" not in rule
+
+
 async def test_strategy_rule_invalid_blocks_backtest(user: User):
     await user.open("/strategy")
     user.find(marker="mode").elements.pop().set_value("rule")
@@ -380,6 +409,30 @@ async def test_strategy_ai_flow(user: User, fake_llm, lib_dir):
     assert state.STATE["bt_ids"] == [ds.id]               # AI 识别出的 510300 被预选
     assert user.find(marker="bt_ids").elements.pop().value == [ds.id]
     await user.should_see("当前策略：放量突破")            # 策略下拉框选中刚才的策略
+
+
+async def test_strategy_ai_condition_kinds_and_changes(user: User, fake_llm, lib_dir):
+    """AI 生成的规则逐条标出状态 / 事件；说「上穿」却生成「大于」时提醒；同一描述两次结果不同时提醒"""
+    import copy
+    import json
+    await user.open("/strategy")
+    user.find(marker="mode").elements.pop().set_value("ai")
+    await settle()
+    user.find("描述买卖规则").type("收盘价上穿20日新高买入")
+    user.find(marker="generate").click()
+    await user.should_see("条件解读")
+    await user.should_see("状态")
+    await user.should_see("描述里有「上穿 / 金叉」之类的说法")
+    await user.should_not_see("这次生成的规则与上一次不同")
+
+    reply = copy.deepcopy(AI_REPLY)
+    reply["buy"]["conditions"][0]["op"] = "cross_above"
+    second = json.dumps(reply, ensure_ascii=False)
+    fake_llm.chat = lambda self, system, messages, schema=None: second
+    user.find(marker="generate").click()
+    await user.should_see("事件")
+    await user.should_see("这次生成的规则与上一次不同")
+    await user.should_not_see("描述里有「上穿 / 金叉」之类的说法")
 
 
 async def test_strategy_ai_without_config(user: User, monkeypatch):
@@ -1093,7 +1146,8 @@ async def test_settings_preset_and_save(user: User, monkeypatch, tmp_path):
     assert user.find(marker="llm_json_mode").elements.pop().value == "json_object"
     user.find(marker="llm_api_key").elements.pop().set_value("sk-test")
     user.find(marker="llm_save").click()
-    await user.should_see("llm.json")
+    await user.should_see("已保存。")
+    await user.should_not_see(str(llm.CONFIG_PATH))          # 本机路径只在「打开所在文件夹」的悬停提示里
     cfg = real_load(tmp_path / "llm.json")
     assert cfg.provider == "openai" and cfg.model == "deepseek-chat" and cfg.api_key == "sk-test"
 

@@ -104,3 +104,62 @@ def test_open_positions_loss_and_gain():
     assert "open_loss" not in k and "open_gain" not in k
     k = keys(check_backtest({"total_return": -0.06, "initial_cash": 1e5}, trades([]), positions=lose))
     assert set(k) == {"no_trades"}                                   # 没有已平仓交易：只说 no_trades
+
+
+def test_check_grid_years():
+    df = pd.DataFrame({"sharpe": np.linspace(0, 1, 10), "total_return": np.linspace(0.01, 0.2, 10)})
+    years = pd.DataFrame({"year": [2020, 2021, 2022, 2023], "ret": [0.3, -0.1, -0.05, 0.0],
+                          "rank": [1, 9, 8, 6], "n": [10] * 4, "top": [0.3] * 4, "median": [0.0] * 4})
+    k = keys(check_grid(df, "sharpe", {"is_best": {}}, years))
+    assert k["years_unstable"]["level"] == "warn"
+    assert k["years_unstable"]["args"] == {"years": 4, "upper": 1, "first": 1}
+    years["rank"] = [1, 2, 5, 9]
+    assert keys(check_grid(df, "sharpe", {"is_best": {}}, years))["years_stable"]["args"]["upper"] == 3
+    assert not {"years_stable", "years_unstable"} & set(keys(check_grid(df, "sharpe", {"is_best": {}}, years.head(2))))
+
+
+def _wave_prices(n=400):
+    idx = pd.bdate_range("2020-01-01", periods=n)
+    px = 10 + 3 * np.sin(np.arange(n) * 2 * np.pi / 40)
+    return {"A": pd.DataFrame({"open": px, "close": px}, index=idx)}
+
+
+def _wave_trades(prices, phase):
+    """每个周期买一次、持有 10 根：phase=35 从低位涨到高位（最好的时机），phase=15 反过来（最差）"""
+    idx = prices["A"].index
+    rows = [{"symbol": "A", "open_time": idx[s], "close_time": idx[s + 10], "bars": 10, "pnl": 0, "pnl_net": 0}
+            for s in range(phase, len(idx) - 11, 40)]
+    return pd.DataFrame(rows)
+
+
+def test_random_rank():
+    from simplequant.engine.credibility import random_rank
+    prices = _wave_prices()
+    good = random_rank(prices, _wave_trades(prices, 35))
+    bad = random_rank(prices, _wave_trades(prices, 15))
+    assert good["n"] == 9 and bad["n"] == 10 and good["runs"] == 1000
+    assert good["beat"] > 0.99 and bad["beat"] < 0.01
+    assert random_rank(prices, _wave_trades(prices, 35), seed=0) == good           # 固定种子，结果可复现
+    assert random_rank(prices, _wave_trades(prices, 35).head(3)) is None           # 笔数太少不做
+    assert random_rank({}, _wave_trades(prices, 35)) is None
+
+
+def test_check_backtest_random_levels():
+    prices = _wave_prices()
+    m = {"total_return": 0.1, "initial_cash": 1e5}
+    assert "random_ok" in keys(check_backtest(m, _wave_trades(prices, 35), prices=prices))
+    k = keys(check_backtest(m, _wave_trades(prices, 15), prices=prices))
+    assert k["random_bad"]["level"] == "warn" and k["random_bad"]["args"]["n"] == 10
+    assert not {"random_ok", "random_mid", "random_bad"} & set(keys(check_backtest(m, _wave_trades(prices, 35))))
+
+
+def test_random_rank_on_real_backtest():
+    """真实回测的交易记录（时间戳来自 backtrader）能对上 K 线"""
+    from conftest import make_prices
+    from simplequant import strategies
+    from simplequant.engine import run_backtest, BrokerConfig
+    from simplequant.engine.credibility import random_rank
+    cls, params = strategies.resolve({"kind": "template", "template": "sma_cross", "params": {"fast": 5, "slow": 20}})
+    res = run_backtest({"A": make_prices()}, cls, params, BrokerConfig())
+    r = random_rank(res.prices, res.trades)
+    assert r is not None and r["n"] == len(res.trades) and 0 <= r["beat"] <= 1

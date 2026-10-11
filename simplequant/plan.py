@@ -20,10 +20,11 @@ from . import __version__
 from .engine.runner import BrokerConfig
 
 FORMAT = "simplequant-plan"
-VERSION = 3                     # 能读取的最高版本
+VERSION = 4                     # 能读取的最高版本
 TIMING_VERSION = 1              # 择时方案仍写 1，旧版软件也能导入
 SELECTION_VERSION = 2           # 选股方案：0.2.4 及以前的版本会提示「请先更新软件」
 ML_VERSION = 3                  # 用机器学习合成因子的选股方案：0.3.0 及以前的版本会提示「请先更新软件」
+PACING_VERSION = 4              # 规则用了连续 N 根 K 线 / 冷却期 / 分批建仓：1.0.0 及以前的版本会提示「请先更新软件」
 SUFFIX = ".sqplan"
 DOWNLOADABLE = ("akshare", "baostock")          # 导入时可以自动下载的数据源
 RESULT_KEYS = ("total_return", "benchmark_return", "max_drawdown", "trades")
@@ -38,6 +39,13 @@ class PlanError(ValueError):
         self.key, self.kw = key, kw
 
 
+def uses_pacing(spec: dict) -> bool:
+    """规则是否用到旧版软件不认识的设置（旧版会忽略它们，回测结果对不上）"""
+    rule = (spec.get("rule") or {}) if spec.get("kind") == "rule" else {}
+    return bool(rule.get("cooldown") or rule.get("scale") or any(
+        c.get("days", 1) > 1 for side in ("buy", "sell") for c in (rule.get(side) or {}).get("conditions") or []))
+
+
 def make_plan(name: str, spec: dict, metas: list, start, end, broker: BrokerConfig, mode: str = "portfolio",
               result: dict | None = None) -> dict:
     """
@@ -49,7 +57,7 @@ def make_plan(name: str, spec: dict, metas: list, start, end, broker: BrokerConf
     if spec.get("kind") not in ("template", "rule"):
         raise PlanError("plan.err_code")
     plan = {
-        "format": FORMAT, "version": TIMING_VERSION, "app": __version__,
+        "format": FORMAT, "version": PACING_VERSION if uses_pacing(spec) else TIMING_VERSION, "app": __version__,
         "created": dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
         "name": name, "strategy": spec,
         "assets": [{"name": m.name, "symbol": m.symbol, "source": m.source, "freq": m.freq, "adjust": m.adjust,

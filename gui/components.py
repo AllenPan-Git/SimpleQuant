@@ -286,6 +286,13 @@ def unadjusted_warning(by_id: dict, ids: list) -> str | None:
     return t("bt.unadjusted", names="、".join(names) if lang() == "zh" else ", ".join(names)) if names else None
 
 
+def fallback_warning(by_id: dict, ids: list) -> str | None:
+    """股票数据改用了新浪（等比复权）：与东方财富的加法复权口径不同，长期收益会有差别"""
+    names = [by_id[i].name for i in ids if shared.sina_fallback(by_id[i]) and by_id[i].adjust
+             and by_id[i].extra.get("asset") == "stock"]
+    return t("bt.sina_stock", names="、".join(names) if lang() == "zh" else ", ".join(names)) if names else None
+
+
 def missing_factor_warnings(by_id: dict, ids: list, spec: dict) -> list[str]:
     """规则用到估值/换手因子，但所选数据没有对应列时的提示"""
     if spec.get("kind") != "rule":

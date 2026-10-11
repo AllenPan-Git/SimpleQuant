@@ -133,7 +133,7 @@ def unadjusted(meta: library.DatasetMeta) -> pd.DataFrame:
     ds_id = library.make_id(meta.source, meta.symbol, meta.freq, "", meta.start, meta.end)
     if library.exists(ds_id, UNADJ_DIR):
         return library.load(ds_id, UNADJ_DIR)
-    kwargs = {k: v for k, v in (meta.extra or {}).items() if k != "provider"}
+    kwargs = {k: v for k, v in (meta.extra or {}).items() if k not in ("provider", "valuation")}
     try:
         df = SOURCES[meta.source].fetch(meta.symbol, meta.start, meta.end, freq=meta.freq, adjust="", **kwargs)
     except Exception:  # noqa: BLE001

@@ -7,7 +7,7 @@ from simplequant.llm import LLMConfig, PRESETS, PROVIDERS, JSON_MODES
 from gui.common import t, p
 from gui import update
 from gui.layout import frame, page_title
-from gui.widgets import notice
+from gui.widgets import folder_btn, notice
 
 DENSE = "outlined dense options-dense"
 FIELDS = ("provider", "model", "api_key", "base_url", "json_mode", "timeout", "refusal_fallback")
@@ -90,7 +90,7 @@ def page():
             path = llm.save_config(current())
             msg.clear()
             with msg:
-                notice(t("set.saved", path=str(path)), "check_circle")
+                notice(t("set.saved"), "check_circle")
 
         async def test():
             test_btn.disable()
@@ -116,7 +116,9 @@ def page():
             save_btn = ui.button(t("set.save"), icon="save", on_click=save).props("unelevated no-caps") \
                 .mark("llm_save")
             test_btn = ui.button(t("set.test"), icon="network_check", on_click=test).props("outline no-caps")
-        ui.label(t("set.storage", path=str(llm.CONFIG_PATH))).classes("sq-muted text-xs")
+        with ui.row().classes("items-center gap-2"):
+            ui.label(t("set.storage")).classes("sq-muted text-xs")
+            folder_btn(t("set.open_folder"), llm.CONFIG_PATH.parent)
         fill()
 
         ui.separator().classes("q-my-md")

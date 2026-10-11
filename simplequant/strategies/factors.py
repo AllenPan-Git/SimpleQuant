@@ -3,6 +3,7 @@ Backtrader 里没有现成实现（或实现与国内习惯不同）的因子
 """
 
 import backtrader as bt
+import numpy as np
 
 
 class KDJ(bt.Indicator):
@@ -43,3 +44,25 @@ class OBV(bt.Indicator):
         change = self.data.close[0] - self.data.close[-1]
         step = self.data.volume[0] if change > 0 else -self.data.volume[0] if change < 0 else 0.0
         self.lines.obv[0] = self.lines.obv[-1] + step
+
+
+class Percentile(bt.Indicator):
+    """
+    历史百分位（0~100）：当前值在过去 window 根 K 线（含当前）里排在什么位置，
+    = (比它小的个数 + 相等个数 / 2) / 有效个数 × 100。空值不计；有效值不到 min_count 个时为空。
+    估值百分位用：市盈率 / 市净率处在过去几年的什么水平
+    """
+    lines = ("pct",)
+    params = (("window", 1220), ("min_count", 244))
+
+    def next(self):
+        cur = self.data[0]
+        if cur != cur:                                   # 当前值为空
+            self.lines.pct[0] = float("nan")
+            return
+        vals = np.asarray(self.data.get(size=min(len(self.data), self.p.window)), dtype=float)
+        vals = vals[~np.isnan(vals)]
+        if len(vals) < self.p.min_count:
+            self.lines.pct[0] = float("nan")
+            return
+        self.lines.pct[0] = ((vals < cur).sum() + (vals == cur).sum() / 2) / len(vals) * 100

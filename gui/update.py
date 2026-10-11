@@ -11,7 +11,7 @@ from simplequant.paths import DATA_ROOT
 from simplequant.update import HOME_PAGE, ISSUES_PAGE, CHANGELOG_PAGE
 from simplequant.update.client import UPDATER
 from gui.common import t
-from gui.widgets import notice
+from gui.widgets import folder_btn, notice
 
 _dismissed: set[str] = set()      # 本次运行中点了「稍后」的版本
 
@@ -135,7 +135,9 @@ def about():
     """设置页「关于 SimpleQuant」"""
     ui.label(t("set.about")).classes("font-semibold")
     ui.label(t("set.version", v=__version__)).mark("version")
-    ui.label(t("set.data_dir", path=str(DATA_ROOT))).classes("sq-muted text-xs")
+    with ui.row().classes("items-center gap-2"):
+        ui.label(t("set.data_dir")).classes("sq-muted text-xs")
+        folder_btn(t("set.open_folder"), DATA_ROOT)
     with ui.row().classes("items-center gap-4 text-sm"):    # 原生窗口中 new_tab 链接由系统浏览器打开
         for key, url in (("set.home_page", HOME_PAGE), ("set.issues", ISSUES_PAGE), ("set.changelog", CHANGELOG_PAGE)):
             ui.link(t(key), url, new_tab=True).mark(f"link:{key}")

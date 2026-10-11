@@ -8,8 +8,8 @@ import operator
 
 import backtrader as bt
 
-from ..rules.schema import CROSS_OPS, INDICATORS, default_line, validate
-from .factors import KDJ, OBV
+from ..rules.schema import BARS_PER_YEAR, CROSS_OPS, INDICATORS, default_line, validate
+from .factors import KDJ, OBV, Percentile
 from .templates import _PerAsset
 
 _CMP = {">": operator.gt, "<": operator.lt, ">=": operator.ge, "<=": operator.le}
@@ -83,6 +83,9 @@ def _build_line(d, spec: dict, bases: dict | None = None):
         return OBV(d).obv
     if ind == "volatility":
         return bt.ind.StdDev(bt.ind.PctChange(d.close, period=1), period=int(p["period"])) * 100
+    if ind in ("pe_pct", "pb_pct"):                       # 估值在过去 N 年里的百分位
+        return Percentile(getattr(d, INDICATORS[ind]["requires"]), window=int(p["years"]) * BARS_PER_YEAR,
+                          min_count=BARS_PER_YEAR).pct
     if INDICATORS.get(ind, {}).get("requires"):          # 数据里的列：估值、换手、利率
         return getattr(d, INDICATORS[ind]["requires"])
     raise ValueError(f"Unknown indicator / 未知指标 {ind}")
@@ -99,6 +102,8 @@ class RuleStrategy(_PerAsset):
             raise ValueError("Invalid rule / 规则有误: " + "; ".join(errors))
         self.rule = rule
         self._line_cache, self._bases, self._crosses = {}, {}, {}
+        self._sold_at = {}       # data -> 发出卖出委托时的 K 线序号（冷却期用）
+        self._adds, self._ref = {}, {}   # 分批建仓：已加仓次数、上次买入时的收盘价
         self.checks = {d: {side: [self._compile(d, c) for c in (rule.get(side) or {}).get("conditions", [])]
                            for side in ("buy", "sell")} for d in self.datas}
 
@@ -119,17 +124,17 @@ class RuleStrategy(_PerAsset):
         return self._crosses[key]
 
     def _operand(self, d, spec):
-        """返回一个取当前值的函数"""
+        """返回一个取值的函数 f(k)：k 根 K 线之前的值（k = 0 为当前）；持仓收益率只有当前值"""
         if "value" in spec:
             v = float(spec["value"])
-            return lambda: v
+            return lambda k=0: v
         if spec["ind"] == "pnl_pct":
-            def pnl():
+            def pnl(k=0):
                 pos = self.getposition(d)
                 return (d.close[0] / pos.price - 1) * 100 if pos.size > 0 and pos.price > 0 else math.nan
             return pnl
         line = self._line(d, spec)
-        return lambda: line[0]
+        return lambda k=0: line[-k]
 
     def _compile(self, d, cond):
         op, left, right = cond["op"], cond["left"], cond["right"]
@@ -138,10 +143,15 @@ class RuleStrategy(_PerAsset):
             sign = 1 if op == "cross_above" else -1
             return lambda: cross[0] * sign > 0
         a, b, cmp = self._operand(d, left), self._operand(d, right), _CMP[op]
+        days = int(cond.get("days", 1))
+
+        def at(k):
+            x, y = a(k), b(k)
+            return not (math.isnan(x) or math.isnan(y)) and cmp(x, y)
 
         def check():
-            x, y = a(), b()
-            return not (math.isnan(x) or math.isnan(y)) and cmp(x, y)
+            # 连续 days 根 K 线都满足（含当前）；之前的 K 线不够时不满足
+            return all(len(d) > k and at(k) for k in range(days))
         return check
 
     def _hit(self, d, side) -> bool:
@@ -177,9 +187,28 @@ class RuleStrategy(_PerAsset):
         return list(groups.values())
 
     def next(self):
+        # 与导出用的 export/signal_core.py 的 _run_rule 逐项一致（加仓、冷却都按发出委托的那根 K 线计）
+        scale, cooldown = self.rule.get("scale"), int(self.rule.get("cooldown", 0))
+        parts = scale["adds"] + 1 if scale else 1
         for d in self.datas:
             holding = self.getposition(d).size > 0
-            if not holding and self._hit(d, "buy"):
-                self.order_target_pct(d, self.slot_pct, ("reason.rule_buy", {}))
-            elif holding and self._hit(d, "sell"):
-                self.order_target_pct(d, 0, ("reason.rule_sell", {}))
+            if not holding:
+                if cooldown and len(d) - self._sold_at.get(d, -10 ** 9) <= cooldown:
+                    continue
+                if self._hit(d, "buy") and \
+                        self.order_target_pct(d, self.slot_pct / parts, ("reason.rule_buy", {})) is not None:
+                    self._adds[d], self._ref[d] = 0, d.close[0]
+            elif self._hit(d, "sell"):
+                if self.order_target_pct(d, 0, ("reason.rule_sell", {})) is not None:
+                    self._sold_at[d] = len(d)
+            elif scale and d in self._ref and self._adds[d] < scale["adds"] and self._add_due(d, scale):
+                k = self._adds[d] + 1
+                if self.order_add_pct(d, self.slot_pct / parts, ("reason.rule_add", {"k": k})) is not None:
+                    self._adds[d], self._ref[d] = k, d.close[0]
+
+    def _add_due(self, d, scale) -> bool:
+        when, ref = scale["when"], self._ref[d]
+        if when == "signal":
+            return self._hit(d, "buy")
+        pct = float(scale["pct"]) / 100
+        return d.close[0] >= ref * (1 + pct) if when == "gain" else d.close[0] <= ref * (1 - pct)

@@ -345,7 +345,7 @@ def param_stability_chart(params: pd.DataFrame, labels: dict, lang: str = "zh") 
         numeric = pd.api.types.is_numeric_dtype(params[c])      # 调仓频率等离散参数显示为文字
         fig.add_trace(go.Scatter(x=params["test_start"], y=params[c], mode="lines+markers", line_shape="hv",
                                  line=dict(color=STRATEGY, width=2), marker=dict(size=8), name=labels.get(c, c),
-                                 hovertemplate="%{x|%Y-%m-%d}: %{y" + (":g" if numeric else "") + "}<extra></extra>",
+                                 hovertemplate="%{x|%Y-%m-%d}: %{y" + (":~g" if numeric else "") + "}<extra></extra>",
                                  showlegend=False),
                       row=i, col=1)
     fig.update_layout(height=150 + 170 * len(cols), margin=dict(l=10, r=10, t=30, b=10))
@@ -398,7 +398,7 @@ def param_curve(df: pd.DataFrame, param: str, metric: str, x_label: str, lang: s
     m_label = tr(f"m.{metric}", lang)
     fig = go.Figure(go.Scatter(x=df[param], y=df[metric], mode="lines+markers", name=m_label,
                                line=dict(color=STRATEGY, width=2), marker=dict(size=8),
-                               hovertemplate=f"{x_label}=%{{x:g}}<br>{m_label}=%{{y:{hover_fmt}}}<extra></extra>"))
+                               hovertemplate=f"{x_label}=%{{x:~g}}<br>{m_label}=%{{y:{hover_fmt}}}<extra></extra>"))
     best = df.loc[df[metric].idxmax()]
     fig.add_trace(go.Scatter(x=[best[param]], y=[best[metric]], mode="markers", name=tr("opt.best", lang),
                              marker=dict(size=14, color=STRATEGY, symbol="star", line=dict(width=1.5, color="white")),

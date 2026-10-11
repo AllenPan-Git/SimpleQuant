@@ -5,6 +5,30 @@
 
 Changes in each release. `tools/release.py` copies the matching section into the GitHub release notes.
 
+## 1.1.0（2026-10-11）
+
+### 更新内容
+- 新增：条件组件的「交易节奏」：每个大于 / 小于条件可以设「连续 K 线数」（连续 N 根 K 线都满足才成立，可过滤一两天的假突破）；可设「卖出后多少根 K 线内不再买入」；可开启「分批建仓」：仓位分成几份，满足买入条件时先买一份，之后在比上次买入时上涨或下跌一定幅度、或买入条件再次满足时再加一份。这些设置可用于参数优化，回测、模拟盘、方案文件、Python 脚本以及导出到聚宽 / 掘金 / QMT 的结果逐笔一致；用一句话生成策略（AI）时也能识别「连续 3 天」「卖出后 10 天内不买」「越跌越买」等说法。用到这些设置的方案文件需要本版本或更新的版本才能导入
+- 新增：估值百分位条件「市盈率历史百分位」「市净率历史百分位」：当前估值在过去 N 年里的位置（0 = 最低，100 = 最高）。AKShare 下载沪深300、中证500、上证50 等常见宽基 ETF / 指数时，附带所跟踪指数的市盈率（TTM）和市净率（乐咕乐股，每月更新），数据库中标为「含指数估值」；BaoStock 股票日线逐日提供。已下载的 ETF / 指数需重新下载才会带上估值
+- 新增：回测「可信度检查」的随机买卖对照：把已平仓交易的买卖时机随机打乱 1000 次（笔数、每笔持有时间不变），看策略好于多少比例的随机结果，判断收益来自买卖时机还是持有期间的整体涨跌
+- 新增：参数优化结果的「最优参数逐年排名」：最优参数在每个自然年的收益排在所有组合的第几名、当年中位数和最好的组合；可信度检查在最优参数多数年份排不进前一半时警告
+- 新增：用一句话生成策略（AI）的结果逐条标出「状态」条件（大于 / 小于，每根 K 线都检查）和「事件」条件（上穿 / 下穿，只在穿越当天成立）并说明区别；描述里说「上穿 / 金叉」但生成的是大于 / 小于（或反过来）时提醒；同一段描述再次生成的规则与上一次不同时，提示描述可能有歧义并列出上一次的规则
+- 改进：回测报告注明数据来源（如「东方财富 · 后复权」）；下载时东方财富无法连接、改用新浪财经的，数据页会说明；股票数据改用新浪（等比复权，与东方财富的加法复权口径不同）时，回测与参数优化页会提示
+- 改进：设置页不再直接显示本机路径（AI 设置文件、数据目录），改为「打开所在文件夹」按钮，鼠标悬停时显示路径，录屏和截图时不会露出
+- 修复：点击「运行回测」后，新结果出来前会闪现上一份报告
+- 修复：参数优化图的悬停提示把参数值显示成「-8.00000」这样的 6 位有效数字
+
+### Changes
+- New: "Trade pacing" in condition blocks: each > / < condition can require several bars in a row (filters out one- or two-day false breakouts); a cooldown blocks new buys for N bars after a sell; and "Scale in" splits the position into parts, buying one part when the buy conditions are met and adding one part after the price rises or falls by a set % from the last buy, or when the buy conditions are met again. These settings can be optimized, and backtests, paper trading, plan files, Python scripts and JoinQuant / MyQuant / QMT exports match trade for trade; the AI rule generator understands phrases such as "3 days in a row", "no buying for 10 days after a sell" and "buy more as it falls". Plan files using these settings need this version or later
+- New: valuation percentile conditions "P/E percentile" and "P/B percentile": where the current valuation sits within the past N years (0 = lowest, 100 = highest). AKShare downloads of common broad-index ETFs / indices such as CSI 300, CSI 500 and SSE 50 now include the tracked index's P/E (TTM) and P/B (Legulegu, updated monthly), marked "with index valuation" in the library; BaoStock stock data has them daily. Re-download existing ETF / index data to get the valuation
+- New: random-timing comparison in the backtest credibility assessment: the timing of the closed trades is shuffled 1,000 times (same number of trades and holding periods) to show what share of random results the strategy beats, i.e. whether returns come from timing or simply from the market move while holding
+- New: "Best parameters, year by year" in optimization results: the rank of the best parameters among all combinations in each calendar year, with that year's median and best; the credibility assessment warns when they miss the top half in most years
+- New: the AI rule generator now marks each condition as a "state" (> / <, checked on every bar) or an "event" (crosses above / below, true only on the day of the cross) and explains the difference; it warns when the description says "crosses" but the rule uses > / < (or the reverse), and when the same description produces a different rule than last time, showing the previous rule
+- Improved: backtest reports state the data source (e.g. "Eastmoney · back-adjusted"); the Data page notes when Eastmoney was unreachable and Sina Finance was used; backtest and optimization pages warn when stock data came from Sina (proportional adjustment, unlike Eastmoney's additive adjustment)
+- Improved: Settings no longer shows local paths (AI settings file, data folder) directly; an "Open folder" button shows the path on hover, so it stays out of screen recordings and screenshots
+- Fixed: the previous report flashed briefly after clicking Run backtest, before the new results appeared
+- Fixed: optimization chart tooltips showed parameter values padded to six significant digits, such as "-8.00000"
+
 ## 1.0.0（2026-10-11）
 
 ### 更新内容

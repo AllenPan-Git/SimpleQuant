@@ -19,12 +19,12 @@ from simplequant import plan as plan_mod
 from gui.common import t, p, lang
 from gui.components import (require_data, data_selector, strategy_selector, broker_settings, prepare_prices,
                             metric_tiles, metric_tile, missing_factor_warnings, dividend_notices,
-                            unadjusted_warning, credibility_box)
+                            unadjusted_warning, fallback_warning, credibility_box)
 from gui.layout import frame, page_title
 from gui.widgets import df_table, fmt_table, plot, notice, download_btn
 from ui.charts import equity_chart, strategy_chart, batch_scatter
 from ui.shared import (export_script, export_filename, platform_export, orders_table, trades_table,
-                       logs_table, pct, num, asset_names)
+                       logs_table, pct, num, asset_names, data_source_text, sources_line)
 
 
 def page():
@@ -120,6 +120,8 @@ def page():
                     notice(w, "warning", "warning")
                 if w := unadjusted_warning(by_id, pick.ids):
                     notice(w, "warning", "warning")
+                if w := fallback_warning(by_id, pick.ids):
+                    notice(w, "warning", "warning")
             ok = ready()
             run_btn.set_enabled(ok)
             exp_btn.set_enabled(ok)
@@ -185,6 +187,9 @@ def page():
             if result is None:
                 ui.notify(t("plan.exported_no_result"), multi_line=True)
 
+        def sources():
+            return {n: data_source_text(by_id[i], lang()) for i, n in asset_names(by_id, pick.ids, lang()).items()}
+
         async def do_run():
             if not ready():
                 return
@@ -193,6 +198,8 @@ def page():
             sig = signature()
             run_btn.disable()
             running.set_visibility(True)
+            BT.clear()                       # 先清掉上一份报告，免得新结果出来前又露出来
+            results.refresh()
             if batch():
                 await do_batch(spec, broker)
                 return
@@ -205,7 +212,8 @@ def page():
                 BT.clear()
                 BT.update(result=res, title=(strat["label"], list(prices), next(iter(pick.freqs))), spec=spec,
                           broker=broker, name=strat.get("name", ""), div_notes=(skipped, patched),
-                          checks=check_backtest(res.metrics, res.trades, tried, res.positions), sig=sig)
+                          checks=check_backtest(res.metrics, res.trades, tried, res.positions, res.prices), sig=sig,
+                          sources=sources())
                 if plan_ctx:
                     BT["plan_check"] = (plan_mod.compare(plan_ctx.get("result"), res.metrics), plan_ctx)
                 _remember(BT, by_id, pick, strat)
@@ -229,7 +237,7 @@ def page():
                 BT.update(batch=df, summary=summarize(df), spec=spec, broker=broker,
                           name=strat.get("name", "") or strat["label"], freq=next(iter(pick.freqs)),
                           range=(pick.start, pick.end), div_notes=(skipped, patched),
-                          ids={n: i for i, n in asset_names(by_id, pick.ids, lang()).items()},
+                          ids={n: i for i, n in asset_names(by_id, pick.ids, lang()).items()}, sources=sources(),
                           time=dt.datetime.now().strftime("%Y-%m-%d %H:%M"))
                 setup.value = False
             except Exception as e:  # noqa: BLE001
@@ -266,6 +274,8 @@ def _batch_results(BT: dict):
         ui.label(BT["name"]).classes("sq-title mt-1")
         ui.label(f"{t('bt.batch_title', n=s['n'])} · {BT['range'][0]} ~ {BT['range'][1]} · "
                  f"{freq_label(BT['freq'], lg)}").classes("sq-muted text-sm")
+        if src := sources_line(BT.get("sources"), lg):
+            ui.label(src).classes("sq-muted text-xs")
         if not s.get("ok"):
             with ui.column().classes("w-full pt-4"):
                 notice(t("bt.batch_all_failed"), "error", "warning")
@@ -408,6 +418,8 @@ def _results(BT: dict, exp_menu):
                 .classes("sq-eyebrow")
             ui.label(BT.get("name") or label).classes("sq-title mt-1")
             ui.label(f"{t('bt.results')} · {', '.join(names)} · {freq_label(freq, lg)}").classes("sq-muted text-sm")
+            if src := sources_line(BT.get("sources"), lg):
+                ui.label(src).classes("sq-muted text-xs").mark("bt_sources")
             ui.html(lede(res)).classes("sq-lede my-5")
             metric_tiles(res.metrics)
             if "dividend_cash" in res.metrics:

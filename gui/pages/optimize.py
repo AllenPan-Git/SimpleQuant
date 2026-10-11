@@ -8,14 +8,14 @@ from simplequant.strategies.code_strategy import explain_error
 from simplequant.engine import run_backtest
 from simplequant.engine.credibility import check_grid, check_backtest
 from simplequant.engine.optimize import (optimize, value_range, build_grid, split_prices, best_row, apply_combo,
-                                         TARGET_METRICS, MAX_COMBOS, default_workers)
+                                         yearly_ranks, TARGET_METRICS, MAX_COMBOS, default_workers)
 from simplequant.engine.walkforward import (walk_forward, make_windows, count_backtests, STITCH_MODES,
                                             MAX_BACKTESTS as WF_MAX)
 from gui import state
 from gui.common import t, lang
 from gui.components import (require_data, data_selector, strategy_selector, broker_settings, load_prices,
                             prepare_prices, metric_tile, walkforward_results, dividend_notices,
-                            unadjusted_warning, credibility_box)
+                            unadjusted_warning, fallback_warning, credibility_box)
 from gui.layout import frame, page_title
 from gui.widgets import section, df_table, plot, notice, Progress
 from ui.charts import heatmap, param_curve
@@ -190,6 +190,8 @@ def page():
                     notice(t("bt.need_assets", n=need), "warning", "warning")
                 if w := unadjusted_warning(by_id, pick.ids):
                     notice(w, "warning", "warning")
+                if w := fallback_warning(by_id, pick.ids):
+                    notice(w, "warning", "warning")
             ok = base_ready(n_combos)
             run_btn.set_enabled(ok)
             # 滚动优化：估算窗口数和回测次数
@@ -230,13 +232,14 @@ def page():
                     compare["oos_orig"] = run_backtest(outs, *strategies.resolve(spec), broker).metrics
                 ok = df[O["metric"]].notna().sum() if O["metric"] in df else 0
                 # 最优参数自身的交易检查只列出问题（样本内的成绩本来就偏乐观，不说「通过」）
-                checks = check_grid(df, O["metric"], compare) + \
-                    [c for c in check_backtest(is_res.metrics, is_res.trades, positions=is_res.positions) if c["level"] != "ok"]
+                years = yearly_ranks(df, best)
+                checks = check_grid(df, O["metric"], compare, years) + \
+                    [c for c in check_backtest(is_res.metrics, is_res.trades, positions=is_res.positions, prices=is_res.prices) if c["level"] != "ok"]
                 return dict(df=df, axes=list(ax), is_int=is_int, labels=labels, metric=O["metric"], spec=spec,
                             spec_label=strat["label"], best_spec=best_spec, compare=compare, cut=cut,
                             start=min(d.index[0] for d in prices.values()),
                             end=max(d.index[-1] for d in prices.values()), div_notes=(skipped, patched),
-                            checks=checks, tried=int(ok))
+                            checks=checks, tried=int(ok), years=years)
             try:
                 O["result"] = await run.io_bound(work)
             except Exception as e:  # noqa: BLE001
@@ -290,6 +293,23 @@ def _common_index(by_id, pick) -> pd.DatetimeIndex:
     return pd.DatetimeIndex(sorted(set.intersection(*[set(d.index) for d in prices.values()])))
 
 
+def _years_table(years: pd.DataFrame | None):
+    """最优参数逐年排名：每年在所有组合里排第几"""
+    if years is None or years.empty:
+        return
+    pct = lambda v: fmt_metric("total_return", v)
+    table = pd.DataFrame({
+        t("opt.yr_year"): years["year"].astype(str),
+        t("opt.yr_ret"): years["ret"].map(pct),
+        t("opt.yr_rank"): [t("opt.yr_rank_of", r=r, n=n) for r, n in zip(years["rank"], years["n"])],
+        t("opt.yr_median"): years["median"].map(pct),
+        t("opt.yr_top"): years["top"].map(pct),
+    })
+    with ui.expansion(t("opt.years"), icon="calendar_month").classes("w-full q-card").mark("opt_years"):
+        ui.label(t("opt.years_hint")).classes("sq-muted text-xs")
+        df_table(table)
+
+
 def _grid_results(res: dict):
     lg = lang()
     df, paths, labels, metric = res["df"], res["axes"], res["labels"], res["metric"]
@@ -320,6 +340,7 @@ def _grid_results(res: dict):
         ui.label(t("opt.robustness")).classes("font-semibold")
         df_table(table)
     credibility_box(res.get("checks", []))
+    _years_table(res.get("years"))
 
     ui.label(t("opt.landscape")).classes("font-semibold")
     with ui.card().classes("w-full p-3 gap-2"):

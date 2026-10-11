@@ -21,6 +21,12 @@ from ..i18n import L, pick, tr
 
 PERIOD = ("period", L("周期", "Period"), 20)
 P14 = ("period", L("周期", "Period"), 14)
+YEARS = ("years", L("回看年数", "Lookback (years)"), 5)
+BARS_PER_YEAR = 244      # 估值百分位：一年按 244 个交易日算；有效数据不到一年时为空
+VALUATION_SOURCES = L("BaoStock 股票日线逐日提供；AKShare 下载常见宽基 ETF / 指数时附带指数估值（每月更新）",
+                      "daily in BaoStock stock data; AKShare adds index valuation (updated monthly) to common broad-index ETFs / indices")
+PCT_DESC = L("当前估值在过去 N 年里的位置：0 = 最低，100 = 最高。不足 N 年时用已有数据（至少 1 年）",
+             "where the current valuation sits within the past N years: 0 = lowest, 100 = highest. Uses the data available if shorter (at least 1 year)")
 
 GROUPS = {
     "price": L("价格", "Price"),
@@ -98,9 +104,13 @@ INDICATORS = {
                  "desc": L("BaoStock 股票日线提供；AKShare 日线在东财接口可用时也有",
                            "from BaoStock stock daily data; AKShare daily data has it when its Eastmoney endpoint works")},
     "pe": {"label": L("市盈率 PE(TTM)", "P/E (TTM)"), "group": "valuation", "params": [], "requires": "pe",
-           "desc": L("仅 BaoStock 股票日线提供", "BaoStock stock daily data only")},
+           "desc": VALUATION_SOURCES},
     "pb": {"label": L("市净率 PB", "P/B"), "group": "valuation", "params": [], "requires": "pb",
-           "desc": L("仅 BaoStock 股票日线提供", "BaoStock stock daily data only")},
+           "desc": VALUATION_SOURCES},
+    "pe_pct": {"label": L("市盈率历史百分位(%)", "P/E percentile (%)"), "group": "valuation", "params": [YEARS],
+               "requires": "pe", "desc": PCT_DESC},
+    "pb_pct": {"label": L("市净率历史百分位(%)", "P/B percentile (%)"), "group": "valuation", "params": [YEARS],
+               "requires": "pb", "desc": PCT_DESC},
     "ps": {"label": L("市销率 PS(TTM)", "P/S (TTM)"), "group": "valuation", "params": [], "requires": "ps",
            "desc": L("仅 BaoStock 股票日线提供", "BaoStock stock daily data only")},
     # ---- 利率 / 信用利差（中债收益率曲线，所有标的共用；见 simplequant/bonds/rates.py） ----
@@ -146,6 +156,14 @@ OPS = {
     "<=": L("小于等于", "≤"),
 }
 CROSS_OPS = ("cross_above", "cross_below")
+MAX_DAYS = 60            # 条件「连续 N 根 K 线满足」的上限
+MAX_COOLDOWN = 250       # 卖出后多少根 K 线内不再买入的上限
+MAX_ADDS = 5             # 分批建仓：最多加仓几次
+ADD_WHEN = {             # 什么时候加仓
+    "gain": L("比上次买入时上涨", "price rises from the last buy by"),
+    "drop": L("比上次买入时下跌", "price falls from the last buy by"),
+    "signal": L("买入条件再次满足", "buy conditions are met again"),
+}
 LOGICS = {"all": L("全部满足", "ALL of"), "any": L("任一满足", "ANY of")}
 
 
@@ -201,10 +219,31 @@ def validate(rule: dict, lang: str = "zh") -> list[str]:
                 errors.append(prefix + tr("err.left_ind", lang))
             if op in CROSS_OPS and any(INDICATORS.get(s.get("ind"), {}).get("position") for s in (left, right)):
                 errors.append(prefix + tr("err.pnl_cross", lang))
+            days = c.get("days", 1)
+            if not _int_in(days, 1, MAX_DAYS):
+                errors.append(prefix + tr("err.days", lang, max=MAX_DAYS))
+            elif days > 1 and op in CROSS_OPS:
+                errors.append(prefix + tr("err.days_cross", lang))
+            elif days > 1 and any(INDICATORS.get(s.get("ind"), {}).get("position") for s in (left, right)):
+                errors.append(prefix + tr("err.days_pnl", lang))
     pct = rule.get("position_pct", 95)
     if not isinstance(pct, (int, float)) or not 0 < pct <= 100:
         errors.append(tr("err.pct", lang))
+    if not _int_in(rule.get("cooldown", 0), 0, MAX_COOLDOWN):
+        errors.append(tr("err.cooldown", lang, max=MAX_COOLDOWN))
+    scale = rule.get("scale")
+    if scale:
+        if not _int_in(scale.get("adds"), 1, MAX_ADDS):
+            errors.append(tr("err.adds", lang, max=MAX_ADDS))
+        if scale.get("when") not in ADD_WHEN:
+            errors.append(tr("err.add_when", lang))
+        elif scale["when"] != "signal" and not (isinstance(scale.get("pct"), (int, float)) and 0 < scale["pct"] < 100):
+            errors.append(tr("err.add_pct", lang))
     return errors
+
+
+def _int_in(v, lo: int, hi: int) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool) and lo <= v <= hi
 
 
 def describe_ind(spec: dict, lang: str = "zh") -> str:
@@ -220,7 +259,18 @@ def describe_ind(spec: dict, lang: str = "zh") -> str:
 
 
 def describe_condition(c: dict, lang: str = "zh") -> str:
-    return f"{describe_ind(c['left'], lang)} {pick(OPS.get(c['op'], c['op']), lang)} {describe_ind(c['right'], lang)}"
+    text = f"{describe_ind(c['left'], lang)} {pick(OPS.get(c['op'], c['op']), lang)} {describe_ind(c['right'], lang)}"
+    days = c.get("days", 1)
+    return text + tr("rule.days", lang, n=days) if isinstance(days, int) and days > 1 else text
+
+
+def describe_scale(rule: dict, lang: str = "zh") -> str:
+    """分批建仓的说明；没有设置时为空"""
+    s = rule.get("scale")
+    if not s:
+        return ""
+    when = pick(ADD_WHEN.get(s.get("when"), L(str(s.get("when")), str(s.get("when")))), lang) + (f" {s.get('pct', 0):g}%" if s.get("when") != "signal" else "")
+    return tr("rule.scale", lang, k=s.get("adds", 1), parts=s.get("adds", 1) + 1, when=when)
 
 
 def describe_rule(rule: dict, lang: str = "zh") -> str:
@@ -235,4 +285,8 @@ def describe_rule(rule: dict, lang: str = "zh") -> str:
         joiner = tr("rule.and" if block.get("logic", "all") == "all" else "rule.or", lang)
         parts.append(f"【{label}】" + joiner.join(describe_condition(c, lang) for c in conds))
     parts.append(f"【{tr('rule.position', lang)}】{rule.get('position_pct', 95):g}%")
+    if scale := describe_scale(rule, lang):
+        parts.append(f"【{tr('rule.scale_title', lang)}】{scale}")
+    if rule.get("cooldown"):
+        parts.append(f"【{tr('rule.cooldown_title', lang)}】" + tr("rule.cooldown", lang, n=rule["cooldown"]))
     return "\n".join(parts)

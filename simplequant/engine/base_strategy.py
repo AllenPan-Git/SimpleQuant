@@ -91,6 +91,24 @@ class BaseStrategy(bt.Strategy):
             return self._track(data, self.sell(data=data, size=-delta))
         return None
 
+    def order_add_pct(self, data, pct: float, reason: tuple = ("", {})):
+        """在现有持仓上再买入账户总资产 pct（0~1）的金额，数量按整手取整、不超过可用资金（分批建仓的加仓）"""
+        if self.has_pending(data):
+            return None
+        if self.p.trade_start is not None and data.datetime.date(0) < self.p.trade_start:
+            return None
+        price = data.close[0]
+        if price <= 0:
+            return None
+        lot = self.p.lot_size
+        size = int(self.broker.getvalue() * pct / price / lot) * lot
+        affordable = int(self.broker.getcash() / (price * (1 + self.p.cash_buffer)) / lot) * lot
+        size = min(size, affordable)
+        if size < lot:
+            return None
+        self.log("log.buy", data, name=data._name, size=size, reason=reason)
+        return self._track(data, self.buy(data=data, size=size))
+
     def _track(self, data, order):
         if order is not None:
             self._pending[data] = order

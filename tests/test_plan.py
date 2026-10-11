@@ -186,3 +186,20 @@ def test_update_index_keeps_earlier_days(tmp_path, monkeypatch):
     idx = st.load_index("sh.000300")
     assert idx.index[0] == pd.Timestamp("2019-01-01") and idx.index[-1] == pd.Timestamp("2024-06-28")
     assert idx.index.is_unique and idx.index.is_monotonic_increasing
+
+
+def test_pacing_rule_plan_version():
+    """规则用了连续 N 根 K 线 / 冷却期 / 分批建仓时写新版本号：旧版软件提示更新，而不是忽略这些设置"""
+    from simplequant.rules import make_ind
+    base = {"buy": {"logic": "all", "conditions": [{"left": make_ind("close"), "op": ">", "right": make_ind("sma")}]},
+            "sell": {"logic": "any", "conditions": []}, "position_pct": 90}
+    plain = {"kind": "rule", "rule": base}
+    assert not P.uses_pacing(plain) and not P.uses_pacing({"kind": "template", "template": "sma_cross"})
+    for extra in ({"cooldown": 5}, {"scale": {"adds": 1, "when": "signal"}}):
+        assert P.uses_pacing({"kind": "rule", "rule": {**base, **extra}})
+    streak = {"kind": "rule", "rule": {**base, "buy": {"logic": "all", "conditions": [
+        {**base["buy"]["conditions"][0], "days": 3}]}}}
+    assert P.uses_pacing(streak)
+    assert P.make_plan("x", streak, [], "2020-01-02", "2021-01-04", BrokerConfig())["version"] == P.PACING_VERSION
+    assert P.make_plan("x", plain, [], "2020-01-02", "2021-01-04", BrokerConfig())["version"] == P.TIMING_VERSION
+    assert P.PACING_VERSION <= P.VERSION

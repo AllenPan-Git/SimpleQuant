@@ -116,3 +116,13 @@ def test_script_header_and_selection_script():
     sel = selection_script(spec, asdict(BROKER), "2021-01-04", r"D:\p")
     ast.parse(sel)
     assert "run_selection" in sel and "'universe': 'hs300'" in sel
+
+
+@pytest.mark.parametrize("name", ["streak", "cooldown", "scale_gain", "scale_drop", "scale_signal"])
+def test_rule_features_export_identically(name):
+    """连续 N 根 K 线、冷却期、分批建仓：导出的 Python 脚本与回测逐笔相同"""
+    from test_platform_export import FEATURE_RULES
+    prices = {n: make_prices(seed=s, n=400) for n, s in (("A", 21), ("B", 22))}
+    code = export_and_compare({"kind": "rule", "rule": FEATURE_RULES[name]}, prices)
+    if name == "streak":
+        assert "self.streak(d, 3, lambda k:" in code

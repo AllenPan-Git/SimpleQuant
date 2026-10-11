@@ -38,6 +38,35 @@ def dataset_label(m: library.DatasetMeta, lg: str) -> str:
     return f"{m.name} · {freq_label(m.freq, lg)}{adj} · {m.start}~{m.end} · {tr('src.' + m.source, lg)}"
 
 
+def data_source_text(m: library.DatasetMeta, lg: str) -> str:
+    """一份数据实际来自哪个接口、什么复权方式（如「东方财富 · 后复权」）；旧数据没有记录接口时写数据源"""
+    prov = (m.extra or {}).get("provider", "")
+    src = tr(f"prov.{prov}", lg) if prov else tr("src." + m.source, lg)
+    return src if m.source == "csv" else f"{src} · {tr(ADJUST.get(m.adjust, 'adj.none'), lg)}"
+
+
+def sina_fallback(m: library.DatasetMeta) -> bool:
+    """ETF / 股票下载时东方财富连不上、改用了新浪财经"""
+    extra = m.extra or {}
+    return extra.get("asset") in ("etf", "stock") and extra.get("provider", "").startswith("sina")
+
+
+def sources_line(sources: dict, lg: str) -> str:
+    """回测报告里的「数据来源」：{标的名: data_source_text}。按来源分组，全部相同时只写一次，一组太多时只写个数"""
+    if not sources:
+        return ""
+    groups: dict[str, list] = {}
+    for n, s in sources.items():
+        groups.setdefault(s, []).append(n)
+    if len(groups) == 1:
+        body = next(iter(groups))
+    else:
+        zh = lg == "zh"
+        who = lambda ns: ("、" if zh else ", ").join(ns) if len(ns) <= 5 else (f"{len(ns)} 个" if zh else f"{len(ns)} assets")
+        body = ("；" if zh else "; ").join(f"{s}{'：' if zh else ': '}{who(ns)}" for s, ns in groups.items())
+    return tr("bt.sources", lg, s=body)
+
+
 def asset_names(by_id: dict, ids: list, lg: str) -> dict:
     """
     所选数据在回测里用的名称 {数据 id: 名称}。回测引擎按名称区分标的，同一代码选了两份数据（如后复权和不复权）时

@@ -3,12 +3,13 @@ AKShare 数据源：ETF / 股票 / 指数日线
 
 - ETF、股票：东方财富优先；连不上时改用新浪（data/sina.py），且之后 15 分钟内直接用新浪（data/net.py）
 - 指数：新浪优先，中证官网备用。东方财富的指数接口每次要先分页下载整张指数列表，经常失败，不再使用
+- 常见宽基 ETF / 指数附带指数的市盈率、市净率（乐咕乐股，月度；见 data/valuation.py）
 """
 
 import pandas as pd
 
 from ..i18n import L, pick
-from . import net, sina
+from . import net, sina, valuation
 from .base import DataSource, normalize, clip_dates
 
 ASSET_TYPES = {"etf": L("ETF基金", "ETF"), "stock": L("A股股票", "A-share stock"), "index": L("指数", "Index")}
@@ -20,12 +21,15 @@ class AKShareSource(DataSource):
     freqs = ("1d",)
     description = L("ETF 及股票优先使用东方财富日线（支持复权）；东方财富无法连接时自动改用新浪财经，并在随后 15 分钟内直接使用新浪。"
                     "新浪 ETF 复权价由行情与累计分红计算，与东方财富逐日一致（份额拆分或折算按当天价格跳空推算比例）；新浪股票复权为等比复权，与 BaoStock 一致。"
-                    "指数优先使用新浪财经，中证指数官网备用。数据库中记录每份数据实际使用的接口。",
+                    "指数优先使用新浪财经，中证指数官网备用。数据库中记录每份数据实际使用的接口。"
+                    "沪深300、中证500 等常见宽基 ETF / 指数附带指数的市盈率、市净率（乐咕乐股，每月更新），可用于估值百分位条件。",
                     "ETFs and stocks use Eastmoney daily bars (with price adjustment) first. If Eastmoney is unreachable, "
                     "Sina Finance is used instead, and directly for the next 15 minutes. Sina ETF adjusted prices are rebuilt "
                     "from prices plus cumulative dividends and match Eastmoney day by day (share split ratios are inferred from the price gap); Sina stock adjustment is proportional, "
                     "matching BaoStock. Indices use Sina Finance first, with the CSI website as a fallback. "
-                    "The library records which interface each dataset came from.")
+                    "The library records which interface each dataset came from. "
+                    "Common broad-index ETFs / indices such as CSI 300 and CSI 500 also get the index P/E and P/B "
+                    "(Legulegu, updated monthly) for valuation-percentile conditions.")
 
     def fetch(self, symbol, start, end, freq="1d", adjust="hfq", asset="etf", **kwargs):
         if freq != "1d":
@@ -52,6 +56,8 @@ class AKShareSource(DataSource):
         if df.empty:
             raise ValueError(f"No data for {symbol} in {start} ~ {end} / {symbol} 在该区间内无数据")
         df.attrs["provider"] = provider          # 实际使用的接口，存进数据库元数据供界面显示
+        if asset in ("etf", "index"):            # 常见宽基 ETF / 指数附上指数估值（月度，见 data/valuation.py）
+            df = valuation.try_attach(df, symbol, asset)
         return df
 
 

@@ -3,6 +3,7 @@
 - 对策略描述中任意数值（模板参数、规则里的指标周期/比较值/仓位）做网格搜索
 - 多进程并行；进程池不可用时自动退回单进程
 - 支持样本内/样本外切分：在前段数据上找最优参数，再到后段数据上检验，识别过拟合
+- 每个组合另记各自然年的收益（列名 year:2021 …），用来看最优参数逐年在所有组合里排第几
 """
 
 import itertools
@@ -18,6 +19,7 @@ from ..strategies.code_strategy import explain_error
 from .runner import run_backtest, BrokerConfig
 
 MAX_COMBOS = 500
+YEAR = "year:"           # 结果表里各年收益的列名前缀
 # 可作为优化目标的指标（均为越大越好；最大回撤是负数，越接近 0 越好）
 TARGET_METRICS = ["sharpe", "total_return", "cagr", "calmar", "max_drawdown", "excess_return",
                   "win_rate", "profit_factor"]
@@ -64,10 +66,20 @@ def _init(prices, broker):
     _G["prices"], _G["broker"] = prices, broker
 
 
+def yearly_returns(value: pd.Series, initial_cash: float) -> dict:
+    """各自然年的收益：年末资产 / 上年末资产 − 1（第一年相对初始资金）。返回 {"year:2021": 0.12, ...}"""
+    if value.empty:
+        return {}
+    ends = value.groupby(value.index.year).last()
+    prev = ends.shift(1).fillna(initial_cash)
+    return {f"{YEAR}{y}": float(e / p - 1) if p else np.nan for y, e, p in zip(ends.index, ends, prev)}
+
+
 def _run(spec):
     try:
         cls, params = resolve(spec)
-        return run_backtest(_G["prices"], cls, params, _G["broker"]).metrics
+        res = run_backtest(_G["prices"], cls, params, _G["broker"])
+        return {**res.metrics, **yearly_returns(res.equity["value"], _G["broker"].cash)}
     except Exception as e:  # noqa: BLE001 - 单个组合失败不影响整体
         return {"error": explain_error(e)}
 
@@ -121,6 +133,26 @@ def best_row(df: pd.DataFrame, metric: str) -> pd.Series:
     if ok.empty:
         raise ValueError("all combinations failed / 所有组合都失败了")
     return ok.sort_values(metric, ascending=False).iloc[0]
+
+
+def year_columns(df: pd.DataFrame) -> list[str]:
+    return [c for c in df.columns if isinstance(c, str) and c.startswith(YEAR)]
+
+
+def yearly_ranks(df: pd.DataFrame, best: pd.Series) -> pd.DataFrame:
+    """
+    最优参数在每一年的所有组合里排第几（按当年收益，1 = 最好）
+    :return: 每年一行：year, ret（最优参数当年收益）, rank, n（当年有结果的组合数）, top（当年最好的收益）, median
+    """
+    rows = []
+    for c in year_columns(df):
+        vals = df[c].dropna()
+        mine = best.get(c, np.nan)
+        if vals.empty or not np.isfinite(mine):
+            continue
+        rows.append(dict(year=int(c[len(YEAR):]), ret=float(mine), rank=int((vals > mine + 1e-12).sum()) + 1,
+                         n=len(vals), top=float(vals.max()), median=float(vals.median())))
+    return pd.DataFrame(rows, columns=["year", "ret", "rank", "n", "top", "median"])
 
 
 def apply_combo(spec: dict, row: pd.Series, is_int: dict[str, bool]) -> dict:

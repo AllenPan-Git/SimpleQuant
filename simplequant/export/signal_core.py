@@ -306,6 +306,21 @@ class _Orders(object):
             return self._add(name, -current if target <= 0 else delta, reason)
         return False
 
+    def add(self, name, pct, reason):
+        """在现有持仓上再买入总资产 pct 的金额（分批建仓的加仓，与 BaseStrategy.order_add_pct 一致）"""
+        if name in self.ordered:
+            return False
+        price = self.close(name)
+        if price <= 0:
+            return False
+        size = int(self.value * pct / price / LOT) * LOT
+        affordable = int(self.book["cash"] / (price * (1 + CASH_BUFFER)) / LOT) * LOT
+        size = min(size, affordable)
+        if size < LOT:
+            return False
+        self.state.setdefault("bought_at", {})[name] = self.bars(name)
+        return self._add(name, size, reason)
+
     def _add(self, name, delta, reason):
         self.orders.append((name, int(delta), reason))
         self.ordered.add(name)
@@ -364,15 +379,19 @@ def _check(cond, lines, book_pos, close):
         b, _ = _operand_line(lines, right, n)
         return sq_cross(a, b, n - 1) == (1 if op == "cross_above" else -1)
 
-    def value(spec):
+    def value(spec, k):
         if "value" in spec:
             return float(spec["value"])
         if spec["ind"] == "pnl_pct":
             shares, cost = int(book_pos.get("shares", 0)), float(book_pos.get("cost", 0) or 0)
             return (close[-1] / cost - 1) * 100 if shares > 0 and cost > 0 else NAN
-        return float(lines.get(spec)[0][-1])
-    x, y = value(left), value(right)
-    return not (math.isnan(x) or math.isnan(y)) and _CMP[op](x, y)
+        return float(lines.get(spec)[0][-1 - k])
+
+    def at(k):
+        x, y = value(left, k), value(right, k)
+        return not (math.isnan(x) or math.isnan(y)) and _CMP[op](x, y)
+    # 连续 days 根 K 线都满足（含最新一根）；之前的 K 线不够时不满足
+    return all(n > k and at(k) for k in range(int(cond.get("days", 1))))
 
 
 def _hit(rule, side, lines, book_pos, close):
@@ -392,13 +411,32 @@ def _run_rule(spec, hist, o):
     if any(len(hist[n]["close"]) < warm for n in names):
         return
     slot = rule.get("position_pct", 95) / 100.0 / len(names)
+    # 与 RuleStrategy.next 一致：分批建仓首次买 1 份，加仓、冷却都按发出委托时的 K 线序号计（存在 state 里）
+    scale, cooldown = rule.get("scale"), int(rule.get("cooldown", 0))
+    parts = scale["adds"] + 1 if scale else 1
+    sold_at, adds, ref = (o.state.setdefault(k, {}) for k in ("sold_at", "adds", "ref"))
     for n in names:
         pos = o.book["pos"].get(n) or {}
-        holding = o.shares(n) > 0
-        if not holding and _hit(rule, "buy", lines[n], pos, hist[n]["close"]):
-            o.target(n, slot, "rule buy / 满足买入条件")
-        elif holding and _hit(rule, "sell", lines[n], pos, hist[n]["close"]):
-            o.target(n, 0, "rule sell / 满足卖出条件")
+        close = hist[n]["close"]
+        if o.shares(n) <= 0:
+            if cooldown and n in sold_at and o.bars(n) - sold_at[n] <= cooldown:
+                continue
+            if _hit(rule, "buy", lines[n], pos, close) and o.target(n, slot / parts, "rule buy / 满足买入条件"):
+                adds[n], ref[n] = 0, float(close[-1])
+        elif _hit(rule, "sell", lines[n], pos, close):
+            if o.target(n, 0, "rule sell / 满足卖出条件"):
+                sold_at[n] = o.bars(n)
+        elif scale and n in ref and adds[n] < scale["adds"] and _add_due(rule, scale, lines[n], pos, close, ref[n]):
+            k = adds[n] + 1
+            if o.add(n, slot / parts, "scale in #%d / 分批建仓第 %d 次加仓" % (k, k)):
+                adds[n], ref[n] = k, float(close[-1])
+
+
+def _add_due(rule, scale, lines, pos, close, ref):
+    if scale["when"] == "signal":
+        return _hit(rule, "buy", lines, pos, close)
+    pct = float(scale["pct"]) / 100
+    return close[-1] >= ref * (1 + pct) if scale["when"] == "gain" else close[-1] <= ref * (1 - pct)
 
 
 def _run_template(spec, hist, o, state):

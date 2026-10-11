@@ -61,6 +61,15 @@ def notice(text: str, icon: str = "info", kind: str = "info"):
     return row
 
 
+def folder_btn(label: str, folder):
+    """「打开文件夹」小按钮：路径只在鼠标悬停时显示，录屏、截图时不露出本机路径"""
+    from simplequant.system import open_folder
+    btn = ui.button(label, icon="folder_open", on_click=lambda: open_folder(folder)).props("flat dense no-caps size=sm").classes("sq-muted")
+    with btn:
+        ui.tooltip(str(folder))
+    return btn
+
+
 def download_btn(label: str, make, filename: str, media_type: str = "", icon: str = "download", props: str = ""):
     """点击时才生成内容的下载按钮（make() 返回 bytes / str）"""
     return ui.button(label, icon=icon, on_click=lambda: ui.download.content(make(), filename, media_type)) \

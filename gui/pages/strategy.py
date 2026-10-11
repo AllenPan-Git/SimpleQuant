@@ -4,12 +4,14 @@ from nicegui import run, ui
 
 from simplequant import llm, strategies
 from simplequant.data import library
-from simplequant.rules import INDICATORS, GROUPS, OPS, CROSS_OPS, LOGICS, validate, make_ind
+from simplequant.rules import INDICATORS, GROUPS, OPS, CROSS_OPS, LOGICS, validate, make_ind, describe_rule
+from simplequant.rules.schema import MAX_DAYS, MAX_COOLDOWN, MAX_ADDS, ADD_WHEN
+from simplequant.rules.hints import condition_notes, wording_hints, rule_signature
 from simplequant.strategies import TEMPLATES, code_strategy
 from gui import state
 from gui.common import t, p, lang
 from gui.layout import frame, page_title
-from gui.widgets import section, code_editor
+from gui.widgets import section, code_editor, notice
 from ui.shared import PRESETS, cond, clean, with_ids
 
 GROUP_ORDER = list(GROUPS)
@@ -291,9 +293,22 @@ def cond_editor(side_block: dict, c: dict, changed, redraw_side):
 
             def on_op(e):
                 c["op"] = e.value
+                if e.value in CROSS_OPS:         # 上穿 / 下穿只在一根 K 线上成立，不能设连续
+                    c.pop("days", None)
+                draw()
                 changed()
-            ui.select({o: p(OPS[o]) for o in ops}, value=c["op"], on_change=on_op).props(DENSE) \
-                .classes("w-32").mark("op")
+
+            def on_days(e):
+                if e.value is not None:
+                    c["days"] = max(1, min(MAX_DAYS, int(e.value)))
+                    changed()
+            with ui.column().classes("gap-1 w-32"):
+                ui.select({o: p(OPS[o]) for o in ops}, value=c["op"], on_change=on_op).props(DENSE) \
+                    .classes("w-full").mark("op")
+                if c["op"] not in CROSS_OPS and not position:
+                    ui.number(t("strat.days"), value=c.get("days", 1), min=1, max=MAX_DAYS, step=1, precision=0,
+                              on_change=on_days).props("outlined dense").classes("w-full") \
+                        .tooltip(t("strat.days_help")).mark("days")
 
             with ui.column().classes("gap-2").style("flex: 5"):
                 is_value = "value" in c["right"]
@@ -390,6 +405,65 @@ def _rule_editor(S, ctx):
             changed()
         ui.slider(min=10, max=100, step=5, value=S["rule"]["position_pct"], on_change=on_pct).props("label")
 
+    _pacing_editor(S["rule"], changed)
+
+
+def _pacing_editor(rule: dict, changed):
+    """交易节奏：卖出后 N 根 K 线内不再买入、分批建仓"""
+    with ui.card().classes("w-full gap-3"):
+        ui.label(t("strat.pacing")).classes("font-medium")
+
+        def on_cooldown(e):
+            if e.value is not None:
+                n = max(0, min(MAX_COOLDOWN, int(e.value)))
+                if n:
+                    rule["cooldown"] = n
+                else:
+                    rule.pop("cooldown", None)
+                changed()
+        ui.number(t("strat.cooldown"), value=rule.get("cooldown", 0), min=0, max=MAX_COOLDOWN, step=1, precision=0,
+                  on_change=on_cooldown).props("outlined dense").classes("w-64") \
+            .tooltip(t("strat.cooldown_help")).mark("cooldown")
+
+        box = ui.column().classes("w-full gap-2")
+
+        def draw():
+            box.clear()
+            scale = rule.get("scale")
+            with box:
+                def on_switch(e):
+                    if e.value:
+                        rule["scale"] = {"adds": 2, "when": "drop", "pct": 5.0}
+                    else:
+                        rule.pop("scale", None)
+                    draw()
+                    changed()
+                ui.switch(t("strat.scale"), value=bool(scale), on_change=on_switch).mark("scale")
+                if not scale:
+                    return
+                with ui.row().classes("w-full items-start gap-3"):
+                    def set_field(k, cast):
+                        def f(e):
+                            if e.value is not None:
+                                scale[k] = cast(e.value)
+                                if k == "when":
+                                    draw()
+                                changed()
+                        return f
+                    ui.number(t("strat.scale_adds"), value=scale["adds"], min=1, max=MAX_ADDS, step=1, precision=0,
+                              on_change=set_field("adds", lambda v: max(1, min(MAX_ADDS, int(v))))) \
+                        .props("outlined dense").classes("w-36")
+                    ui.select({k: p(v) for k, v in ADD_WHEN.items()}, label=t("strat.scale_when"), value=scale["when"],
+                              on_change=set_field("when", str)).props(DENSE).classes("w-56").mark("scale_when")
+                    if scale["when"] != "signal":
+                        scale.setdefault("pct", 5.0)
+                        ui.number(t("strat.scale_pct"), value=scale["pct"], min=0.1, max=99, step=0.5,
+                                  on_change=set_field("pct", float)).props("outlined dense").classes("w-36")
+                    else:
+                        scale.pop("pct", None)
+                ui.label(t("strat.scale_help", parts=scale["adds"] + 1)).classes("sq-muted text-xs")
+        draw()
+
 
 # ---------------- 自己写代码 ----------------
 def _code_editor(S, ctx):
@@ -444,6 +518,26 @@ def _code_editor(S, ctx):
 
 
 # ---------------- 一句话生成 ----------------
+def _ai_condition_notes(rule: dict, S):
+    """逐条标出「状态」还是「事件」，说法对不上、多次生成不一致时提醒"""
+    lg = lang()
+    notes = condition_notes(rule, lg)
+    if notes:
+        with ui.column().classes("w-full gap-1").mark("ai_cond_notes"):
+            ui.label(t("ai.cond_title")).classes("text-sm font-medium")
+            for n in notes:
+                with ui.row().classes("items-center gap-2 no-wrap"):
+                    ui.badge(t(f"ai.kind_{n['kind']}"), color="primary" if n["kind"] == "event" else "grey-7") \
+                        .props("outline").tooltip(t(f"ai.kind_{n['kind']}_help"))
+                    ui.label(f"{t('rule.' + n['side'])}：{n['text']}" if lg == "zh" else
+                             f"{t('rule.' + n['side'])}: {n['text']}").classes("text-sm")
+            ui.label(t("ai.kind_legend")).classes("sq-muted text-xs")
+    for key in wording_hints(rule, S.get("ai_text", "")):
+        notice(t(key), "compare_arrows", "warning")
+    if S.get("ai_changed"):
+        notice(t("ai.changed", prev=S["ai_changed"]), "difference", "warning").mark("ai_changed")
+
+
 def _ai_editor(S, ctx):
     cfg = llm.load_config()
     ready = bool(cfg and cfg.ready)
@@ -472,6 +566,13 @@ def _ai_editor(S, ctx):
                 res = await run.io_bound(llm.translate, S["ai_text"], llm.get_provider(cfg), lang())
                 S["ai_result"], S["ai_symbols"], S["name"] = res, res.symbols, res.name
                 ctx.set_name(res.name)
+                # 同一段描述再次生成、规则却不同：描述有歧义，提醒核对
+                key, rule = " ".join(S["ai_text"].split()), res.spec["rule"]
+                sig, prev = rule_signature(rule), S.setdefault("ai_prev", {}).get(key)
+                S["ai_changed"] = prev[1] if res.ok and prev and prev[0] != sig else None
+                if res.ok:
+                    # 提示条是 Markdown，行尾两个空格才换行
+                    S["ai_prev"][key] = (sig, describe_rule(rule, lang()).replace("\n", "  \n"))
             except llm.LLMError as e:
                 S["ai_result"] = None
                 ui.notify(str(e), type="negative", multi_line=True)
@@ -508,6 +609,8 @@ def _ai_editor(S, ctx):
             with ui.row().classes("w-full items-start gap-2 no-wrap sq-note py-2"):
                 ui.icon("psychology").classes("text-primary")
                 ui.label(res.understood or "—").classes("text-sm")
+            if res.ok:
+                _ai_condition_notes(res.spec["rule"], S)
             if res.unsupported:
                 with ui.column().classes("w-full gap-1 rounded-lg px-3 py-2").style(
                         "border: 1px solid rgba(245,158,11,.4); background: rgba(245,158,11,.08)"):

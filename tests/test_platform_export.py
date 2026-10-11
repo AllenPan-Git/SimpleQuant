@@ -396,3 +396,53 @@ def test_qmt_does_nothing_outside_backtest():
     ns["init"](ctx)
     ns["handlebar"](ctx)
     assert calls == []
+
+
+def _with(rule, **extra):
+    return {**rule, **extra}
+
+
+STREAK_RULE = {
+    "buy": {"logic": "all", "conditions": [
+        {"left": make_ind("close"), "op": ">", "right": make_ind("sma", period=20), "days": 3},
+        {"left": make_ind("rsi", period=14), "op": "<", "right": {"value": 75}, "days": 2},
+    ]},
+    "sell": {"logic": "any", "conditions": [
+        {"left": make_ind("close"), "op": "<", "right": make_ind("sma", period=20), "days": 2},
+        {"left": {"ind": "pnl_pct"}, "op": "<", "right": {"value": -6}},
+    ]},
+    "position_pct": 90,
+}
+# 条件「连续 N 根 K 线」、冷却期、三种加仓时机：导出脚本每一笔委托都与回测相同
+FEATURE_RULES = {
+    "streak": STREAK_RULE,
+    "cooldown": _with(STREAK_RULE, cooldown=50),
+    "scale_gain": _with(STREAK_RULE, scale={"adds": 2, "when": "gain", "pct": 2}),
+    "scale_drop": _with(STREAK_RULE, scale={"adds": 3, "when": "drop", "pct": 1.5}, cooldown=3),
+    "scale_signal": _with(STREAK_RULE, scale={"adds": 1, "when": "signal"}),
+}
+
+
+@pytest.mark.parametrize("platform", list(RUNNERS))
+@pytest.mark.parametrize("name", list(FEATURE_RULES))
+def test_rule_features(platform, name):
+    prices = {n: make_prices(seed=s, n=400) for n, s in (("A", 21), ("B", 22))}
+    export_and_compare(platform, {"kind": "rule", "rule": FEATURE_RULES[name]}, prices)
+
+
+def test_rule_features_change_orders():
+    """每个新设置确实改变了交易（否则上面的一致性测试说明不了什么）"""
+    prices = {n: make_prices(seed=s, n=400) for n, s in (("A", 21), ("B", 22))}
+
+    def orders(rule):
+        return run_backtest(prices, *strategies.resolve({"kind": "rule", "rule": rule}), BROKER).orders
+
+    base = orders(STREAK_RULE)
+    one_day = {**STREAK_RULE, "buy": {"logic": "all", "conditions": [
+        {**c, "days": 1} for c in STREAK_RULE["buy"]["conditions"]]}}
+    assert len(orders(one_day)) != len(base)
+    for name in ("cooldown", "scale_gain", "scale_drop", "scale_signal"):
+        got = orders(FEATURE_RULES[name])
+        assert len(got) and not got[["time", "side", "size"]].equals(base[["time", "side", "size"]]), name
+    adds = orders(FEATURE_RULES["scale_gain"])
+    assert (adds.groupby("symbol")["side"].apply(lambda s: (s == "buy").sum()) > 0).all()

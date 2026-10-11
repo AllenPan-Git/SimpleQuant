@@ -73,3 +73,29 @@ def test_asset_names_tell_same_symbol_apart():
     assert "不复权" in names["b"] and "后复权" in names["a"]
     assert all(_code6(n) == symbol_of(n) == "515080" for n in (names["a"], names["b"]))   # 仍能识别代码
     assert shared.asset_names(by_id, ["a", "c"], "zh") == {"a": "515080", "c": "510300 沪深300ETF"}
+
+
+def test_data_sources_and_fallback():
+    """回测报告注明数据来源；东方财富连不上改用新浪的股票数据要提醒复权口径不同"""
+    from simplequant.data.library import DatasetMeta
+    em = DatasetMeta(id="a", name="510300", symbol="510300", source="akshare", freq="1d", adjust="hfq",
+                     extra={"asset": "etf", "provider": "eastmoney"})
+    sina = DatasetMeta(id="b", name="600519", symbol="600519", source="akshare", freq="1d", adjust="hfq",
+                       extra={"asset": "stock", "provider": "sina+factors"})
+    old = DatasetMeta(id="c", name="510500", symbol="510500", source="akshare", freq="1d", adjust="")
+    csv = DatasetMeta(id="d", name="X", symbol="X", source="csv", freq="1d", adjust="hfq")
+    assert shared.data_source_text(em, "zh") == "东方财富 · 后复权"
+    assert shared.data_source_text(sina, "zh") == "新浪财经·等比复权 · 后复权"
+    assert shared.data_source_text(old, "zh") == "AKShare · 不复权"          # 旧数据没记录接口
+    assert shared.data_source_text(csv, "zh") == "CSV 导入"
+    assert shared.sina_fallback(sina) and not shared.sina_fallback(em) and not shared.sina_fallback(old)
+    idx = DatasetMeta(id="e", name="000300", symbol="000300", source="akshare", freq="1d", adjust="",
+                      extra={"asset": "index", "provider": "sina"})
+    assert not shared.sina_fallback(idx)                                      # 指数本来就先用新浪
+
+    assert shared.sources_line({}, "zh") == ""
+    assert shared.sources_line({"A": "东方财富 · 后复权", "B": "东方财富 · 后复权"}, "zh") == "数据来源：东方财富 · 后复权"
+    line = shared.sources_line({"A": "东方财富 · 后复权", "B": "新浪财经 · 后复权"}, "zh")
+    assert line == "数据来源：东方财富 · 后复权：A；新浪财经 · 后复权：B"
+    many = shared.sources_line({str(i): "东方财富 · 后复权" for i in range(8)} | {"Z": "新浪财经 · 后复权"}, "en")
+    assert many == "Data source: 东方财富 · 后复权: 8 assets; 新浪财经 · 后复权: Z"

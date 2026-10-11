@@ -312,3 +312,38 @@ def test_strategy_store(tmp_path):
     assert strategies.list_strategies(tmp_path) == {"我的/均线": spec}
     strategies.delete_strategy("我的/均线", tmp_path)
     assert strategies.list_strategies(tmp_path) == {}
+
+
+def test_validate_and_describe_pacing():
+    """连续 N 根 K 线、冷却期、分批建仓的校验与说明"""
+    def rule(**extra):
+        c = {"left": make_ind("close"), "op": ">", "right": make_ind("sma", period=20)}
+        c.update(extra.pop("cond", {}))
+        return {"buy": {"logic": "all", "conditions": [c]}, "sell": {"conditions": []}, "position_pct": 90, **extra}
+    assert validate(rule(cond={"days": 3}, cooldown=5, scale={"adds": 2, "when": "gain", "pct": 3})) == []
+    assert validate(rule(scale={"adds": 1, "when": "signal"})) == []
+    assert validate(rule(cond={"days": 0}))
+    assert validate(rule(cond={"days": 2.5}))
+    assert validate(rule(cond={"days": 2, "op": "cross_above"}))              # 上穿不能连续
+    assert validate(rule(cond={"days": 2, "left": {"ind": "pnl_pct"}, "right": {"value": 5}}))
+    assert validate(rule(cooldown=-1)) and validate(rule(cooldown=1000))
+    assert validate(rule(scale={"adds": 0, "when": "gain", "pct": 3}))
+    assert validate(rule(scale={"adds": 2, "when": "later"}))
+    assert validate(rule(scale={"adds": 2, "when": "drop"}))                  # 下跌加仓要给幅度
+    text = describe_rule(rule(cond={"days": 3}, cooldown=5, scale={"adds": 2, "when": "drop", "pct": 4}))
+    assert "（连续 3 根 K 线）" in text and "卖出后 5 根 K 线内不再买入" in text
+    assert "仓位分 3 份" in text and "比上次买入时下跌 4%" in text
+    en = describe_rule(rule(cond={"days": 3}, scale={"adds": 1, "when": "signal"}), "en")
+    assert "for 3 bars in a row" in en and "buy conditions are met again" in en
+
+
+def test_tunables_include_pacing():
+    spec = {"kind": "rule", "rule": {
+        "buy": {"logic": "all", "conditions": [{"left": make_ind("close"), "op": ">", "right": make_ind("sma"), "days": 3}]},
+        "sell": {"conditions": []}, "position_pct": 90, "cooldown": 5, "scale": {"adds": 2, "when": "gain", "pct": 3}}}
+    paths = {tb.path: tb for tb in strategies.tunables(spec)}
+    assert paths["rule.buy.conditions.0.days"].is_int and paths["rule.cooldown"].value == 5
+    assert paths["rule.scale.adds"].max == 5 and not paths["rule.scale.pct"].is_int
+    plain = {"kind": "rule", "rule": {**spec["rule"], "cooldown": 0, "scale": None}}
+    plain["rule"]["buy"]["conditions"][0]["days"] = 1
+    assert not {"rule.cooldown", "rule.scale.adds", "rule.buy.conditions.0.days"} & {tb.path for tb in strategies.tunables(plain)}

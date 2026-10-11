@@ -15,7 +15,7 @@ from ..i18n import L, pick
 INTERVAL = {"sina": 0.25}
 PAUSE = 15 * 60
 SITE_NAMES = {"eastmoney": L("东方财富", "Eastmoney"), "sina": L("新浪财经", "Sina Finance"),
-              "csindex": L("中证指数官网", "CSI website")}
+              "csindex": L("中证指数官网", "CSI website"), "legu": L("乐咕乐股", "Legulegu")}
 
 _lock = threading.Lock()
 _last: dict[str, float] = {}

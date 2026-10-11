@@ -18,6 +18,7 @@ from .rule_strategy import RuleStrategy
 from . import code_strategy
 from ..i18n import pick, tr
 from ..rules import describe_rule, describe_ind, INDICATORS
+from ..rules.schema import MAX_DAYS, MAX_COOLDOWN, MAX_ADDS
 from ..paths import STRATEGY_DIR
 
 STORE_DIR = STRATEGY_DIR
@@ -147,8 +148,20 @@ def tunables(spec: dict, lang: str = "zh") -> list[Tunable]:
                     out.append(Tunable(f"{base}.params.{name}",
                                        f"{prefix} · {describe_ind(s, lang)} · {pick(plabel, lang)}",
                                        v, isinstance(default, int), min=1 if isinstance(default, int) else 0.1))
+            if c.get("days", 1) > 1:             # 设了「连续 N 根 K 线」才列出
+                what = "连续 K 线数" if lang == "zh" else "bars in a row"
+                out.append(Tunable(f"rule.{side}.conditions.{i}.days", f"{prefix} · {what}", c["days"], True, 1, MAX_DAYS))
     out.append(Tunable("rule.position_pct", tr("rule.position", lang) + " (%)",
                        rule.get("position_pct", 95), True, 10, 100))
+    if rule.get("cooldown"):
+        out.append(Tunable("rule.cooldown", tr("rule.cooldown_title", lang), rule["cooldown"], True, 0, MAX_COOLDOWN))
+    if scale := rule.get("scale"):
+        title = tr("rule.scale_title", lang)
+        out.append(Tunable("rule.scale.adds", f"{title} · {'加仓次数' if lang == 'zh' else 'adds'}", scale["adds"],
+                           True, 1, MAX_ADDS))
+        if scale.get("when") != "signal":
+            out.append(Tunable("rule.scale.pct", f"{title} · {'涨跌幅' if lang == 'zh' else 'move'} (%)",
+                               scale["pct"], False, 0.1, 99))
     return out
 
 

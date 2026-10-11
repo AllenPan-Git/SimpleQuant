@@ -16,7 +16,7 @@ from gui.common import t, p, lang
 from gui.layout import frame, page_title
 from gui.widgets import df_table, plot, Progress
 from ui.charts import preview_chart
-from ui.shared import POPULAR, ADJUST, parse_symbols, import_csv, dataset_label
+from ui.shared import POPULAR, ADJUST, parse_symbols, import_csv, dataset_label, sina_fallback
 
 
 def page():
@@ -106,8 +106,14 @@ def _download_tab(on_change):
                     try:
                         meta = await run.io_bound(fetch_to_library, key, sym, start.value, end.value, freq=freq.value,
                                                   adjust=adj, name=name, force=force.value, **kwargs)
-                        _status(row, "check_circle", "text-positive",
-                                t("data.fetched", sym=sym, n=meta.rows, start=meta.start, end=meta.end))
+                        text = t("data.fetched", sym=sym, n=meta.rows, start=meta.start, end=meta.end)
+                        if sina_fallback(meta):        # 东方财富连不上，改用了新浪：说明一下，股票还要提醒复权口径不同
+                            note = t("data.fallback", prov=t(f"prov.{meta.extra['provider']}"))
+                            if meta.extra.get("asset") == "stock" and meta.adjust:
+                                note += t("data.fallback_stock")
+                            _status(row, "check_circle", "text-warning", text, note, "text-sm sq-muted")
+                        else:
+                            _status(row, "check_circle", "text-positive", text)
                     except Exception as e:  # noqa: BLE001
                         _status(row, "error", "text-negative", t("data.fetch_failed", sym=sym), str(e))
             finally:
@@ -158,13 +164,13 @@ def _rates_card():
             .classes("self-start").mark("rates_update")
 
 
-def _status(row, icon: str, color: str, text: str, detail: str = ""):
+def _status(row, icon: str, color: str, text: str, detail: str = "", detail_cls: str = "text-sm text-negative"):
     row.clear()
     with row:
         ui.icon(icon).classes(color)
         ui.label(text)
         if detail:
-            ui.label(detail).classes("text-sm text-negative").style("white-space: pre-line")   # 各接口的原因分行显示
+            ui.label(detail).classes(detail_cls).style("white-space: pre-line")   # 各接口的原因分行显示
 
 
 # ---------------- 导入 CSV ----------------
@@ -272,7 +278,8 @@ def _library_view(refresh):
     df_table(pd.DataFrame([{
         t("lib.name"): m.name, t("lib.freq"): freq_label(m.freq, lg),
         t("lib.source"): t(f"src.{m.source}") + (f"（{t('prov.' + m.extra['provider'])}）"
-                                                 if m.extra.get("provider") else ""),
+                                                 if m.extra.get("provider") else "")
+        + (t("lib.valuation") if m.extra.get("valuation") else ""),
         t("lib.adjust"): t(ADJUST.get(m.adjust, "adj.none")), t("lib.start"): m.start, t("lib.end"): m.end,
         t("lib.rows"): m.rows, t("lib.updated"): m.created} for m in metas]))
 

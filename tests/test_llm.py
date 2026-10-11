@@ -532,3 +532,24 @@ def test_trade_details_names_and_explain_message():
     msg, system = fake.calls[0]["messages"][0]["content"], fake.calls[0]["system"]
     assert "Trade details" in msg and '"unrealized_return": -0.1' in msg and "平安银行(000001)" in msg
     assert "closed trades only" in system and "positions still open at the end" in system
+
+
+def test_to_rule_pacing():
+    """模型输出的连续天数、冷却期、分批建仓转成规则；不合适的设置被去掉或截到范围内"""
+    ind = lambda k, **p: {"kind": "indicator", "ind": k, "line": "", "value": 0,
+                          "params": [{"name": n, "value": v} for n, v in p.items()]}
+    val = lambda v: {"kind": "value", "ind": "close", "line": "", "params": [], "value": v}
+    out = {"buy": {"logic": "all", "conditions": [
+               {"left": ind("close"), "op": ">", "right": ind("sma", period=20), "days": 3},
+               {"left": ind("close"), "op": "cross_above", "right": ind("sma", period=60), "days": 2}]},
+           "sell": {"logic": "any", "conditions": [{"left": ind("pnl_pct"), "op": "<", "right": val(-5), "days": 4}]},
+           "position_pct": 90, "cooldown": 999, "scale": {"adds": 2, "when": "drop", "pct": 5}}
+    rule = to_rule(out)
+    assert [c.get("days", 1) for c in rule["buy"]["conditions"]] == [3, 1]       # 上穿不能连续
+    assert "days" not in rule["sell"]["conditions"][0]                              # 持仓收益率不能连续
+    assert rule["cooldown"] == 250 and rule["scale"] == {"adds": 2, "when": "drop", "pct": 5.0}
+    assert validate(rule) == []
+    plain = to_rule({**out, "cooldown": 0, "scale": {"adds": 0, "when": "none", "pct": 0}})
+    assert "cooldown" not in plain and "scale" not in plain
+    assert to_rule({**out, "scale": {"adds": 1, "when": "signal", "pct": 3}})["scale"] == {"adds": 1, "when": "signal"}
+    assert validate(to_rule({**out, "scale": {"adds": 1, "when": "gain", "pct": 0}}))     # 缺幅度：校验报错，发回模型

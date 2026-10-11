@@ -117,3 +117,28 @@ def test_describe_in_english():
     text = describe_rule(RULE["rule"], "en")
     assert "SMA(5) crosses above SMA(20)" in text and "Position P&L (%) < -5" in text
     assert "SMA crossover" in strategies.describe(SMA, "en")
+
+
+def test_yearly_returns_and_ranks():
+    """各年收益连乘 = 总收益；最优参数逐年排名按当年收益比较所有组合"""
+    from simplequant.engine.optimize import yearly_ranks, year_columns
+    prices = {"A": make_prices()}
+    df = optimize(prices, SMA, {"params.fast": [3, 5, 8], "params.slow": [20, 30]}, BrokerConfig(), workers=1)
+    cols = year_columns(df)
+    assert len(cols) >= 2
+    growth = (1 + df[cols]).prod(axis=1) - 1
+    assert growth.to_numpy() == pytest.approx(df["total_return"].to_numpy())
+    best = best_row(df, "sharpe")
+    yr = yearly_ranks(df, best)
+    assert len(yr) == len(cols) and (yr["n"] == 6).all()
+    for r in yr.itertuples():
+        vals = df[f"year:{r.year}"]
+        assert r.rank == int((vals > r.ret + 1e-12).sum()) + 1 and r.top == pytest.approx(vals.max())
+
+
+def test_param_curve_hover_has_no_padded_zeros():
+    """d3 的 :g 会补成 6 位有效数字（-8 → -8.00000），参数值要用 ~g"""
+    from ui.charts import param_curve
+    df = pd.DataFrame({"v": [-8.0, -3.0], "sharpe": [0.5, 0.8]})
+    fig = param_curve(df, "v", "sharpe", "卖出2 · 数值")
+    assert "%{x:~g}" in fig.data[0].hovertemplate

@@ -23,8 +23,9 @@ from ..engine import limits as limits_module
 from ..engine.market import t0_names
 from ..i18n import pick
 from ..rules import INDICATORS, default_line
+from ..rules.schema import BARS_PER_YEAR
 from ..strategies import templates as tpl_module
-from ..strategies.factors import KDJ, OBV
+from ..strategies.factors import KDJ, OBV, Percentile
 from ..strategies.registry import TEMPLATES
 from ..stocks.dividends import tax_rate
 from ..system import venv_python
@@ -58,6 +59,9 @@ def _line_expr(spec: dict) -> tuple[str, str]:
         return ind, f"d.{ind}"
     if ind in ("turnover", "pe", "pb", "ps"):
         return ind, f"d.{ind}"
+    if ind in ("pe_pct", "pb_pct"):
+        col, years = INDICATORS[ind]["requires"], n("years")
+        return f"{ind}_{years}", f"Percentile(d.{col}, window={years * BARS_PER_YEAR}, min_count={BARS_PER_YEAR}).pct"
     if INDICATORS.get(ind, {}).get("macro"):
         raise ValueError("rates indicators are not supported in the exported script yet / 利率类条件暂不支持导出为独立脚本")
     if ind == "obv":
@@ -109,7 +113,8 @@ def rule_strategy_code(rule: dict, lang: str = "zh") -> str:
     conds = {"buy": [], "sell": []}
     ops = {">": ">", "<": "<", ">=": ">=", "<=": "<="}
 
-    def operand(spec):
+    def operand(spec, at="0"):
+        """(取值表达式, 指标线)；at = 取第几根之前的值（"0" 为当前，"-k" 配合「连续 N 根 K 线」）"""
         if "value" in spec:
             return repr(float(spec["value"])), None
         if spec["ind"] == "pnl_pct":
@@ -118,7 +123,7 @@ def rule_strategy_code(rule: dict, lang: str = "zh") -> str:
         if name not in names:
             names[name] = expr
             lines_init.append(f'            i["{name}"] = {expr}')
-        return f'i["{name}"][0]', f'i["{name}"]'
+        return f'i["{name}"][{at}]', f'i["{name}"]'
 
     for side in ("buy", "sell"):
         for c in (rule.get(side) or {}).get("conditions", []):
@@ -130,6 +135,9 @@ def rule_strategy_code(rule: dict, lang: str = "zh") -> str:
                 cross_n += 1
                 lines_init.append(f'            i["{key}"] = bt.ind.CrossOver({left_line}, {right_line})')
                 conds[side].append(f'i["{key}"][0] {">" if c["op"] == "cross_above" else "<"} 0')
+            elif c.get("days", 1) > 1:
+                expr = f"{operand(c['left'], '-k')[0]} {ops[c['op']]} {operand(c['right'], '-k')[0]}"
+                conds[side].append(f"self.streak(d, {int(c['days'])}, lambda k: {expr})")
             else:
                 right_v, _ = operand(c["right"])
                 conds[side].append(f"{left_v} {ops[c['op']]} {right_v}")
@@ -142,15 +150,21 @@ def rule_strategy_code(rule: dict, lang: str = "zh") -> str:
         return glue.join(f"({x})" for x in cs)
 
     init = "\n".join(lines_init) or "            pass"
+    scale = rule.get("scale") or {}
     return f'''class Strategy(_PerAsset):
     """规则策略（由 SimpleQuant 生成）
 {_indent(strategies.describe({"kind": "rule", "rule": rule}, lang), 4)}
     """
-    params = (("position_pct", {rule.get("position_pct", 95)!r}),)
+    params = (("position_pct", {rule.get("position_pct", 95)!r}),
+              ("cooldown", {int(rule.get("cooldown", 0))!r}),      # 卖出后多少根 K 线内不再买入（0 = 不限制）
+              ("adds", {int(scale.get("adds", 0))!r}),          # 分批建仓：最多加仓几次（0 = 一次买满）
+              ("add_when", {scale.get("when", "")!r}),     # 加仓时机：gain 上涨 / drop 下跌 / signal 买入条件再次满足
+              ("add_pct", {float(scale.get("pct", 0) or 0)!r}))     # 比上次买入时上涨 / 下跌多少（%）
 
     def __init__(self):
         super().__init__()
         self.ind = {{}}
+        self._sold_at, self._adds, self._ref = {{}}, {{}}, {{}}
         for d in self.datas:
             i = {{}}
 {init}
@@ -161,6 +175,10 @@ def rule_strategy_code(rule: dict, lang: str = "zh") -> str:
         pos = self.getposition(d)
         return (d.close[0] / pos.price - 1) * 100 if pos.size > 0 and pos.price > 0 else float("nan")
 
+    def streak(self, d, n, check):
+        """连续 n 根 K 线（含当前）都满足；check(k) 判断 k 根之前那根"""
+        return all(len(d) > k and check(k) for k in range(n))
+
     def buy_signal(self, d):
         i = self.ind[d]
         return {joined("buy")}
@@ -169,13 +187,29 @@ def rule_strategy_code(rule: dict, lang: str = "zh") -> str:
         i = self.ind[d]
         return {joined("sell")}
 
+    def add_due(self, d):
+        if self.p.add_when == "signal":
+            return self.buy_signal(d)
+        pct, ref = self.p.add_pct / 100, self._ref[d]
+        return d.close[0] >= ref * (1 + pct) if self.p.add_when == "gain" else d.close[0] <= ref * (1 - pct)
+
     def next(self):
+        parts = self.p.adds + 1          # 仓位分几份：首次买 1 份，每次加仓再买 1 份
         for d in self.datas:
             holding = self.getposition(d).size > 0
-            if not holding and self.buy_signal(d):
-                self.order_target_pct(d, self.slot_pct, ("reason.rule_buy", {{}}))
-            elif holding and self.sell_signal(d):
-                self.order_target_pct(d, 0, ("reason.rule_sell", {{}}))
+            if not holding:
+                if self.p.cooldown and len(d) - self._sold_at.get(d, -10 ** 9) <= self.p.cooldown:
+                    continue
+                if self.buy_signal(d) and \\
+                        self.order_target_pct(d, self.slot_pct / parts, ("reason.rule_buy", {{}})) is not None:
+                    self._adds[d], self._ref[d] = 0, d.close[0]
+            elif self.sell_signal(d):
+                if self.order_target_pct(d, 0, ("reason.rule_sell", {{}})) is not None:
+                    self._sold_at[d] = len(d)
+            elif self.p.adds and d in self._ref and self._adds[d] < self.p.adds and self.add_due(d):
+                k = self._adds[d] + 1
+                if self.order_add_pct(d, self.slot_pct / parts, ("reason.rule_add", {{"k": k}})) is not None:
+                    self._adds[d], self._ref[d] = k, d.close[0]
 '''
 
 
@@ -377,6 +411,12 @@ def single_asset_script(spec: dict, data: list[dict], broker: dict, title: str =
             parts.append("\n\n" + inspect.getsource(KDJ))
         if _uses(rule, "obv"):
             parts.append("\n\n" + inspect.getsource(OBV))
+        if _uses(rule, "pe_pct") or _uses(rule, "pb_pct"):
+            if any(d.get("source") == "akshare" for d in data):
+                # 导出的脚本下载 ETF / 指数时不带指数估值（乐咕乐股），百分位会一直为空
+                raise ValueError("index valuation (Legulegu) is not included in the exported script yet / "
+                                 "ETF / 指数附带的指数估值暂不支持导出为独立脚本")
+            parts.append("\n\n" + inspect.getsource(Percentile))
         parts.append("\n\n# ============================== 策略 ==============================\n"
                      + rule_strategy_code(rule, lang)
                      + f"\n\nSTRATEGY_PARAMS = {{}}\n")

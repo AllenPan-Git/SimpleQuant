@@ -19,7 +19,7 @@ from simplequant import plan as plan_mod
 from gui.common import t, p, lang
 from gui.components import (require_data, data_selector, strategy_selector, broker_settings, prepare_prices,
                             metric_tiles, metric_tile, missing_factor_warnings, dividend_notices,
-                            unadjusted_warning, fallback_warning, credibility_box)
+                            unadjusted_warning, fallback_warning, percentile_warnings, credibility_box)
 from gui.layout import frame, page_title
 from gui.widgets import df_table, fmt_table, plot, notice, download_btn
 from ui.charts import equity_chart, strategy_chart, batch_scatter
@@ -121,6 +121,8 @@ def page():
                 if w := unadjusted_warning(by_id, pick.ids):
                     notice(w, "warning", "warning")
                 if w := fallback_warning(by_id, pick.ids):
+                    notice(w, "warning", "warning")
+                for w in percentile_warnings(by_id, pick, strat["spec"]):
                     notice(w, "warning", "warning")
             ok = ready()
             run_btn.set_enabled(ok)

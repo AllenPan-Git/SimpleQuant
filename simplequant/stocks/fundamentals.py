@@ -78,19 +78,46 @@ FIELDS = ["roe", "gross_margin", "net_margin", "np_yoy", "rev_yoy", "total_share
 
 def align(fin: pd.DataFrame, calendar: pd.DatetimeIndex, field: str) -> pd.Series:
     """把一只股票的某个字段按公告日对齐到交易日历"""
-    df = fin[["stat_date", "pub_date", field]].dropna()
-    if df.empty:
-        return pd.Series(np.nan, index=calendar)
-    df = df.sort_values(["pub_date", "stat_date"])
-    df = df[df["stat_date"] >= df["stat_date"].cummax()]         # 迟到的旧报告期不覆盖新的
-    avail = df["pub_date"] + pd.Timedelta(days=1)
-    idx = calendar.searchsorted(avail.values, side="left")        # 公告日之后的第一个交易日起可用
-    s = pd.Series(np.nan, index=calendar)
-    stat = pd.Series(pd.NaT, index=calendar)
-    for i, v, sd in zip(idx, df[field].values, df["stat_date"].values):
-        if i < len(calendar):
-            s.iloc[i] = v
-            stat.iloc[i] = sd
-    s, stat = s.ffill(), stat.ffill()
-    stale = (calendar.values - stat.values) > np.timedelta64(STALE_DAYS, "D")
-    return s.mask(stale | stat.isna())
+    return pd.Series(align_all(fin, calendar, [field])[:, 0], index=calendar)
+
+
+def align_all(fin: pd.DataFrame, calendar: pd.DatetimeIndex, fields: list[str]) -> np.ndarray:
+    """
+    一次对齐多个字段（面板载入时每只股票调用一次，全部用 numpy，比逐字段用 pandas 快很多）
+    返回 (交易日数 × 字段数) 的数组；规则同 align：公告日之后的第一个交易日起可用，迟到的旧报告期不覆盖新的，
+    报告期超过 STALE_DAYS 天视为缺失
+    """
+    cal = calendar.values.astype("datetime64[ns]").view("i8")
+    out = np.full((len(cal), len(fields)), np.nan)
+    if not len(cal) or fin.empty:
+        return out
+    stat_all = fin["stat_date"].values.astype("datetime64[ns]").view("i8")
+    pub_all = fin["pub_date"].values.astype("datetime64[ns]").view("i8")
+    nat = np.iinfo(np.int64).min
+    stale_ns = np.timedelta64(STALE_DAYS, "D").astype("timedelta64[ns]").view("i8")
+    day = np.timedelta64(1, "D").astype("timedelta64[ns]").view("i8")
+    for j, f in enumerate(fields):
+        val = fin[f].values.astype(float)
+        ok = (stat_all != nat) & (pub_all != nat) & ~np.isnan(val)
+        if not ok.any():
+            continue
+        stat, pub, val = stat_all[ok], pub_all[ok], val[ok]
+        order = np.lexsort((stat, pub))                           # 按公告日、再按报告期排序
+        stat, pub, val = stat[order], pub[order], val[order]
+        keep = stat >= np.maximum.accumulate(stat)                # 迟到的旧报告期不覆盖新的
+        stat, pub, val = stat[keep], pub[keep], val[keep]
+        idx = np.searchsorted(cal, pub + day, side="left")        # 公告日之后的第一个交易日起可用
+        inside = idx < len(cal)
+        stat, val, idx = stat[inside], val[inside], idx[inside]
+        if not len(idx):
+            continue
+        last = np.r_[idx[1:] != idx[:-1], True]                   # 同一天有几条时以排在最后的为准
+        pos = np.full(len(cal), -1)
+        pos[idx[last]] = np.flatnonzero(last)
+        pos = np.maximum.accumulate(pos)                          # 向前填充
+        has = pos >= 0
+        p = pos[has]
+        fresh = (cal[has] - stat[p]) <= stale_ns
+        col = out[:, j]
+        col[np.flatnonzero(has)[fresh]] = val[p][fresh]
+    return out

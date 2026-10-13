@@ -175,16 +175,15 @@ def add_dividends(frames: dict, store: StockStore, codes: list[str], calendar: p
 
 def add_fundamentals(frames: dict, store: StockStore, codes: list[str], calendar: pd.DatetimeIndex) -> bool:
     """按公告日对齐财务字段，并计算总市值（不复权收盘价 × 当时已公告的总股本）"""
-    from .fundamentals import FIELDS, align, derive
+    from .fundamentals import FIELDS, align_all, derive
     have = [c for c in codes if store.has_fin(c)]
     if not have:
         return False
-    cols = {f: {} for f in FIELDS}
+    vals = np.full((len(FIELDS), len(calendar), len(codes)), np.nan)
+    col = {c: i for i, c in enumerate(codes)}
     for c in have:
-        fin = derive(store.load_fin(c))
-        for f in FIELDS:
-            cols[f][c] = align(fin, calendar, f)
-    for f in FIELDS:
-        frames[f] = pd.DataFrame(cols[f], index=calendar).reindex(columns=codes)
+        vals[:, :, col[c]] = align_all(derive(store.load_fin(c)), calendar, FIELDS).T
+    for k, f in enumerate(FIELDS):
+        frames[f] = pd.DataFrame(vals[k], index=calendar, columns=codes)
     frames["mcap"] = frames["raw_close"] * frames["total_share"]
     return True

@@ -109,3 +109,27 @@ def test_pe_percentile_schema_and_export():
     with pytest.raises(ValueError):                    # ETF 的指数估值来自乐咕乐股，导出的脚本里没有
         single_asset_script(spec, [{"name": "510300", "source": "akshare", "symbol": "510300", "asset": "etf"}],
                             asdict(broker))
+
+
+def test_percentile_warning_when_range_cuts_off_earlier_valuation(monkeypatch):
+    """回测区间开始前还有估值数据时提示：百分位只用区间内的数据算（待办 30）"""
+    import datetime as dt
+    from types import SimpleNamespace
+    import gui.components as C
+    cal = pd.bdate_range("2012-01-02", "2026-09-30")
+    df = pd.DataFrame({"close": 1.0, "pe": np.where(cal >= "2013-01-01", 12.0, np.nan)}, index=cal)
+    monkeypatch.setattr(C.library, "load", lambda i: df)
+    by_id = {"a": SimpleNamespace(name="510300", symbol="510300", source="akshare", adjust="hfq", freq="1d",
+                                  start="2012-01-02", end="2026-09-30", extra={})}
+    pick = SimpleNamespace(ids=["a"], start=dt.date(2020, 1, 2), end=dt.date(2026, 9, 30))
+    rule = {"buy": {"logic": "all", "conditions": [{"left": make_ind("pe_pct", years=10), "op": "<", "right": {"value": 20}}]},
+            "sell": {"logic": "all", "conditions": [{"left": make_ind("pe"), "op": ">", "right": {"value": 30}}]}}
+    spec = {"kind": "rule", "rule": rule}
+    (w,) = C.percentile_warnings(by_id, pick, spec)
+    assert "10 年" in w and "约 7.2 年" in w and "约 7.5 年" in w   # 工作日日历每年约 261 天，按 244 折算
+    pick.start = dt.date(2012, 6, 1)                           # 区间从估值数据开始之前起：不提示
+    assert C.percentile_warnings(by_id, pick, spec) == []
+    rule["buy"]["conditions"][0]["left"] = make_ind("pe")      # 没用百分位：不提示
+    pick.start = dt.date(2020, 1, 2)
+    assert C.percentile_warnings(by_id, pick, spec) == []
+    assert C.percentile_warnings(by_id, pick, {"kind": "template"}) == []

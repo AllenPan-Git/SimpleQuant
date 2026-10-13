@@ -15,7 +15,7 @@ from gui import state
 from gui.common import t, lang
 from gui.components import (require_data, data_selector, strategy_selector, broker_settings, load_prices,
                             prepare_prices, metric_tile, walkforward_results, dividend_notices,
-                            unadjusted_warning, fallback_warning, credibility_box)
+                            unadjusted_warning, fallback_warning, percentile_warnings, credibility_box)
 from gui.layout import frame, page_title
 from gui.widgets import section, df_table, plot, notice, Progress
 from ui.charts import heatmap, param_curve
@@ -191,6 +191,8 @@ def page():
                 if w := unadjusted_warning(by_id, pick.ids):
                     notice(w, "warning", "warning")
                 if w := fallback_warning(by_id, pick.ids):
+                    notice(w, "warning", "warning")
+                for w in percentile_warnings(by_id, pick, spec):
                     notice(w, "warning", "warning")
             ok = base_ready(n_combos)
             run_btn.set_enabled(ok)

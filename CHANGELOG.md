@@ -5,6 +5,16 @@
 
 Changes in each release. `tools/release.py` copies the matching section into the GitHub release notes.
 
+## 1.2.1（2026-10-13）
+
+### 更新内容
+- 改进：多因子选股页载入更快。建立选股数据（股票池全部成分股的价格、财务与分红）的计算加快一倍以上（沪深300 2022 年起：约 27 秒 → 约 11 秒）；建好的数据保存在数据目录的 `data_cache/panel_cache` 中，之后重新打开软件、进入选股页约 1 秒即可载入。数据更新或软件升级后自动重建；最多保留最近使用的 3 份（每份约 40～80 MB）
+- 改进：择时规则用到「市盈率 / 市净率历史百分位」时，如果所选回测区间开始前还有估值数据，回测页与参数优化页会提示：百分位仅使用区间内的数据计算（第 1 年没有百分位），并列出区间内的年数、回看年数与未参与计算的年数；将开始日期提前即可按完整的回看年数计算
+
+### Changes
+- Improved: the stock selection page loads faster. Building the selection data (prices, financials and dividends of every constituent) is more than twice as fast (CSI 300 from 2022: about 27 s → about 11 s), and the result is saved in `data_cache/panel_cache` in the data folder, so after restarting the app the selection page loads in about a second. It is rebuilt automatically after a data update or an upgrade; the 3 most recently used copies are kept (about 40–80 MB each)
+- Improved: when a timing rule uses the P/E or P/B percentile and valuation data exists before the chosen backtest start, the backtest and optimization pages note that the percentile is computed only from data inside the range (none in the first year), listing the years inside the range, the lookback and the years left unused; move the start date earlier to use the full lookback
+
 ## 1.2.0（2026-10-13）
 
 ### 更新内容

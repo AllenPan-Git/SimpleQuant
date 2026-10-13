@@ -75,10 +75,10 @@ def align(div: pd.DataFrame, calendar: pd.DatetimeIndex) -> pd.DataFrame:
         return out
     div = div[div["ex_date"] >= calendar[0]]                     # 区间开始前的事件与回测无关
     idx = calendar.searchsorted(pd.DatetimeIndex(div["ex_date"]), side="left")
-    for i, row in zip(idx, div.itertuples(index=False)):
-        if i < len(calendar):
-            out.iloc[i] += [row.cash, row.bonus, row.reserve]
-    return out
+    ok = idx < len(calendar)
+    a = out.to_numpy(copy=True)
+    np.add.at(a, idx[ok], div[COLUMNS[1:]].to_numpy(float)[ok])  # 同一天几条事件相加
+    return pd.DataFrame(a, index=calendar, columns=COLUMNS[1:])
 
 
 def split_factor(bonus: pd.DataFrame, reserve: pd.DataFrame) -> pd.DataFrame:
@@ -131,26 +131,40 @@ def missing_events(daily: pd.DataFrame, div: pd.DataFrame | None, rights: list |
     :param div:    分红表
     :param rights: 配股的股权登记日列表；None 表示没有配股数据（漏记的一律当作现金分红）
     """
-    d = daily[["raw_close", "raw_preclose", "adj_factor"]].dropna()
-    st = daily["is_st"].reindex(d.index).fillna(0).astype(bool) if "is_st" in daily else pd.Series(False, index=d.index)
-    known = (div.groupby("ex_date")[["cash", "bonus", "reserve"]].sum() if div is not None and len(div)
-             else pd.DataFrame(columns=["cash", "bonus", "reserve"], dtype=float))
-    ratio = d["adj_factor"] / d["adj_factor"].shift(1)
-    prev = d["raw_close"].shift(1)
-    rights = [pd.Timestamp(x) for x in (rights or [])] if rights is not None else None
+    cols = daily[["raw_close", "raw_preclose", "adj_factor"]].to_numpy(float)
+    keep = ~np.isnan(cols).any(axis=1)
+    close, pre, adj = cols[keep].T
+    dates = daily.index[keep]
+    st = (daily["is_st"].to_numpy()[keep] if "is_st" in daily else np.zeros(len(dates)))
+    st = pd.Series(st).fillna(0).astype(bool).to_numpy()
+    ratio = np.full(len(adj), np.nan)
+    ratio[1:] = adj[1:] / adj[:-1]
+    with np.errstate(invalid="ignore"):
+        hits = np.flatnonzero(np.abs(ratio - 1) > 1e-4)
     rows = []
-    for t in ratio.index[(ratio - 1).abs() > 1e-4]:
-        u, x = float(prev[t]), float(d.at[t, "raw_preclose"])
-        cash, split = (float(known.at[t, "cash"]), float(known.at[t, "bonus"] + known.at[t, "reserve"]))             if t in known.index else (0.0, 0.0)
+    if not len(hits):
+        return pd.DataFrame(rows, columns=COLUMNS).astype(
+            {"ex_date": "datetime64[ns]", "cash": float, "bonus": float, "reserve": float})
+    known = {}                                         # 除权除息日 → (每股现金, 每股送转)，同一天几条相加
+    if div is not None and len(div):
+        for t, c, b, r in zip(pd.DatetimeIndex(div["ex_date"]), div["cash"].values, div["bonus"].values,
+                              div["reserve"].values):
+            k0, k1 = known.get(t, (0.0, 0.0))
+            known[t] = (k0 + np.nan_to_num(c), k1 + np.nan_to_num(b) + np.nan_to_num(r))   # 同 groupby.sum：空值记 0
+    rights = [pd.Timestamp(x) for x in (rights or [])] if rights is not None else None
+    for i in hits:
+        t = dates[i]
+        u, x = float(close[i - 1]), float(pre[i])
+        cash, split = (float(v) for v in known.get(t, (0.0, 0.0)))
         if not (u > cash >= 0 and x > 0):
             continue
-        if abs(ratio[t] / (u * (1 + split) / (u - cash)) - 1) <= GAP_TOL:
+        if abs(ratio[i] / (u * (1 + split) / (u - cash)) - 1) <= GAP_TOL:
             continue                                   # 分红表已经解释了
         extra = u - cash - x * (1 + split)             # 交易所除权参考价里多扣掉的部分
         if extra <= GAP_TOL * u:
             continue                                   # 因子修正（价格没变）或分红表与交易所口径的小差异
         is_rights = rights is not None and any(r <= t <= r + RIGHTS_WINDOW for r in rights)
-        if is_rights or st[t] or extra >= 0.5 * u:
+        if is_rights or st[i] or extra >= 0.5 * u:
             j = (u - cash) / (u - cash - extra)        # 股数按比例增加，参考价不变
             rows.append({"ex_date": t, "cash": 0.0, "bonus": 0.0, "reserve": (1 + split) * (j - 1)})
         else:

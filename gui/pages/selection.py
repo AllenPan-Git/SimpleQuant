@@ -18,7 +18,7 @@ from simplequant.engine.walkforward import make_windows
 from simplequant.stocks import (StockStore, UNIVERSES, FACTORS, GROUPS, REBALANCE, WEIGHTING, DIVIDEND,
                                 DEFAULT_FILTERS, analyze, compute, run_selection, today, factor_zscores,
                                 factor_correlation, sample_dates)
-from simplequant.stocks import custom_factors, universe as U, factors_for
+from simplequant.stocks import custom_factors, panel_cache, universe as U, factors_for
 from simplequant.stocks import ml as ML
 from simplequant.stocks import mining as MN
 from simplequant.stocks.selection import panel_warmup_days
@@ -145,7 +145,11 @@ def get_panel(universe: str, start: str, end: str):
     if key in _PANELS:
         _PANELS.move_to_end(key)
         return _PANELS[key]
-    panel = U.build(universe, start, end, st)
+    cache_dir = st.root.parent / "panel_cache"
+    panel = panel_cache.load(cache_dir, *key)
+    if panel is None:
+        panel = U.build(universe, start, end, st)
+        panel_cache.save(cache_dir, *key, panel)
     _PANELS[key] = panel
     while len(_PANELS) > 3:
         _PANELS.popitem(last=False)

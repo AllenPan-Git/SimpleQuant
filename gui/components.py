@@ -3,12 +3,14 @@
 import datetime as dt
 from dataclasses import dataclass, field
 
+import pandas as pd
 from nicegui import ui
 
 from simplequant import strategies
 from simplequant.data import library
 from simplequant.engine import BrokerConfig, COST_PRESETS
 from simplequant.rules import INDICATORS, required_columns, macro_columns
+from simplequant.rules.schema import BARS_PER_YEAR
 from simplequant.strategies import TEMPLATES
 from gui import state
 from gui.common import t, p, lang
@@ -291,6 +293,37 @@ def fallback_warning(by_id: dict, ids: list) -> str | None:
     names = [by_id[i].name for i in ids if shared.sina_fallback(by_id[i]) and by_id[i].adjust
              and by_id[i].extra.get("asset") == "stock"]
     return t("bt.sina_stock", names="、".join(names) if lang() == "zh" else ", ".join(names)) if names else None
+
+
+def percentile_warnings(by_id: dict, pick: DataPick, spec: dict) -> list[str]:
+    """
+    规则用到估值历史百分位：回测只用所选区间内的数据计算，区间开始前的估值数据不参与。
+    区间开始前还有估值数据时，提示区间内的年数与回看年数（开始日期提前即可用上更早的数据）
+    """
+    if spec.get("kind") != "rule" or not pick.ids or not (pick.start and pick.end):
+        return []
+    uses = [s for side in ("buy", "sell") for c in (spec["rule"].get(side) or {}).get("conditions", [])
+            for s in (c["left"], c["right"]) if s.get("ind") in ("pe_pct", "pb_pct")]
+    if not uses:
+        return []
+    try:
+        years = max(int((s.get("params") or {}).get("years", 5)) for s in uses)
+    except (TypeError, ValueError):
+        years = 5
+    cols = {INDICATORS[s["ind"]]["requires"] for s in uses}
+    start, end = pd.Timestamp(pick.start), pd.Timestamp(pick.end) + pd.Timedelta(days=1)
+    names, out = shared.asset_names(by_id, pick.ids, lang()), []
+    for i in pick.ids:
+        df = library.load(i)
+        have = sorted(cols & set(df.columns))
+        first = df[have].dropna(how="all").index.min() if have else None
+        if first is None or pd.isna(first) or first >= start:
+            continue
+        before = int(((df.index >= first) & (df.index < start)).sum())
+        inside = int(((df.index >= max(first, start)) & (df.index < end)).sum())
+        out.append(t("bt.pct_window", name=names[i], years=years,
+                     inside=f"{inside / BARS_PER_YEAR:.1f}", before=f"{before / BARS_PER_YEAR:.1f}"))
+    return out
 
 
 def missing_factor_warnings(by_id: dict, ids: list, spec: dict) -> list[str]:

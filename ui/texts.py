@@ -676,6 +676,11 @@ TEXT.update({
                         "No valuation or turnover columns (download stock daily data from BaoStock to obtain turnover, P/E, P/B and P/S)"),
     "bt.lot_too_big": L("{names}：出现买入信号，但资金不足以买入一手（100 股），因此未成交。建议提高初始资金，或改用前复权 / 不复权数据——后复权价格可能远高于实际成交价，会高估一手所需资金。",
                         "{names}: buy signals occurred, but the capital was insufficient for one 100-share lot, so no shares were bought. Increase the initial capital, or use forward-adjusted or unadjusted data: back-adjusted prices can be far above actual trading prices and overstate the cost of a lot."),
+    "bt.pct_window": L("「{name}」的估值历史百分位仅使用回测区间内的数据计算：区间内约 {inside} 年估值数据（其中第 1 年没有百分位），回看年数设为 {years} 年；"
+                       "区间开始前另有约 {before} 年数据未参与计算。如需按完整的回看年数计算，可将开始日期提前。",
+                       "\"{name}\": the valuation percentile is computed only from data inside the backtest range: about {inside} years of valuation data "
+                       "(no percentile in the first year), with a {years}-year lookback; about {before} years of earlier data are not used. "
+                       "Move the start date earlier to use the full lookback."),
     "bt.missing_factor": L("「{name}」缺少 {cols} 数据，相关条件将始终无法满足。建议改用 BaoStock 下载股票日线。",
                            "\"{name}\" has no {cols} data, so the related conditions will never be met. Download stock daily data from BaoStock instead."),
 

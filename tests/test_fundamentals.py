@@ -170,3 +170,40 @@ def test_fundamentals_store_incremental(tmp_path):
     (tmp_path / "fin_manifest.json").write_text(json.dumps({"sh.600000": "2000-01-01"}))
     jobs = st.plan_fundamentals(["sh.600000"], 2024)
     assert len(jobs["sh.600000"][0]) == 2                                   # 只重下最近两个季度
+
+
+def _align_reference(fin, calendar, field):
+    """改用 numpy 之前的逐行写法，用来核对 align_all"""
+    df = fin[["stat_date", "pub_date", field]].dropna()
+    if df.empty:
+        return pd.Series(np.nan, index=calendar)
+    df = df.sort_values(["pub_date", "stat_date"])
+    df = df[df["stat_date"] >= df["stat_date"].cummax()]
+    idx = calendar.searchsorted((df["pub_date"] + pd.Timedelta(days=1)).values, side="left")
+    s, stat = pd.Series(np.nan, index=calendar), pd.Series(pd.NaT, index=calendar)
+    for i, v, sd in zip(idx, df[field].values, df["stat_date"].values):
+        if i < len(calendar):
+            s.iloc[i], stat.iloc[i] = v, sd
+    s, stat = s.ffill(), stat.ffill()
+    from simplequant.stocks.fundamentals import STALE_DAYS
+    return s.mask(((calendar.values - stat.values) > np.timedelta64(STALE_DAYS, "D")) | stat.isna())
+
+
+def test_align_all_matches_row_by_row_version():
+    from simplequant.stocks.fundamentals import FIELDS, align_all
+    rng = np.random.default_rng(3)
+    cal = pd.bdate_range("2019-01-01", "2024-12-31")
+    for _ in range(30):
+        n = int(rng.integers(1, 25))
+        stat = pd.to_datetime(rng.choice(pd.date_range("2016-03-31", "2024-12-31", freq="QE"), n))
+        pub = stat + pd.to_timedelta(rng.integers(10, 900, n), unit="D")      # 有迟到很久的、有同一天公告几条的
+        pub = pub.where(rng.random(n) > 0.2, pub[0])
+        fin = pd.DataFrame({"stat_date": stat, "pub_date": pub})
+        for f in FIELDS:
+            v = rng.normal(0, 1, n)
+            v[rng.random(n) < 0.2] = np.nan
+            fin[f] = v
+        fin.loc[rng.random(n) < 0.1, "pub_date"] = pd.NaT
+        got = align_all(fin, cal, FIELDS)
+        for j, f in enumerate(FIELDS):
+            np.testing.assert_array_equal(got[:, j], _align_reference(fin, cal, f).values)

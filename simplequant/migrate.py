@@ -14,7 +14,7 @@ from pathlib import Path
 from .paths import DATA_ROOT, FROZEN
 
 DIRS = ("data_cache", "user_strategies", "user_factors")
-SKIP = {"gui_storage"}              # 界面偏好：程序运行中正在使用，不复制
+SKIP = {"gui_storage", "panel_cache"}   # 界面偏好：程序运行中正在使用，不复制；选股面板缓存：可重建，不必复制
 MARK = DATA_ROOT / ".migrated"
 BUILD_INFO = Path(__file__).with_name("_build_info.json")
 

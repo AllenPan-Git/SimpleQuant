@@ -52,7 +52,8 @@ def data_files(universe: str, store: StockStore | None = None) -> list:
     st = store or StockStore()
     return [st.root / "manifest.json", st.root / "universe" / f"{universe}.parquet",
             st.root / "index" / f"{UNIVERSES[universe]['index']}.parquet",
-            st.root / "fin_manifest.json", st.root / "industry.parquet"]
+            st.root / "fin_manifest.json", st.root / "industry.parquet", st.root / "div_manifest.json",
+            st.root / "rights.parquet", st.root / "basics.parquet"]
 
 
 def update(universe: str, start: str, end: str, store: StockStore | None = None, workers: int = 4,

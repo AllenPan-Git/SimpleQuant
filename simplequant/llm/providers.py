@@ -2,21 +2,74 @@
 大模型接口适配：Claude（anthropic SDK）、OpenAI 及兼容接口（openai SDK）、LiteLLM
 三者对外统一为 provider.chat(system, messages, schema) -> str：
     schema 为 None 时返回普通文本；否则返回 JSON 文本（由 extract_json 解析）
+程序里都通过 ask() 调用：它给整次调用设总的等待上限，并允许中途停止
 """
 
 import json
 import os
 import re
+import threading
+import time
 
 from .config import LLMConfig, PRESETS
 
 # 支持服务端拒答自动换模型（fallbacks="default"）的 Claude 模型
 _FALLBACK_MODELS = {"claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5"}
 _FALLBACK_BETA = "server-side-fallback-2026-07-01"
+# 一次调用最多等这么多秒（设置里的超时更长时按设置）。SDK 的超时是「多久没收到数据」，
+# DeepSeek 等服务繁忙时会一直发空行保持连接，这个超时永远不触发，可能挂到半小时
+TOTAL_WAIT = 300
 
 
 class LLMError(RuntimeError):
     pass
+
+
+class LLMTimeout(LLMError):
+    pass
+
+
+class Stopped(Exception):
+    """调用方要求停止（不再等这次回复）"""
+
+
+def total_wait(provider) -> float:
+    cfg = getattr(provider, "cfg", None)
+    return max(TOTAL_WAIT, float(getattr(cfg, "timeout", 0) or 0))
+
+
+def ask(provider, system: str, messages: list[dict], schema: dict | None = None, stop=None, tick=None,
+        limit: float | None = None) -> str:
+    """
+    provider.chat 放在另一个线程里运行，每 0.5 秒看一次：stop() 为真抛 Stopped，超过 limit 秒抛 LLMTimeout，
+    tick(已等秒数) 让界面知道还在等。放弃等待的线程留在后台，结束后结果直接丢掉
+    """
+    limit = total_wait(provider) if limit is None else limit
+    box = {}
+
+    def work():
+        try:
+            box["value"] = provider.chat(system, messages, schema)
+        except BaseException as e:  # noqa: BLE001
+            box["error"] = e
+    th = threading.Thread(target=work, daemon=True, name="llm-call")
+    t0 = time.monotonic()
+    th.start()
+    while True:
+        th.join(0.5)
+        if not th.is_alive():
+            break
+        if stop and stop():
+            raise Stopped
+        waited = time.monotonic() - t0
+        if waited > limit:
+            raise LLMTimeout(f"no reply from the model in {int(limit)}s; the service may be busy, try again later / "
+                             f"模型 {int(limit)} 秒没有回复，服务可能繁忙，请稍后再试")
+        if tick:
+            tick(int(waited))
+    if "error" in box:
+        raise box["error"]
+    return box["value"]
 
 
 def extract_json(text: str) -> dict:

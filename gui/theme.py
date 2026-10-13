@@ -1,7 +1,10 @@
 """
 视觉主题：研究报告风格（米白纸张、墨色文字、朱红点缀、细线分栏；2026-09-30 用户选定样稿 D）
-- 字体：标题用思源宋体（Noto Serif SC，GB2312 常用字子集，随程序打包）；正文用系统无衬线（Segoe UI / 微软雅黑）；
-  大号数字用 Georgia（Windows 自带）；代码、表格数字用 JetBrains Mono
+- 字体只分三种角色（10-12 用户说正文字体杂乱后统一）：
+  标题用思源宋体（Noto Serif SC，GB2312 常用字子集，随程序打包），大号指标数字和步骤编号用 Georgia（标题级）；
+  报告的结论段落（.sq-lede）也属于这一类：中文宋体 + 数字 Georgia（用户 10-12 确认保留）；
+  正文、表格、普通数字一律用无衬线：西文与数字 Segoe UI（Windows；Mac / Linux 用随程序打包的 Inter），中文微软雅黑 / 苹方，数字等宽；
+  等宽字体 JetBrains Mono 只用于代码
 - 卡片是直角细边框、无阴影；强调卡片（.sq-sheet）右下角有一层「纸张叠放」的错位阴影
 - 深色模式是暖墨色底 + 米色字，不是冷色调
 - 图表：style_fig() 把 ui/charts.py 生成的 plotly 图改成透明底、跟随主题的文字和网格颜色
@@ -19,6 +22,7 @@ GREEN, GREEN_DARK = "#1E7A4C", "#4DB380"
 GOLD = "#9A6B1F"
 PAPER, DARK_PAGE = "#F5F1EA", "#191714"
 DARK_CARD = "#211E1A"
+SANS_PLOT = "Segoe UI, Inter, Microsoft YaHei UI, PingFang SC, sans-serif"
 
 CSS = f"""
 @font-face {{ font-family: 'Inter'; font-weight: 100 900; font-display: swap;
@@ -33,7 +37,7 @@ CSS = f"""
   --sq-muted: #77716A; --sq-faint: #A39B8F; --sq-border: #D9D2C6; --sq-border2: #E8E2D8; --sq-shadow: #ECE6DC;
   --sq-red: {RED}; --sq-red-soft: rgba(180, 35, 24, .07); --sq-up: {RED}; --sq-down: {GREEN}; --sq-gold: {GOLD};
   --sq-serif: 'SQ Serif', 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'STSong', 'SimSun', Georgia, serif;
-  --sq-sans: 'Segoe UI Variable Text', 'Segoe UI', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Hiragino Sans GB',
+  --sq-sans: 'Segoe UI Variable Text', 'Segoe UI', 'Inter', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Hiragino Sans GB',
     'Noto Sans CJK SC', 'Source Han Sans SC', 'WenQuanYi Micro Hei', system-ui, sans-serif;
   --sq-fig: Georgia, 'Times New Roman', serif;
   --sq-mono: 'JetBrains Mono', 'Cascadia Mono', Consolas, monospace;
@@ -46,14 +50,16 @@ CSS = f"""
 }}
 
 body, .q-field, .q-btn, .q-item, .q-tab, .q-menu {{ font-family: var(--sq-sans); }}
-body {{ background: var(--sq-page); color: var(--sq-text); font-size: 14.5px; -webkit-font-smoothing: antialiased; }}
+body {{ background: var(--sq-page); color: var(--sq-text); font-size: 14.5px; -webkit-font-smoothing: antialiased;
+  font-variant-numeric: tabular-nums; }}
 .q-page-container {{ background: var(--sq-page); }}
 
 /* 字体角色 */
 .sq-serif {{ font-family: var(--sq-serif); font-weight: 600; }}
 .sq-fig {{ font-family: var(--sq-fig); font-variant-numeric: lining-nums tabular-nums; font-weight: 400; }}
-.sq-num, code, pre, .q-table td {{ font-family: var(--sq-mono); font-variant-numeric: tabular-nums; }}
-.q-table td {{ font-size: 12.5px; }}
+.sq-num, .q-table td {{ font-family: var(--sq-sans); font-variant-numeric: tabular-nums; }}
+code, pre {{ font-family: var(--sq-mono); }}
+.q-table td {{ font-size: 13px; }}
 .sq-up {{ color: var(--sq-up); }} .sq-down {{ color: var(--sq-down); }}
 .sq-muted {{ color: var(--sq-muted); }} .sq-faint {{ color: var(--sq-faint); }} .sq-red {{ color: var(--sq-red); }}
 
@@ -109,9 +115,9 @@ body {{ background: var(--sq-page); color: var(--sq-text); font-size: 14.5px; -w
 .sq-pipe > div {{ padding: 10px 12px 12px 0; min-width: 0; }}
 .sq-pipe > div + div {{ padding-left: 14px; border-left: 1px solid var(--sq-border); }}
 .sq-pipe .k {{ font-size: 12px; color: var(--sq-muted); }}
-.sq-pipe .v {{ font-family: var(--sq-serif); font-weight: 600; font-size: 15px; white-space: nowrap; overflow: hidden;
+.sq-pipe .v {{ font-weight: 500; font-size: 15px; white-space: nowrap; overflow: hidden;
   text-overflow: ellipsis; }}
-.sq-pipe .v.sq-fig {{ font-family: var(--sq-fig); font-weight: 400; font-size: 17px; }}
+.sq-pipe .v.sq-fig {{ font-family: var(--sq-sans); font-weight: 500; font-size: 15px; }}
 .sq-pipe .ok .k::before {{ content: "✓ "; color: var(--sq-down); }}
 .sq-pipe .next {{ background: var(--sq-red-soft); box-shadow: inset 0 3px 0 var(--sq-red); }}
 .sq-pipe .next .k {{ color: var(--sq-red); letter-spacing: .04em; }}
@@ -278,8 +284,8 @@ def style_fig(fig, dark: bool | None):
     text, grid = {True: ("#CFC7BA", "rgba(237, 230, 218, .10)"), False: ("#3C3833", "rgba(29, 27, 24, .08)"),
                   None: ("#8A8276", "rgba(138, 130, 118, .20)")}[dark]
     fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                      font=dict(family="Segoe UI, Microsoft YaHei UI, sans-serif", color=text, size=12),
-                      hoverlabel=dict(font_family="JetBrains Mono, Consolas, monospace"))
+                      font=dict(family=SANS_PLOT, color=text, size=12),
+                      hoverlabel=dict(font_family=SANS_PLOT))
     fig.update_xaxes(gridcolor=grid, zerolinecolor=grid, linecolor=grid)
     fig.update_yaxes(gridcolor=grid, zerolinecolor=grid, linecolor=grid)
     for ax in fig.select_xaxes():

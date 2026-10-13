@@ -5,6 +5,26 @@
 
 Changes in each release. `tools/release.py` copies the matching section into the GitHub release notes.
 
+## 1.2.0（2026-10-13）
+
+### 更新内容
+- 新增：多因子选股的「AI 因子挖掘」标签页：AI 每轮提出一批因子，软件只用区间前段的「挖掘期」评估（IC、t 值、与已有因子的相关性），把结果反馈给 AI 改进或换方向；全部轮次结束后，才对入选因子计算一次区间末段「检验期」的表现，并与现有最好的几个因子、两者的等权合成并排比较。可设轮数、每轮因子数、检验期比例、入选门槛和挖掘方向；入选因子可一键保存为自定义因子
+- 新增：AI 因子挖掘的可信度检查：列出一共试了多少个因子及相应的多重检验门槛，入选因子是否通过检验期（IC 同号且不低于挖掘期的一半），以及是否胜过现有因子
+- AI 因子挖掘中 AI 写的代码会在本机自动运行：运行前做严格检查（不允许 import、读写文件等），并在截到较早日期的数据上重算一遍，用到未来数据的因子不会入选
+- 新增：AI 因子挖掘的「导出挖掘记录」（Markdown 文件：设置、两段区间、可信度检查、全部候选的结果与代码、模型每轮的说明）；入选因子表增加「达到门槛」（挖掘期 |t| 达到多重检验门槛）和「通过检验期」两列；判为「覆盖不足」的因子会写明实际覆盖率，下一轮 AI 据此修改代码
+- 改进：桌面窗口里的文字（说明、表格、代码等）可以选中复制
+- 改进：界面字体统一：标题仍为宋体，正文、表格与普通数字统一为无衬线字体，等宽字体仅用于代码；部分说明与提示改为更正式的表述
+- 修复：DeepSeek 等服务繁忙时会一直保持连接而不回复，AI 功能可能卡住很久。现在每次调用 AI 最多等 5 分钟（设置里的超时更长时按设置），超时提示稍后再试；AI 因子挖掘在等待时显示已等秒数，点「停止」立即生效
+
+### Changes
+- New: an "AI factor mining" tab in multi-factor selection: each round the AI proposes a batch of factors, the software evaluates them on the early "mining period" only (IC, t-statistic, correlation with existing factors) and feeds the results back so the AI can refine them or change direction. Only after the last round are the accepted factors measured once on the held-out "test period" at the end of the range, side by side with the best existing factors and equal-weight composites of both. Rounds, factors per round, test share, acceptance thresholds and a search direction can be set; accepted factors can be saved as custom factors with one click
+- New: a credibility assessment for factor mining: how many factors were tried and the matching multiple-testing threshold, whether the accepted factors held up in the test period (same sign and at least half of the mining IC), and whether they beat the existing factors
+- Factor code written by the AI during mining runs automatically on this computer: it is strictly checked first (no imports, no file access, etc.) and recomputed on data cut off at earlier dates; factors that use future data are rejected
+- New: "Export mining record" for factor mining (a Markdown file with the settings, both periods, the credibility assessment, every candidate's results and code, and the model's notes); the accepted-factor table gains "Passes threshold" (mining |t| reaches the multiple-testing threshold) and "Held up in test" columns; factors rejected for low coverage now state their actual coverage, so the AI can fix the code in the next round
+- Improved: unified typography: headings stay serif; body text, tables and ordinary numbers use one sans-serif font, and monospace is used only for code. Some descriptions and hints were reworded more formally
+- Improved: text in the desktop window (notes, tables, code) can now be selected and copied
+- Fixed: services such as DeepSeek keep the connection open without replying when busy, so AI features could hang for a long time. Each AI call now waits at most 5 minutes (or the timeout in Settings if longer) and then asks you to try again later; factor mining shows how long it has been waiting, and Stop takes effect immediately
+
 ## 1.1.0（2026-10-11）
 
 ### 更新内容

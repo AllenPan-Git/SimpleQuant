@@ -1,5 +1,5 @@
 from .config import LLMConfig, PRESETS, PROVIDERS, JSON_MODES, load_config, save_config, CONFIG_PATH
-from .providers import get_provider, LLMError, extract_json
+from .providers import get_provider, LLMError, LLMTimeout, Stopped, ask, extract_json
 from .nl import (translate, translate_selection, explain_result, trade_details, ping, NLResult, LLM_SCHEMA, system_prompt,
                  selection_schema, to_selection_spec, from_selection_spec, validate_selection, generate_factor,
-                 FACTOR_SCHEMA)
+                 FACTOR_SCHEMA, MINE_SCHEMA, propose_factors)

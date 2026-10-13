@@ -32,6 +32,7 @@ RANDOM_GOOD = 0.95       # 好于这么多比例的随机买卖：买卖时机�
 YEARS_MIN = 3           # 至少这么多个自然年才看最优参数的逐年排名
 ML_FEW = 12              # 机器学习样本外不足这么多期：IC 均值误差大
 ML_OVERFIT = 0.5         # 样本外 IC 不到训练集 IC 的这个比例：过拟合
+MINE_FEW = 12            # AI 因子挖掘：检验期不足这么多期，IC 均值误差大
 
 
 def _f(key: str, level: str, **args) -> dict:
@@ -226,4 +227,35 @@ def check_ml(summary: dict) -> list[dict]:
         out.append(_f("ml_oos_ok", "ok", train=ic(train) if np.isfinite(train) else "—", oos=ic(ml_ic), n=n))
     if np.isfinite(icir_ic) and ml_ic < icir_ic:
         out.append(_f("ml_below_icir", "note", oos=ic(ml_ic), icir=ic(icir_ic)))
+    return out
+
+
+def check_mining(summary: dict) -> list[dict]:
+    """AI 因子挖掘（stocks/mining.Miner.finish 的结果）。IC、t 以字符串传给界面"""
+    out = []
+    num = lambda v, d=2: f"{v:.{d}f}"
+    tried, accepted = int(summary.get("tried", 0)), int(summary.get("accepted", 0))
+    out.append(_f("mine_tried", "note", proposed=int(summary.get("proposed", 0)), tried=tried, accepted=accepted,
+                  t=num(summary.get("t_needed", np.nan))))
+    if not accepted:
+        out.append(_f("mine_none", "note"))
+        return out
+    if summary.get("lucky"):
+        out.append(_f("mine_lucky", "warn", n=int(summary["lucky"]), t=num(summary["t_needed"])))
+    n_test = int(summary.get("n_test", 0))
+    if n_test < MINE_FEW:
+        out.append(_f("mine_test_few", "note", n=n_test))
+    held = int(summary.get("held", 0))
+    if held == 0:
+        out.append(_f("mine_test_fail", "warn", n=accepted))
+    elif held < accepted:
+        out.append(_f("mine_test_some", "note", held=held, n=accepted))
+    else:
+        out.append(_f("mine_test_ok", "ok", n=accepted))
+    combos = summary.get("combos") or {}
+    mined, base = combos.get("mined"), combos.get("existing")
+    if mined and base and np.isfinite(mined.get("ic", np.nan)) and np.isfinite(base.get("ic", np.nan)) \
+            and mined["ic"] < base["ic"]:
+        out.append(_f("mine_below_base", "note", mined=num(mined["ic"], 3), base=num(base["ic"], 3),
+                      k=int(base.get("factors", 0))))
     return out

@@ -301,10 +301,14 @@ def factor_correlation(panel, keys: list[str], mask: pd.DataFrame, dates: pd.Dat
     out = pd.DataFrame(np.eye(len(keys)), index=keys, columns=keys)
     for i, a in enumerate(keys):
         for b in keys[i + 1:]:
-            ra, rb = ranks[a], ranks[b]
-            both = ra.notna() & rb.notna()
-            ra, rb = ra.where(both), rb.where(both)
-            ca, cb = ra.sub(ra.mean(axis=1), axis=0), rb.sub(rb.mean(axis=1), axis=0)
-            c = (ca * cb).sum(axis=1) / np.sqrt((ca ** 2).sum(axis=1) * (cb ** 2).sum(axis=1))
-            out.loc[a, b] = out.loc[b, a] = float(c.mean())
+            out.loc[a, b] = out.loc[b, a] = rank_corr(ranks[a], ranks[b])
     return out
+
+
+def rank_corr(ra: pd.DataFrame, rb: pd.DataFrame) -> float:
+    """两个因子（已按行排名）每天在共同股票上的相关系数，取平均"""
+    both = ra.notna() & rb.notna()
+    ra, rb = ra.where(both), rb.where(both)
+    ca, cb = ra.sub(ra.mean(axis=1), axis=0), rb.sub(rb.mean(axis=1), axis=0)
+    c = (ca * cb).sum(axis=1) / np.sqrt((ca ** 2).sum(axis=1) * (cb ** 2).sum(axis=1)).replace(0, np.nan)
+    return float(c.mean())

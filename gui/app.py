@@ -61,6 +61,8 @@ def run(native: bool = True, port: int = 0, show: bool = True, check_updates: bo
     uitest.install()             # 只有设置了 SIMPLEQUANT_UI_SCRIPT 才生效（打包后的自动测试）
     # 桌面窗口（pywebview）默认会静默取消所有下载；打开后点下载会弹出「另存为」对话框
     app.native.settings["ALLOW_DOWNLOADS"] = True
+    # pywebview 默认禁止选中文字（text_select=False），界面上的说明、表格、代码都复制不了
+    app.native.window_args["text_select"] = True
     ui.run(
         host="127.0.0.1",
         port=port or None,           # None：原生模式自动找空闲端口，浏览器模式用 8080

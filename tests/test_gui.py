@@ -1,6 +1,7 @@
 """NiceGUI 界面测试"""
 
 import asyncio
+import time
 from pathlib import Path
 
 import numpy as np
@@ -422,8 +423,8 @@ async def test_strategy_ai_condition_kinds_and_changes(user: User, fake_llm, lib
     user.find(marker="generate").click()
     await user.should_see("条件解读")
     await user.should_see("状态")
-    await user.should_see("描述里有「上穿 / 金叉」之类的说法")
-    await user.should_not_see("这次生成的规则与上一次不同")
+    await user.should_see("描述中包含「上穿 / 金叉」等表述")
+    await user.should_not_see("本次生成的规则与上一次不同")
 
     reply = copy.deepcopy(AI_REPLY)
     reply["buy"]["conditions"][0]["op"] = "cross_above"
@@ -431,8 +432,8 @@ async def test_strategy_ai_condition_kinds_and_changes(user: User, fake_llm, lib
     fake_llm.chat = lambda self, system, messages, schema=None: second
     user.find(marker="generate").click()
     await user.should_see("事件")
-    await user.should_see("这次生成的规则与上一次不同")
-    await user.should_not_see("描述里有「上穿 / 金叉」之类的说法")
+    await user.should_see("本次生成的规则与上一次不同")
+    await user.should_not_see("描述中包含「上穿 / 金叉」等表述")
 
 
 async def test_strategy_ai_without_config(user: User, monkeypatch):
@@ -980,6 +981,65 @@ async def test_selection_custom_factor_ai(user: User, monkeypatch):
     await user.should_see("会用到未来的数据")
     custom_factors.delete_factor(key)
     SP["cf_ai"].update(text="", base=False, result=None)
+
+
+MINE_VOL = ('def factor(p):\n    """20 日波动率"""\n'
+            '    return p["pct_chg"].rolling(20, min_periods=15).std()\n')
+MINE_LEAK = 'def factor(p):\n    """整段历史里的排名"""\n    return p["close"].rank(axis=0, pct=True)\n'
+
+
+@needs_stocks
+async def test_selection_mining(user: User, monkeypatch, tmp_path):
+    import json
+    import simplequant.llm as llm
+    from simplequant.stocks import custom_factors
+
+    class Fake:
+        sent = []
+
+        def chat(self, system, messages, schema=None):
+            Fake.sent.append(messages[-1]["content"])
+            time.sleep(1.5)                           # 等回复期间离开页面再回来
+            return json.dumps({"factors": [{"name": "短期波动", "idea": "低波动", "code": MINE_VOL, "desc": "20 日波动率"},
+                                           {"name": "历史排名", "idea": "x", "code": MINE_LEAK, "desc": ""}],
+                               "notes": "先试低波动"}, ensure_ascii=False)
+    monkeypatch.setattr(llm, "load_config", lambda: llm.LLMConfig.from_preset("deepseek", api_key="x"))
+    monkeypatch.setattr(llm, "get_provider", lambda cfg: Fake())
+    monkeypatch.setattr(custom_factors, "FACTOR_DIR", tmp_path / "factors")
+    from gui.pages.selection import sp_state
+    from simplequant.stocks import mining as MN
+    from dataclasses import asdict
+    sp_state()["mine"] = {"cfg": {**asdict(MN.MineConfig()), "rounds": 1, "per_round": 2, "min_t": 0.0,
+                                  "max_corr": 0.99}, "miner": None, "saved": {}, "running": False}
+    SP = await _open_selection(user, tab="mine")
+    await user.should_see("自动运行")
+    await user.should_see("检验期")
+    user.find(marker="mine_start").click()
+    assert await _wait(lambda: Fake.sent)
+    await user.open("/selection")                     # 挖掘仍在后台跑：新页面接着显示，结束后刷新结果
+    assert await _wait(lambda: state.STATE.get("sp_panel_key") is not None, n=2400)
+    assert SP["mine"]["running"]
+    await asyncio.sleep(1)
+    await user.should_see("请模型提出")                 # 新页面接上了后台写的日志
+    assert await _wait(lambda: not SP["mine"]["running"], n=1200)
+    await asyncio.sleep(0.6)                          # 页面定时器发现结束、刷新结果
+    miner = SP["mine"]["miner"]
+    assert len(Fake.sent) == 1 and miner.result["calls"] == 1
+    assert [c.status for c in miner.candidates] == ["accepted", "lookahead"]
+    await user.should_see("入选因子")
+    await user.should_see("与现有因子比较")
+    await user.should_see("达到门槛")
+    user.find(marker="mine_export")
+    c = miner.accepted[0]
+    user.find(marker=f"mine_save:{c.name}").click()
+    if not c.held:                                    # 检验期没保持住时先确认
+        await settle()
+        user.find(marker="confirm-save").click()
+    assert await _wait(lambda: custom_factors.list_factors())
+    (key, d), = custom_factors.list_factors().items()
+    assert d["name"] == "短期波动" and d["code"] == MINE_VOL and d["direction"] == c.direction
+    monkeypatch.undo()
+    custom_factors.load_all()
 
 
 SEL_AI_REPLY = {"name": "低估值高质量", "understood": "每月选 15 只 EP 高、ROE 高的股票，行业中性。",

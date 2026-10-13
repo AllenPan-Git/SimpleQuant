@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from ..i18n import pick
 from ..rules import INDICATORS, OPS, LOGICS, CROSS_OPS, validate, default_params, default_line, describe_rule
 from ..rules.schema import ADD_WHEN, MAX_DAYS, MAX_COOLDOWN, MAX_ADDS
-from .providers import Provider, extract_json
+from .providers import Provider, extract_json, ask
 
 IND_KEYS = list(INDICATORS)
 LINE_KEYS = sorted({ln for m in INDICATORS.values() for ln in (m.get("lines") or {})})
@@ -194,7 +194,7 @@ def _generate(text: str, provider: Provider, system: str, schema: dict, convert,
     messages = [{"role": "user", "content": text.strip()}]
     out = {}
     for attempt in range(repair_rounds + 1):
-        out = extract_json(provider.chat(system, messages, schema))
+        out = extract_json(ask(provider, system, messages, schema))
         errors = check(convert(out), "en")
         if not errors or (empty is not None and empty(out)):
             break
@@ -422,13 +422,11 @@ _CB_FIELDS = """- open, high, low, close: adjusted prices; raw_close: unadjusted
 - rating_score (credit rating as a number, higher is better) is today's rating copied to every past day, which leaks future information into backtests: use it only if the user explicitly asks, and then warn about it in \"understood\"."""
 
 
-def factor_system_prompt(lang: str = "zh", kind: str = "stock") -> str:
-    language = LANG_NAMES.get(lang, "English")
+def _factor_rules(language: str, kind: str) -> str:
+    """写 factor(p) 的规则（AI 写因子与 AI 因子挖掘共用）"""
     what = "convertible bonds" if kind == "cb" else "Chinese A-share stocks"
     fields = _CB_FIELDS if kind == "cb" else _STOCK_FIELDS
-    return f"""You write a custom factor for the SimpleQuant multi-factor stock picker ({what}) from a plain-language idea. The code runs on the user's own computer after they read it.
-
-Write exactly one function:
+    return f"""Write exactly one function:
 
 def factor(p):
     ...
@@ -442,7 +440,15 @@ def factor(p):
 - Time-series operations work down each column (x.rolling(20, min_periods=15).mean(), x.shift(5), x.pct_change(20, fill_method=None)); cross-sectional operations across codes on the same day use axis=1 (x.rank(axis=1, pct=True), x.sub(x.mean(axis=1), axis=0)).
 - Use min_periods on rolling windows (about 3/4 of the window) so new listings get values sooner. Avoid division by zero: x.where(x > 0) or .replace(0, np.nan) on the denominator. Replace inf with NaN.
 - The system winsorizes and standardizes the factor each day and applies the direction; do not do that yourself.
-- Keep the code short and readable for a non-programmer: a docstring explaining the idea in {language}, and brief comments in {language}.
+- Keep the code short and readable for a non-programmer: a docstring explaining the idea in {language}, and brief comments in {language}."""
+
+
+def factor_system_prompt(lang: str = "zh", kind: str = "stock") -> str:
+    language = LANG_NAMES.get(lang, "English")
+    what = "convertible bonds" if kind == "cb" else "Chinese A-share stocks"
+    return f"""You write a custom factor for the SimpleQuant multi-factor stock picker ({what}) from a plain-language idea. The code runs on the user's own computer after they read it.
+
+{_factor_rules(language, kind)}
 
 Be honest about limits: anything the fields above cannot express (news, sentiment, analyst ratings, fund holdings, industry names, intraday data, data for other markets) goes into "unsupported" as short phrases in {language}. List only parts of what the user actually asked for; never add things they did not mention (leave the list empty when everything was computed). Never use another field as a silent stand-in; if you approximate, say exactly how in "understood". If nothing in the request can be computed (or it is not a factor idea at all), return an empty code string.
 Editing: if the message starts with "Current code", change that code only as the "Change request" asks and keep the rest.
@@ -476,6 +482,64 @@ def generate_factor(text: str, provider: Provider, lang: str = "zh", kind: str =
     errors = validate_factor(spec, lang) if spec["code"] else []
     return NLResult(spec=spec, name=(out.get("name") or "").strip(), understood=out.get("understood") or "",
                     unsupported=list(out.get("unsupported") or []), errors=errors, raw=out)
+
+
+# ---------------- AI 因子挖掘：每轮提出一批因子 ----------------
+# 循环与评估在 stocks/mining.py；这里只负责一次调用：把挖掘期的结果发给模型，取回新的一批因子代码
+MINE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "factors": {"type": "array", "items": {
+            "type": "object",
+            "properties": {"name": {"type": "string"}, "idea": {"type": "string"}, "code": {"type": "string"},
+                           "desc": {"type": "string"}},
+            "required": ["name", "idea", "code", "desc"],
+            "additionalProperties": False,
+        }},
+        "notes": {"type": "string"},
+    },
+    "required": ["factors", "notes"],
+    "additionalProperties": False,
+}
+
+
+def mine_system_prompt(lang: str = "zh", kind: str = "stock") -> str:
+    language = LANG_NAMES.get(lang, "English")
+    return f"""You are a quantitative researcher searching for new cross-sectional factors for the SimpleQuant multi-factor stock picker. Each round you propose a batch of factors; the software computes them on the user's computer, measures them on a mining period only, and sends the results back. A separate later test period is never shown to you or used for selection.
+
+{_factor_rules(language, kind)}
+
+How factors are judged (mining period only):
+- IC = cross-sectional Spearman rank correlation between the factor on day T and the return from the open of T+1 to the open of T+1+h, sampled every h trading days; t = mean IC / std of IC * sqrt(number of samples).
+- The sign does not matter: a factor with a strongly negative IC is used with direction "lower is better", so do not flip signs to chase positive IC.
+- A factor is accepted only if |t| reaches the threshold, it covers at least half of the eligible securities, and its rank correlation with every existing or accepted factor stays below the limit; otherwise it is a duplicate.
+- The code is also re-run on data cut off at earlier dates: if the values up to the cut change, the factor used future data and is rejected.
+
+How to search well:
+- Each factor should test one clear economic or behavioural hypothesis (valuation, quality, growth, momentum or reversal, volatility, liquidity, price-volume interaction, etc.). Prefer simple, interpretable formulas over stacking many operations.
+- Use the feedback: refine promising ideas (|t| close to the threshold), stop repeating failures, and try different directions when a family keeps failing or duplicates an existing factor. Do not resubmit a factor that is the same as an earlier one.
+- Do not tune window lengths or constants back and forth to squeeze out a higher t: the user is told how many factors were tried, and small variations of one idea count as separate tries.
+- Use only fields listed above; never rely on knowledge of what happened in specific years.
+
+Output fields for each factor: name (short, in {language}, at most about 12 Chinese characters), idea (one sentence in {language}: the hypothesis and why it might predict returns), code, desc (one short sentence in {language} for the factor list). notes: one or two sentences in {language} on what you changed this round and why."""
+
+
+def propose_factors(provider: Provider, message: str, lang: str = "zh", kind: str = "stock", stop=None,
+                    tick=None, limit: float | None = None) -> dict:
+    """
+    一次调用：message 由 stocks/mining.py 写好（挖掘期、已有因子、此前的结果、要几个）。返回 {"factors": [...], "notes"}
+    stop / tick / limit 见 providers.ask（等待中可停止、显示已等秒数、最多等多久）
+    """
+    out = extract_json(ask(provider, mine_system_prompt(lang, kind), [{"role": "user", "content": message}],
+                           MINE_SCHEMA, stop=stop, tick=tick, limit=limit))
+    items = []
+    for f in out.get("factors") or []:
+        if not isinstance(f, dict):
+            continue
+        code = (f.get("code") or "").strip()
+        items.append({"name": (f.get("name") or "").strip(), "idea": (f.get("idea") or "").strip(),
+                      "code": code + "\n" if code else "", "desc": (f.get("desc") or "").strip()})
+    return {"factors": items, "notes": (out.get("notes") or "").strip()}
 
 
 def explain_system_prompt(lang: str = "zh") -> str:
@@ -570,9 +634,9 @@ def explain_result(provider: Provider, spec_text: str, metrics: dict, lang: str 
     if details:
         user += ("\n\nTrade details (returns are ratios of initial cash; bars = trading days held):\n"
                  + json.dumps(details, ensure_ascii=False))
-    return provider.chat(system, [{"role": "user", "content": user}], None).strip()
+    return ask(provider, system, [{"role": "user", "content": user}], None).strip()
 
 
 def ping(provider: Provider) -> str:
     """测试连接：能收到回复即可"""
-    return provider.chat("Reply with exactly: OK", [{"role": "user", "content": "ping"}], None).strip()
+    return ask(provider, "Reply with exactly: OK", [{"role": "user", "content": "ping"}], None).strip()

@@ -20,11 +20,12 @@ from . import __version__
 from .engine.runner import BrokerConfig
 
 FORMAT = "simplequant-plan"
-VERSION = 4                     # 能读取的最高版本
+VERSION = 5                     # 能读取的最高版本
 TIMING_VERSION = 1              # 择时方案仍写 1，旧版软件也能导入
 SELECTION_VERSION = 2           # 选股方案：0.2.4 及以前的版本会提示「请先更新软件」
 ML_VERSION = 3                  # 用机器学习合成因子的选股方案：0.3.0 及以前的版本会提示「请先更新软件」
 PACING_VERSION = 4              # 规则用了连续 N 根 K 线 / 冷却期 / 分批建仓：1.0.0 及以前的版本会提示「请先更新软件」
+CALL_VERSION = 5                # 可转债用了强赎触发天数（因子或条件）：1.2.1 及以前的版本会提示「请先更新软件」
 SUFFIX = ".sqplan"
 DOWNLOADABLE = ("akshare", "baostock")          # 导入时可以自动下载的数据源
 RESULT_KEYS = ("total_return", "benchmark_return", "max_drawdown", "trades")
@@ -71,6 +72,14 @@ def make_plan(name: str, spec: dict, metas: list, start, end, broker: BrokerConf
     return plan
 
 
+def selection_version(spec: dict) -> int:
+    """旧版软件会忽略不认识的条件（结果悄悄不同），所以用到新功能就写更高的版本号"""
+    uses_call = any(f.get("key") == "cb_call_days" for f in spec.get("factors", []))
+    if uses_call or (spec.get("filters") or {}).get("max_call_days") is not None:
+        return CALL_VERSION
+    return ML_VERSION if spec.get("weighting") == "ml" else SELECTION_VERSION
+
+
 def make_selection_plan(name: str, spec: dict, start, end, warmup_start, broker: BrokerConfig,
                         result: dict | None = None) -> dict:
     """
@@ -91,7 +100,7 @@ def make_selection_plan(name: str, spec: dict, start, end, warmup_start, broker:
                 raise PlanError("plan.err_factor_missing", name=f["key"])
             custom[f["key"]] = {k: d.get(k, "") for k in ("name", "code", "direction", "desc")}
     plan = {
-        "format": FORMAT, "version": ML_VERSION if spec.get("weighting") == "ml" else SELECTION_VERSION,
+        "format": FORMAT, "version": selection_version(spec),
         "app": __version__,
         "created": dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
         "name": name, "strategy": spec,

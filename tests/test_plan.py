@@ -203,3 +203,14 @@ def test_pacing_rule_plan_version():
     assert P.make_plan("x", streak, [], "2020-01-02", "2021-01-04", BrokerConfig())["version"] == P.PACING_VERSION
     assert P.make_plan("x", plain, [], "2020-01-02", "2021-01-04", BrokerConfig())["version"] == P.TIMING_VERSION
     assert P.PACING_VERSION <= P.VERSION
+
+
+def test_selection_version_for_call_days():
+    """可转债用了强赎触发天数：写 CALL_VERSION，旧版软件提示更新而不是忽略这个条件"""
+    base = {"universe": "cb", "factors": [{"key": "cb_double_low", "weight": 1, "direction": -1}], "filters": {}}
+    assert P.selection_version(base) == P.SELECTION_VERSION
+    assert P.selection_version({**base, "filters": {"max_call_days": 10}}) == P.CALL_VERSION
+    assert P.selection_version({**base, "factors": [{"key": "cb_call_days", "weight": 1, "direction": -1}]}) \
+        == P.CALL_VERSION
+    assert P.selection_version({**base, "weighting": "ml"}) == P.ML_VERSION
+    assert P.CALL_VERSION <= P.VERSION

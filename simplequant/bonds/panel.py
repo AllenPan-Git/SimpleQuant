@@ -13,6 +13,9 @@
   按个人投资者税后（扣 20%）计入后复权因子，与股票后复权的口径相同（利息再投资）；最后一年的利息含在到期赎回价里
 - 涨跌幅：2022-08-01 起 ±20%，上市首日 +57.3% / −43.3%（相对面值 100）；之前没有涨跌幅限制（只有临时停牌）
 - 每手 10 张；成交额 = 成交量 × 收盘价（新浪没有成交额，作为近似）
+- 强赎触发天数（call_days）：近 30 个交易日里转股价值 ≥ 130（正股收盘价不低于转股价的 130%）的天数。
+  多数转债的条款是「30 个交易日中至少 15 个交易日」满足即可强赎；强赎「提示性公告」没有数据，用它近似。
+  只用当天及以前的价格；条款不同（如 120%）或公告过「不强赎」的转债也照同一口径计数
 """
 
 import numpy as np
@@ -27,6 +30,7 @@ LIMIT_PCT = 0.20
 FIRST_DAY_UP, FIRST_DAY_DOWN = 157.3, 56.7
 COUPON_TAX = 0.20
 LOT = 10
+CALL_TRIGGER, CALL_WINDOW = 130.0, 30       # 强赎触发：转股价值 ≥ 130，统计近 30 个交易日
 STOCK_INDUSTRY_PREFIX = {"6": "sh.", "9": "sh.", "0": "sz.", "2": "sz.", "3": "sz.", "4": "bj.", "8": "bj."}
 
 
@@ -91,6 +95,13 @@ CB_FILTERS = {
     "max_premium": {"label": L("转股溢价率上限（%）", "Max conversion premium (%)"), "default": None,
                     "help": L("转股溢价率高于该值的不选", "Skips bonds whose conversion premium exceeds this"),
                     "fn": lambda p, v: p["premium"] <= v},
+    "max_call_days": {"label": L("强赎触发天数上限（近 30 日）", "Max call-trigger days (last 30)"), "default": None,
+                      "help": L("近 30 个交易日中转股价值不低于 130 的天数超过该值的不选。多数转债满 15 天即可强赎，"
+                                "设为 10 左右可在强赎公告前回避",
+                                "Skips bonds whose conversion value closed at 130 or above on more than this many of "
+                                "the last 30 trading days. Most bonds can be called after 15 such days; about 10 avoids "
+                                "them before the call notice"),
+                      "fn": lambda p, v: p["call_days"] <= v},
 }
 CB_DEFAULT_FILTERS = {"exclude_st": False, "min_list_days": 0,
                       **{k: m["default"] for k, m in CB_FILTERS.items()}}
@@ -203,6 +214,8 @@ def build_cb_panel(store: CBStore, start: str, end: str) -> Panel:
     fields["double_low"] = rc + fields["premium"]
     stock_price = fields["conv_value"] * fields["conv_price"] / 100       # 转股价值 = 100 / 转股价 × 正股价
     fields["stock_close"] = stock_price.where(stock_price > 0)
+    hit = (fields["conv_value"] >= CALL_TRIGGER) & trad
+    fields["call_days"] = hit.astype(float).rolling(CALL_WINDOW, min_periods=1).sum().where(rc.notna())
     info_r = info.reindex(codes)
     maturity = pd.to_datetime(info_r["maturity"]) if "maturity" in info_r else pd.Series(pd.NaT, index=codes)
     days_left = (maturity.values[None, :] - calendar.values[:, None]).astype("timedelta64[D]").astype(float)

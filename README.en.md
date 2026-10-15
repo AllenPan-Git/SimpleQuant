@@ -62,6 +62,8 @@ Using free BaoStock data, score the **historical constituents** of the CSI 300 a
 
 <img src="docs/images/selection-cb-en.png" alt="Convertible-bond selection">
 
+<img src="docs/images/mining-en.png" alt="AI factor mining">
+
 ### Asset allocation
 A risk assessment modelled on broker suitability questionnaires (C1 conservative to C5 aggressive, with a maximum tolerable drawdown) leads to a reference allocation across cash, Treasury ETFs, broad-market ETFs, a gold ETF and your own timing or selection strategies: the risk level sets the class mix, risk parity splits weight within each class, and if the portfolio's historical drawdown exceeds the tolerance, weight moves to defensive assets automatically. Portfolio backtests support several rebalancing rules and show each component's return and risk contribution and the correlations; weights can be edited and re-tested. Once you settle on an allocation, open a **portfolio paper account** with its current weights and rebalancing rule in one click; it advances with the other paper accounts every trading day and lists the rebalancing trades for the next open when they fall due.
 
@@ -152,10 +154,10 @@ PyInstaller cannot cross-compile, so each system's version is built on that syst
 <summary><b>Convertible-bond selection</b></summary>
 
 - **Data**: Eastmoney (bond list including delisted bonds, terms, daily bond floor / conversion value / conversion price), Sina (daily bars), China Securities Index (CSI Convertible Bond Index as the benchmark). The first download covers about 1,000 bonds (about 40 MB, 6–10 minutes); later updates fetch only bonds still trading.
-- **Factors**: double-low (price + conversion premium), price, conversion premium, premium over bond floor, conversion value, issue size, years to maturity, underlying-stock 20-day return and 60-day volatility; price/volume factors (returns, momentum, volatility, Amihud) are shared with stocks. Over 2018–2026, double-low has a 20-day Rank IC of about −0.06 (t ≈ −3.3) with monotonic quintile returns.
-- **Filters**: max price, minimum 20-day average turnover, minimum years to maturity, max conversion premium.
+- **Factors**: double-low (price + conversion premium), price, conversion premium, premium over bond floor, conversion value, issue size, years to maturity, underlying-stock 20-day return and 60-day volatility, call-trigger days; price/volume factors (returns, momentum, volatility, Amihud) are shared with stocks. Over 2018–2026, double-low has a 20-day Rank IC of about −0.06 (t ≈ −3.3) with monotonic quintile returns.
+- **Filters**: max price, minimum 20-day average turnover, minimum years to maturity, max conversion premium, max call-trigger days.
 - **Trading rules**: lots of 10 bonds, T+0; ±20% price limits from 2022-08-01, +57.3% / −43.3% of par on the first day; convertibles trade at full price, and coupons are added after 20% tax as an adjustment factor.
-- **Calls and maturity**: once a forced-redemption or maturity notice is published the bond is no longer selected and holdings are sold at the next open; bonds that stop trading unexpectedly (suspension, default, stock delisting) cannot be sold and stay at their last price, as in reality.
+- **Calls and maturity**: once a forced-redemption or maturity notice is published the bond is no longer selected and holdings are sold at the next open; bonds that stop trading unexpectedly (suspension, default, stock delisting) cannot be sold and stay at their last price, as in reality. Call warnings have no history, so "call-trigger days" approximates them: the number of the last 30 trading days with a conversion value of 130 or more (most bonds can be called after 15; about 97% of 2018–2026 call notices had reached 15 on the notice date). Use it as a factor or a filter to step aside before the notice.
 - Industry neutralization uses the underlying stock's industry; size neutralization uses issue size. Factor research, backtests, walk-forward, paper trading, Python script export and natural-language selection all work; export to JoinQuant / MyQuant / QMT is not supported, and conversion, puts and reset plays are not simulated.
 - Trading convertibles requires investor suitability (since 2022: 100k CNY average assets over the previous 20 trading days and 2 years of trading experience).
 </details>

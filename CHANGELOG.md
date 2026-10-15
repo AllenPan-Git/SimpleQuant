@@ -5,6 +5,16 @@
 
 Changes in each release. `tools/release.py` copies the matching section into the GitHub release notes.
 
+## 1.3.0（2026-10-15）
+
+### 更新内容
+- 新增：可转债「强赎触发天数」——近 30 个交易日中转股价值不低于 130（正股收盘价不低于转股价的 130%）的天数。强赎提示性公告没有历史数据，以此近似：多数转债满 15 天即可强赎，2018–2026 年的强赎公告中约 97% 在公告日已达到 15 天。可作为因子（「强赎触发天数（近 30 日）」），也可作为选股条件「强赎触发天数上限」（默认不限，原有结果不变）；自定义因子可用字段 `call_days`
+- 用到强赎触发天数的选股方案文件，1.2.1 及以前的版本导入时会提示先更新软件
+
+### Changes
+- New: "call-trigger days" for convertible bonds — the number of the last 30 trading days on which the conversion value was 130 or more (stock close at least 130% of the conversion price). Call warnings have no history, so this approximates them: most bonds can be called after 15 such days, and about 97% of 2018–2026 call notices had reached 15 on the notice date. Available as a factor ("Call-trigger days (last 30)") and as the filter "Max call-trigger days" (no limit by default, so existing results are unchanged); custom factors can use the field `call_days`
+- Selection plan files that use call-trigger days ask version 1.2.1 and earlier to update first
+
 ## 1.2.1（2026-10-13）
 
 ### 更新内容

@@ -789,6 +789,8 @@ TEXT.update({
         "- **涨跌幅**：2022-08-01 起为 ±20%，上市首日为 +57.3% / −43.3%（相对面值 100 元）；此前无涨跌幅限制\n"
         "- **强赎与到期**：发布强制赎回或到期赎回公告的转债，公告当日起不再入选，下一个交易日开盘卖出持仓；"
         "因停牌、违约、正股退市等意外停止交易的，当时无法预知，持仓按最后价格保留、无法卖出（与实际一致）\n"
+        "- **强赎触发天数**：强赎提示性公告没有历史数据，以近 30 个交易日中转股价值不低于 130 的天数近似"
+        "（多数转债满 15 天即可强赎；2018–2026 年的强赎公告中约 97% 在公告日已达到 15 天），可用作因子或选股条件\n"
         "- **付息**：转债按全价交易，付息日价格下跳。回测按条款中的票面利率计入税后利息（扣 20% 个人所得税），"
         "与股票的后复权口径相同（利息再投资）\n"
         "- **数据缺口**：个别转债缺少上市初期的新浪日线，这些交易日只用东方财富的收盘价计算因子，不进行交易\n"
@@ -799,6 +801,9 @@ TEXT.update({
         "- **Calls and maturity**: once a forced-redemption or maturity notice is published the bond is no longer "
         "selected and holdings are sold at the next open; bonds that stop trading unexpectedly (suspension, default, "
         "stock delisting) cannot be sold and stay at their last price, as in reality\n"
+        "- **Call-trigger days**: call warnings have no history, so the number of the last 30 trading days with a "
+        "conversion value of 130 or more is used instead (most bonds can be called after 15; about 97% of 2018–2026 "
+        "call notices had reached 15 on the notice date); available as a factor and a filter\n"
         "- **Coupons**: convertibles trade at full price and drop on coupon dates; coupons from the bond terms are added "
         "after 20% tax and reinvested, like back-adjusted stock prices\n"
         "- **Data gaps**: a few bonds lack Sina bars for their first months; those days use Eastmoney closes for factors "
@@ -942,6 +947,7 @@ p["div_cash"]  p["div_bonus"]  p["div_reserve"]      # 每股现金分红（税�
 p["raw_close"]  p["premium"]  p["bond_premium"]  p["double_low"]   # 不复权价、转股溢价率(%)、纯债溢价率(%)、双低
 p["conv_value"]  p["bond_value"]  p["conv_price"]  p["stock_close"]  # 转股价值、纯债价值、转股价、正股价
 p["remain_years"]  p["issue_size"]                  # 剩余期限（年）、发行规模（亿元）
+p["call_days"]                                      # 近 30 个交易日中转股价值 ≥ 130 的天数（强赎触发）
 
 x.shift(5)                       # 5 日前的值（仅可向前回看，请勿使用 shift(-n)）
 x.rolling(20, min_periods=15).mean() / .std() / .max()
@@ -960,6 +966,7 @@ p["div_cash"]  p["div_bonus"]  p["div_reserve"]      # cash dividend (pre-tax), 
 p["raw_close"]  p["premium"]  p["bond_premium"]  p["double_low"]   # raw price, conversion premium (%), premium over bond floor (%), double-low
 p["conv_value"]  p["bond_value"]  p["conv_price"]  p["stock_close"]  # conversion value, bond floor, conversion price, stock price
 p["remain_years"]  p["issue_size"]                  # years to maturity, issue size (100M CNY)
+p["call_days"]                                      # days in the last 30 with conversion value ≥ 130 (call trigger)
 
 x.shift(5)                       # value 5 days ago (look back only; never use shift(-n))
 x.rolling(20, min_periods=15).mean() / .std() / .max()

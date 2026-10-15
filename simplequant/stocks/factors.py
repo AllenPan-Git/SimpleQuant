@@ -142,6 +142,12 @@ FACTORS.update({
                       "assets": ("cb",),
                       "desc": L("发行时的规模；剩余规模只有部分转债有历史数据，因此用发行规模",
                                 "size at issue (remaining size history is incomplete)")},
+    "cb_call_days": {"label": L("强赎触发天数（近 30 日）", "Call-trigger days (last 30)"), "group": "cb_terms",
+                     "direction": -1, "fn": _field("call_days"), "assets": ("cb",),
+                     "desc": L("近 30 个交易日中转股价值不低于 130 的天数；多数转债满 15 天即可强赎，"
+                               "天数越多越可能很快公告强赎（价格会向转股价值靠拢）",
+                               "days in the last 30 with conversion value ≥ 130; most bonds can be called after 15, "
+                               "so more days means a call notice is likely soon")},
     "cb_remain_years": {"label": L("剩余期限（年）", "Years to maturity"), "group": "cb_terms", "direction": 1,
                         "fn": _field("remain_years"), "assets": ("cb",)},
     "cb_stock_ret20": {"label": L("正股 20 日涨幅", "Stock 20-day return"), "group": "cb_stock", "direction": 1,

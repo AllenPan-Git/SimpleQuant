@@ -35,7 +35,7 @@ FIN_WORDS = set(FIN_FIELDS) | {"mcap"}
 DIV_WORDS = {"div_cash", "div_bonus", "div_reserve"}    # 用到这些字段就需要分红数据
 STOCK_WORDS = {"pe", "pb", "ps", "turnover"} | DIV_WORDS    # 只有股票有
 CB_WORDS = {"premium", "bond_premium", "double_low", "conv_value", "bond_value", "conv_price", "stock_close",
-            "remain_years", "issue_size", "remain_size", "rating_score"}     # 只有可转债有
+            "remain_years", "issue_size", "remain_size", "rating_score", "call_days"}     # 只有可转债有
 
 
 class FactorCodeError(Exception):

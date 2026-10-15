@@ -1,11 +1,13 @@
 """
-README 截图用的界面服务：python tools/readme_server.py zh|en light|dark 端口 [cb|up]
+README 截图用的界面服务：python tools/readme_server.py zh|en light|dark 端口 [cb|up|pf|mine]
 - 界面偏好、模拟账户都放在临时目录，不读写你自己的偏好、历史和模拟账户
 - 预先放入：一次 RSI 回测（回测页、首页「继续上次的工作」）、两条最近的报告、一个运行了一段时间的模拟账户、
   一次资产配置（风险测评 C3、默认候选）
-- 加 cb：选股页的股票池改为「可转债（全市场）」，使用可转债的默认因子与条件
+- 加 cb：选股页的股票池改为「可转债（全市场）」，使用可转债的默认因子与条件，回测从 2018-07-02 开始
 - 加 up：模拟账户改用 RSI 超买超卖（截至 2026-09-30 为盈利），并视为已设置每日自动运行（首页不显示提示）
 - 加 pf：另开一个按上述参考配置的组合模拟账户（2025-10-09 起），模拟盘页打开它，报头为「资产配置」流程
+- 加 mine：选股页打开「AI 因子挖掘」标签页（沪深300）。不调用模型：按 tools/readme_mining.json 依次返回一次真实挖掘
+  （DeepSeek，2026-10-12）里模型每轮给出的因子，评估、检验期都由软件实际计算；自定义因子用空的临时目录
 - 行情数据读本机数据库（只读）：需要 510300 后复权日线、沪深300选股数据，以及资产配置默认候选的 ETF 日线；
   加 cb 时还需要可转债数据
 """
@@ -21,6 +23,7 @@ PORT = int(sys.argv[3]) if len(sys.argv) > 3 else 8780
 CB = len(sys.argv) > 4 and sys.argv[4] == "cb"
 UP = len(sys.argv) > 4 and sys.argv[4] == "up"
 PF = len(sys.argv) > 4 and sys.argv[4] == "pf"
+MINE = len(sys.argv) > 4 and sys.argv[4] == "mine"
 TMP = Path(tempfile.mkdtemp(prefix="sq_readme_"))
 os.environ["NICEGUI_STORAGE_PATH"] = str(TMP / "storage")
 ROOT = Path(__file__).resolve().parents[1]
@@ -113,12 +116,33 @@ if CB:
     sp = selection_page.sp_state()
     selection_page.switch_kind(sp, "stock", "cb")
     sp["universe"] = "cb"
+    sp["ranges"]["cb"] = (dt.date(2018, 7, 2), dt.date(2100, 1, 1))     # 结束日会被截到数据的最后一天
+
+
+# ---- AI 因子挖掘：重放一次真实挖掘里模型的回复 ----
+if MINE:
+    import json  # noqa: E402
+    from types import SimpleNamespace  # noqa: E402
+    from simplequant import llm  # noqa: E402
+    from simplequant.stocks import custom_factors  # noqa: E402
+    custom_factors.FACTOR_DIR = TMP / "factors"
+    rounds = iter(json.loads((ROOT / "tools" / "readme_mining.json").read_text(encoding="utf-8"))["rounds"])
+
+    def replay(provider, message, lang="zh", kind="stock", **kw):
+        r = next(rounds)
+        return {"notes": r["notes"][LANG], "factors": [{**f[LANG], "code": f["code"]} for f in r["factors"]]}
+    llm.load_config = lambda *a, **k: SimpleNamespace(ready=True)
+    llm.get_provider = lambda cfg: None
+    llm.propose_factors = replay
+    state.STATE["sp_tab"] = "mine"
 
 
 # 数据库里的行情只到某一天：让模拟盘页以这天为「最新应有数据」，不显示「数据未更新」的提示
 import pandas as pd  # noqa: E402
 import gui.pages.paper as paper_page  # noqa: E402
 paper_page.latest_expected_day = lambda calendar: pd.Timestamp((pf_acc if PF else acc).data_through)
+from simplequant.paper import health  # noqa: E402
+health.latest_expected_day = lambda calendar, now=None: pd.Timestamp((pf_acc if PF else acc).data_through)  # 首页提示同理
 
 
 @app.on_startup

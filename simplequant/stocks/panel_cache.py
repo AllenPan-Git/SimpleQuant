@@ -17,6 +17,7 @@ from pathlib import Path
 from .. import __version__
 
 MAX_FILES = 3
+FORMAT = 2               # 面板字段变了就加 1（同一软件版本开发期间也会重建）
 MAGIC = b"SQP1"          # 文件头：标记 + 8 字节原始长度，之后是 zstd 压缩的 pickle
 
 
@@ -26,7 +27,7 @@ def _codec():
 
 
 def _path(root: Path, universe: str, start: str, end: str, data_version: str) -> Path:
-    h = hashlib.sha1(f"{universe}|{start}|{end}|{data_version}|{__version__}".encode()).hexdigest()[:16]
+    h = hashlib.sha1(f"{universe}|{start}|{end}|{data_version}|{__version__}|{FORMAT}".encode()).hexdigest()[:16]
     return root / f"{universe}_{start}_{end}_{h}.pkl"
 
 

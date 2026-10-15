@@ -280,7 +280,7 @@ Conventions:
 - top_n default 10; "hold 20 stocks / 持有20只" → 20. exclude_st default true. min_list_days default 250 ("exclude new listings under a year").
 - "industry neutral / 行业中性 / 各行业分散" → neutralize_industry true. "size neutral / 市值中性" → neutralize_size true. Default false.
 - position_pct default 95.
-- Convertible bonds ("可转债 / 转债 / convertible bonds") → universe cb, and only factors marked for convertible bonds. "双低 / double-low" → cb_double_low lower. "低价转债" → cb_price lower. "低溢价 / 低转股溢价率" → cb_premium lower. "接近债底 / 纯债溢价率低" → cb_bond_premium lower. "小规模转债" → cb_issue_size lower. For cb set exclude_st false and min_list_days 0 unless asked. max_price: the price cap for cb ("价格低于 130 元" → 130); 0 keeps the default (130). For stock universes set max_price to 0.
+- Convertible bonds ("可转债 / 转债 / convertible bonds") → universe cb, and only factors marked for convertible bonds. "双低 / double-low" → cb_double_low lower. "低价转债" → cb_price lower. "低溢价 / 低转股溢价率" → cb_premium lower. "接近债底 / 纯债溢价率低" → cb_bond_premium lower. "小规模转债" → cb_issue_size lower. "避开强赎 / 临近强赎" → cb_call_days lower. For cb set exclude_st false and min_list_days 0 unless asked. max_price: the price cap for cb ("价格低于 130 元" → 130); 0 keeps the default (130). For stock universes set max_price to 0.
 
 Be honest about limits: anything not expressible with this catalog and these settings (e.g. factors not listed such as dividend yield, analyst ratings, specific industries to include/exclude, stop-losses, market-timing overlays, universes other than those listed) goes into "unsupported" as short phrases written in {language} and is left out. Do not use a different factor as a stand-in for an unsupported one (e.g. never use ep in place of dividend yield); the user decides whether to add something else. If none of what the user asked for can be expressed (or the text is not a stock-picking idea at all), return an empty factors list and explain in "unsupported".
 Editing an existing strategy: if the message starts with "Current strategy", the text after "Change request" asks for changes to that strategy (e.g. "add low volatility", "hold 30 instead"). Start from the current strategy and change only what is asked; copy every other field unchanged, including factor weights and directions. Removing all factors is allowed only if the user asks for it.
@@ -419,6 +419,7 @@ _CB_FIELDS = """- open, high, low, close: adjusted prices; raw_close: unadjusted
 - premium (conversion premium, %), bond_premium (premium over bond floor, %), double_low (raw_close + premium)
 - conv_value (conversion value), bond_value (bond floor), conv_price (conversion price), stock_close (underlying stock price)
 - remain_years (years to maturity), issue_size (issue size, 100M CNY), remain_size (outstanding size, 100M CNY)
+- call_days: number of the last 30 trading days with conv_value >= 130 (most bonds can be called after 15 such days)
 - rating_score (credit rating as a number, higher is better) is today's rating copied to every past day, which leaks future information into backtests: use it only if the user explicitly asks, and then warn about it in \"understood\"."""
 
 

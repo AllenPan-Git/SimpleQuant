@@ -1,0 +1,305 @@
+{
+ "source": "DeepSeek (deepseek-flash), 2026-10-12, CSI 300 2022-01-04 ~ 2026-09-30; English names translated",
+ "rounds": [
+  {
+   "notes": {
+    "zh": "本轮避开已有的估值、盈利、规模、动量与波动率/换手率水平类因子，改为从行为与量价结构切入：换手率的短期放大、收益分布偏度（彩票偏好）、价格相对120日高点的位置、以及隔夜收益拆解。四者彼此逻辑独立，且都属于相对变化或分布形态类度量，与已有因子的相关性预期较低。",
+    "en": "Avoids existing valuation, profitability, size, momentum and volatility/turnover-level factors; tries behavioural and price-volume structure instead: turnover surges, return skewness, position against the 120-day high and overnight returns."
+   },
+   "factors": [
+    {
+     "zh": {
+      "name": "换手率放大",
+      "idea": "短期换手率相对长期换手率的比值上升代表交易情绪过热、关注度异常，这类股票未来收益往往偏低。",
+      "desc": "5日平均换手率与60日平均换手率之比，度量换手率的短期放大程度。"
+     },
+     "en": {
+      "name": "Turnover surge",
+      "idea": "A rising ratio of short-term to long-term turnover signals overheated trading and unusual attention; such stocks tend to do worse.",
+      "desc": "5-day over 60-day average turnover."
+     },
+     "code": "def factor(p):\n    \"\"\"换手率放大：短期(5日)平均换手率除以长期(60日)平均换手率，衡量近期交易情绪是否过热。\"\"\"\n    turn = p[\"turnover\"]\n    short = turn.rolling(5, min_periods=4).mean()\n    long = turn.rolling(60, min_periods=45).mean()\n    long = long.where(long > 0)  # 避免除以零\n    return (short / long).replace([np.inf, -np.inf], np.nan)\n"
+    },
+    {
+     "zh": {
+      "name": "20日收益偏度",
+      "idea": "过去20日收益分布正偏（少数大涨）反映投资者的彩票偏好，这类股票容易被高估、未来收益偏低。",
+      "desc": "过去20日收益率的偏度，衡量彩票型收益特征。"
+     },
+     "en": {
+      "name": "20-day return skewness",
+      "idea": "Positively skewed returns (a few big up days) reflect lottery preference; such stocks tend to be overpriced.",
+      "desc": "Skewness of daily returns over 20 days."
+     },
+     "code": "def factor(p):\n    \"\"\"收益偏度：过去20日收益率的偏度，正偏度(博彩型)股票往往被高估、未来收益偏低。\"\"\"\n    r = p[\"close\"].pct_change(fill_method=None)\n    m = r.rolling(20, min_periods=15).mean()\n    s = r.rolling(20, min_periods=15).std()\n    third = (r - m).pow(3).rolling(20, min_periods=15).mean()  # 三阶矩\n    s = s.where(s > 0)  # 避免除以零\n    return (third / s ** 3).replace([np.inf, -np.inf], np.nan)\n"
+    },
+    {
+     "zh": {
+      "name": "距120日高点",
+      "idea": "价格越接近过去120日最高价，说明趋势越强、投资者锚定效应越明显，未来表现可能延续或反转。",
+      "desc": "当前收盘价相对过去120日最高收盘价的位置，衡量价格强势程度。"
+     },
+     "en": {
+      "name": "Distance to 120-day high",
+      "idea": "Prices close to the 120-day high show strong trends and anchoring; performance may continue or reverse.",
+      "desc": "Close over the highest close of the past 120 days."
+     },
+     "code": "def factor(p):\n    \"\"\"距120日高点：收盘价除以过去120日最高收盘价，越接近1说明价格越强势。\"\"\"\n    c = p[\"close\"]\n    hi = c.rolling(120, min_periods=90).max()\n    hi = hi.where(hi > 0)  # 避免除以零\n    return (c / hi).replace([np.inf, -np.inf], np.nan)\n"
+    },
+    {
+     "zh": {
+      "name": "隔夜收益动量",
+      "idea": "隔夜收益更多由消息和情绪驱动，过去20日隔夜收益偏高往往意味着情绪过度乐观，未来收益偏低。",
+      "desc": "过去20日隔夜（开盘对前收）对数收益的累计值，刻画隔夜情绪。"
+     },
+     "en": {
+      "name": "Overnight return momentum",
+      "idea": "Overnight returns are driven by news and sentiment; high recent overnight returns suggest over-optimism.",
+      "desc": "Sum of 20 days of overnight log returns (open vs previous close)."
+     },
+     "code": "def factor(p):\n    \"\"\"隔夜收益：过去20日每日开盘价相对前一日收盘价的对数收益之和，反映隔夜情绪。\"\"\"\n    prev_close = p[\"close\"].shift(1)\n    ratio = p[\"open\"] / prev_close.where(prev_close > 0)  # 避免除以零\n    overnight = np.log(ratio).replace([np.inf, -np.inf], np.nan)\n    return overnight.rolling(20, min_periods=15).sum()\n"
+    }
+   ]
+  },
+  {
+   "notes": {
+    "zh": "上一轮试的换手率放大、收益偏度、距高点、隔夜动量都属于动量/反转或换手率水平的变体且效果弱，本轮换四个新角度：彩票偏好（最大单日收益）、量价配合（收益与换手率相关）、股本供给（净股票发行）和日内买卖压力（收盘位置）。公式都只用当日及之前数据，窗口按3/4设置min_periods。",
+    "en": "Last round's ideas were variants of momentum/reversal or turnover levels and were weak; this round tries lottery preference, price-volume correlation, share supply and intraday buying pressure."
+   },
+   "factors": [
+    {
+     "zh": {
+      "name": "最大单日收益",
+      "idea": "过去20日内的最大单日收益代表彩票型偏好，投机情绪越强的股票越容易被高估，未来收益偏低。",
+      "desc": "过去20日最大单日收益，衡量彩票型投机偏好。"
+     },
+     "en": {
+      "name": "Max daily return",
+      "idea": "The largest daily return in 20 days captures lottery-like speculation; such stocks tend to be overpriced.",
+      "desc": "Largest daily return over 20 days."
+     },
+     "code": "def factor(p):\n    \"\"\"彩票效应：过去20日最大单日收益越大，说明投机情绪越强，未来收益往往偏低。\"\"\"\n    close = p[\"close\"]\n    ret = close / close.shift(1) - 1            # 每日收益\n    f = ret.rolling(20, min_periods=15).max()   # 20日内最大单日收益\n    return f.replace([np.inf, -np.inf], np.nan)\n"
+    },
+    {
+     "zh": {
+      "name": "量价相关性",
+      "idea": "过去60日收益与换手率的相关系数越高，说明上涨主要靠放量炒作，交易过热后未来收益偏低。",
+      "desc": "过去60日收益与换手率的相关系数，度量量价配合程度。"
+     },
+     "en": {
+      "name": "Return-turnover correlation",
+      "idea": "A high correlation between returns and turnover means rallies are driven by heavy trading, which tends to reverse.",
+      "desc": "60-day correlation between daily returns and turnover."
+     },
+     "code": "def factor(p):\n    \"\"\"量价配合：收益与换手率的滚动相关系数，放量上涨越明显说明投机氛围越重，未来收益偏低。\"\"\"\n    ret = p[\"close\"].pct_change(fill_method=None)   # 每日收益\n    turn = p[\"turnover\"]                            # 每日换手率\n    f = ret.rolling(60, min_periods=45).corr(turn)  # 收益与换手率的60日相关\n    return f.replace([np.inf, -np.inf], np.nan)\n"
+    },
+    {
+     "zh": {
+      "name": "净股票发行",
+      "idea": "总股本在一年内的增长率代表股票供给的增加（增发、送转），供给扩张往往伴随未来收益偏低。",
+      "desc": "总股本同比对数变化，衡量净股票发行带来的供给冲击。"
+     },
+     "en": {
+      "name": "Net share issuance",
+      "idea": "Growth in total shares adds supply (placements, bonus shares) and tends to precede lower returns.",
+      "desc": "Year-over-year log change in total shares."
+     },
+     "code": "def factor(p):\n    \"\"\"净股票发行：总股本一年内的变化，股本扩张意味着供给增加，未来收益偏低。\"\"\"\n    ts = p[\"total_share\"].where(p[\"total_share\"] > 0)  # 去掉缺失和异常值\n    f = np.log(ts / ts.shift(252))                      # 一年（252个交易日）股本变化\n    return f.replace([np.inf, -np.inf], np.nan)\n"
+    },
+    {
+     "zh": {
+      "name": "收盘位置",
+      "idea": "收盘价持续位于当日高低区间的上沿，说明尾盘买盘过热、日内涨幅被情绪推高，之后容易回落。",
+      "desc": "过去20日收盘价在当日高低区间中位置的平均值。"
+     },
+     "en": {
+      "name": "Close location",
+      "idea": "Closing near the day's high suggests late-day buying pressure driven by sentiment, which tends to fade.",
+      "desc": "Average position of the close within the daily range over 20 days."
+     },
+     "code": "def factor(p):\n    \"\"\"收盘位置：收盘价在当日高低区间中位置的平均值，偏高说明尾盘买盘过热，未来收益偏低。\"\"\"\n    rng = (p[\"high\"] - p[\"low\"]).replace(0, np.nan)   # 当日振幅，避免除0\n    clv = (p[\"close\"] - p[\"low\"]) / rng               # 收盘价在当日区间中的位置（0~1）\n    f = clv.rolling(20, min_periods=15).mean()         # 20日平均收盘位置\n    return f.replace([np.inf, -np.inf], np.nan)\n"
+    }
+   ]
+  },
+  {
+   "notes": {
+    "zh": "本轮不再重复已被接受的极端收益、量价相关和股本发行维度，改从四个新方向出发：名义股价水平（低价股炒作）、换手率的不稳定性、短期波动率相对中期的放大、以及利润率扩张这一基本面趋势。四者彼此逻辑独立，尽量降低与已有因子的相关性。",
+    "en": "Does not repeat the accepted extreme-return, price-volume and issuance ideas; tries nominal price, turnover instability, volatility expansion and margin expansion."
+   },
+   "factors": [
+    {
+     "zh": {
+      "name": "名义股价（低价股）",
+      "idea": "名义股价低的股票往往是散户和游资偏好的高换手、高波动品种，容易被情绪炒高后回落，因此绝对股价越低未来收益越差。",
+      "desc": "对数名义股价，检验低价股是否被过度炒作而收益偏低。"
+     },
+     "en": {
+      "name": "Nominal price (low-priced stocks)",
+      "idea": "Low-priced stocks attract retail and speculative trading and tend to fall back after being pushed up.",
+      "desc": "Log of the unadjusted price."
+     },
+     "code": "def factor(p):\n    \"\"\"\n    低价股效应：名义股价绝对水平越低，越容易被投机资金反复炒作，\n    估值和交易情绪更容易偏离，未来收益偏低；高价股多为机构重仓、基本面更稳。\n    \"\"\"\n    px = p[\"raw_close\"]              # 未复权收盘价，代表真实的每股价格\n    f = np.log(px.where(px > 0))     # 取对数，压缩极端高价的差异\n    return f.replace([np.inf, -np.inf], np.nan)\n"
+    },
+    {
+     "zh": {
+      "name": "换手率不稳定性",
+      "idea": "换手率忽高忽低说明交易由新闻、情绪和短线资金驱动，关注度不稳定，这种股票容易被短炒后回落，未来收益偏低。",
+      "desc": "20日换手率变异系数，衡量交易活跃度的不稳定程度。"
+     },
+     "en": {
+      "name": "Turnover instability",
+      "idea": "Erratic turnover means trading is driven by news and short-term money; such stocks tend to fall back.",
+      "desc": "Coefficient of variation of turnover over 20 days."
+     },
+     "code": "def factor(p):\n    \"\"\"\n    换手率的不稳定性：用20日换手率的变异系数（标准差/均值）衡量，\n    数值越大说明交易热度忽冷忽热、情绪化交易越多，未来收益可能偏低。\n    \"\"\"\n    to = p[\"turnover\"]\n    m = to.rolling(20, min_periods=15).mean()   # 平均换手率\n    s = to.rolling(20, min_periods=15).std()    # 换手率的波动\n    f = s / m.where(m > 0)                      # 变异系数，剔除均值为0\n    return f.replace([np.inf, -np.inf], np.nan)\n"
+    },
+    {
+     "zh": {
+      "name": "波动率放大",
+      "idea": "最近20日波动率相对过去60日明显放大，说明情绪升温、分歧加大、风险正在积聚，这类股票短期回落的概率更高。",
+      "desc": "20日波动率与60日波动率之比，衡量近期风险是否升温。"
+     },
+     "en": {
+      "name": "Volatility expansion",
+      "idea": "Rising short-term volatility relative to the medium term signals building risk and a higher chance of a pullback.",
+      "desc": "20-day over 60-day volatility."
+     },
+     "code": "def factor(p):\n    \"\"\"\n    波动率放大：短期（20日）波动率除以长期（60日）波动率，\n    比值高说明近期风险突然上升、交易情绪过热，未来收益偏低。\n    \"\"\"\n    r = p[\"pct_chg\"]\n    v20 = r.rolling(20, min_periods=15).std()   # 近期波动\n    v60 = r.rolling(60, min_periods=45).std()   # 中期波动\n    f = v20 / v60.where(v60 > 0)                # 避免除以0\n    return f.replace([np.inf, -np.inf], np.nan)\n"
+    },
+    {
+     "zh": {
+      "name": "利润率扩张",
+      "idea": "净利润增速高于营收增速意味着毛利率或费用率在改善、盈利质量在提升，这类基本面变好的公司未来更容易获得超额收益。",
+      "desc": "净利润增速减营收增速，衡量公司利润率是否在扩张。"
+     },
+     "en": {
+      "name": "Margin expansion",
+      "idea": "Profit growing faster than revenue means improving margins and earnings quality.",
+      "desc": "Net profit growth minus revenue growth."
+     },
+     "code": "def factor(p):\n    \"\"\"\n    利润率扩张：净利润同比增速减去营业收入同比增速，\n    差值大于0说明利润率在提升（经营杠杆或成本改善），反映盈利质量改善。\n    \"\"\"\n    f = p[\"np_yoy\"] - p[\"rev_yoy\"]   # 两者均为同比增速（%）\n    return f.replace([np.inf, -np.inf], np.nan)\n"
+    }
+   ]
+  },
+  {
+   "notes": {
+    "zh": "本轮不再重复已被否定的动量/反转类想法，改试四个与已有因子不同族的构造：成交额集中度（脉冲式关注）、日内与隔夜波动的分解（风险来源）、毛利率环比改善（基本面修复）、EP 的时序分位（相对自身历史的估值）。目的是在保留“情绪过热偏低、基本面/估值改善偏高”这一在挖掘期有效的逻辑的同时，降低与已接受因子的相关性。",
+    "en": "Drops the rejected momentum/reversal ideas; tries turnover concentration, intraday vs overnight volatility, gross margin change and valuation against its own history."
+   },
+   "factors": [
+    {
+     "zh": {
+      "name": "成交额集中度（60日）",
+      "idea": "成交额集中在少数几天说明交易由一次性消息或事件驱动、关注度无法持续，这类被脉冲式炒作的股票未来收益偏低。",
+      "desc": "过去60日成交额在各日之间的集中程度，越集中说明交易越靠一次性事件驱动。"
+     },
+     "en": {
+      "name": "Turnover concentration (60d)",
+      "idea": "Trading concentrated on a few days points to one-off events; attention fades and returns tend to be lower.",
+      "desc": "Concentration of value traded across the past 60 days."
+     },
+     "code": "def factor(p):\n    \"\"\"成交额集中度：过去60天里成交额是否集中在少数几天。\n    集中度高说明交易由个别事件、一次性消息驱动，关注度不能持续，\n    这类股票容易被短炒后回落，未来收益偏低。\"\"\"\n    amt = p[\"amount\"]\n    s1 = amt.rolling(60, min_periods=45).sum()          # 窗口内成交额合计\n    s2 = (amt ** 2).rolling(60, min_periods=45).sum()   # 窗口内成交额平方和\n    # 赫芬达尔指数 = 窗口内每天成交额占比的平方和，越接近1越集中\n    f = s2 / (s1.where(s1 > 0) ** 2)\n    return f.replace([np.inf, -np.inf], np.nan)\n"
+    },
+    {
+     "zh": {
+      "name": "日内波动占比（60日）",
+      "idea": "波动主要来自日内交易（情绪与短线资金）而非隔夜消息跳空的股票更容易被过度交易，未来收益偏低。",
+      "desc": "60日日内平均波幅与隔夜平均跳空幅度之比，衡量波动是交易驱动还是消息驱动。"
+     },
+     "en": {
+      "name": "Intraday share of volatility (60d)",
+      "idea": "Volatility from intraday trading rather than overnight news suggests over-trading.",
+      "desc": "60-day average intraday range over average overnight gap."
+     },
+     "code": "def factor(p):\n    \"\"\"日内波动占比：日内（开盘到收盘）平均波幅 除以 隔夜（昨收到今开）平均跳空幅度。\n    波动主要来自日内交易的股票多由情绪和短线资金推动，容易被过度交易，\n    未来收益偏低。\"\"\"\n    o = p[\"open\"]\n    c = p[\"close\"]\n    prev = c.shift(1)\n    intra = (c / o.where(o > 0) - 1).abs()              # 日内涨跌幅\n    over = (o / prev.where(prev > 0) - 1).abs()          # 隔夜跳空幅度\n    a = intra.rolling(60, min_periods=45).mean()\n    b = over.rolling(60, min_periods=45).mean()\n    return (a / b.where(b > 0)).replace([np.inf, -np.inf], np.nan)\n"
+    },
+    {
+     "zh": {
+      "name": "毛利率变化（半年）",
+      "idea": "毛利率相比约两个季度前提升，说明产品定价能力和盈利质量在改善，基本面变好的公司未来收益更高。",
+      "desc": "最新毛利率减去约两个季度前的毛利率，衡量盈利能力是否在改善。"
+     },
+     "en": {
+      "name": "Gross margin change (half-year)",
+      "idea": "A gross margin above its level two quarters ago means improving pricing power.",
+      "desc": "Latest gross margin minus that of about two quarters ago."
+     },
+     "code": "def factor(p):\n    \"\"\"毛利率变化：最新公告的毛利率相对约两个季度（120个交易日）前的变化。\n    毛利率提升说明产品定价能力和竞争地位改善，基本面变好的公司未来收益更高。\"\"\"\n    gm = p[\"gross_margin\"]\n    return gm - gm.shift(120)\n"
+    },
+    {
+     "zh": {
+      "name": "估值相对自身历史",
+      "idea": "个股盈利收益率高于自身近期常态，说明股价相对自己的盈利变便宜了，估值修复带来未来超额收益。",
+      "desc": "盈利收益率相对自身过去120天均值的偏离度，衡量个股相对自己的估值高低。"
+     },
+     "en": {
+      "name": "Valuation vs own history",
+      "idea": "An earnings yield above its own recent norm means the stock has become cheap relative to itself.",
+      "desc": "Deviation of earnings yield from its own 120-day mean."
+     },
+     "code": "def factor(p):\n    \"\"\"估值相对自身历史：盈利收益率 EP=1/PE 在过去120天的 z 分数。\n    EP 高于自身近期常态说明股价相对自己的盈利变便宜了，未来收益更高。\"\"\"\n    pe = p[\"pe\"].where(p[\"pe\"] > 0)          # 只保留正PE，避免负值翻转含义\n    ep = 1.0 / pe\n    mu = ep.rolling(120, min_periods=90).mean()\n    sd = ep.rolling(120, min_periods=90).std()\n    f = (ep - mu) / sd.where(sd > 0)\n    return f.replace([np.inf, -np.inf], np.nan)\n"
+    }
+   ]
+  },
+  {
+   "notes": {
+    "zh": "本轮避开已试过的纯动量、纯换手率水平与财务类方向，从已被验证的波动率、换手率、量价关系家族出发做了四个新方向：上涨日成交额占比（资金流向）、52周高点距离（把之前120日高点改为一年窗口，对应年度高点锚定效应）、波动-换手同步性、上行波动占比。四个因子彼此角度不同、相关性应较低，尽量不与已有的波动率、换手率、量价相关性因子重复。",
+    "en": "Builds on the volatility, turnover and price-volume families that worked: up-day turnover share, distance to the 52-week high, volatility-turnover co-movement and upside share of volatility."
+   },
+   "factors": [
+    {
+     "zh": {
+      "name": "上涨日成交额占比",
+      "idea": "过去20日成交额集中在上涨日的比例越高，说明上涨主要由追涨资金推动、交易情绪过热，未来收益往往偏低。",
+      "desc": "上涨日成交额占总成交额的比例，衡量追涨资金强弱与情绪热度。"
+     },
+     "en": {
+      "name": "Up-day turnover share",
+      "idea": "A high share of value traded on up days means rallies are chased by momentum money.",
+      "desc": "Value traded on up days over total value traded."
+     },
+     "code": "def factor(p):\n    \"\"\"\n    上涨日成交额占比（20日）。\n    过去一个月成交额集中在上涨日的股票，说明上涨主要由追涨资金推动、\n    交易情绪过热，未来收益往往偏低。\n    \"\"\"\n    r = p[\"pct_chg\"]\n    amount = p[\"amount\"]\n    # 只累计上涨日的成交额\n    up_amt = amount.where(r > 0).rolling(20, min_periods=15).sum()\n    all_amt = amount.rolling(20, min_periods=15).sum().replace(0, np.nan)\n    f = up_amt / all_amt\n    return f.replace([np.inf, -np.inf], np.nan)\n"
+    },
+    {
+     "zh": {
+      "name": "52周高点距离",
+      "idea": "价格越接近过去一年的最高价，趋势越强、投资者锚定效应越明显，未来收益可能延续。",
+      "desc": "当前收盘价相对过去一年最高价的位置，越接近高点趋势与锚定效应越强。"
+     },
+     "en": {
+      "name": "Distance to 52-week high",
+      "idea": "The 120-day high idea on a one-year window, matching anchoring on the annual high.",
+      "desc": "Close over the highest price of the past year."
+     },
+     "code": "def factor(p):\n    \"\"\"\n    52周高点距离。\n    价格越接近过去一年的最高价，趋势越强、投资者锚定效应越明显，\n    未来收益可能延续。\n    \"\"\"\n    close = p[\"close\"]\n    # 过去约一年的最高收盘价（年度高点锚定）\n    hi = close.rolling(250, min_periods=180).max().replace(0, np.nan)\n    f = close / hi\n    return f.replace([np.inf, -np.inf], np.nan)\n"
+    },
+    {
+     "zh": {
+      "name": "波动换手同步性",
+      "idea": "绝对收益与换手率的相关系数越高，说明价格波动主要由交易情绪和短线资金反复买卖驱动，这类股票未来收益偏低。",
+      "desc": "过去60日换手率与绝对收益的相关系数，衡量波动是否由交易情绪驱动。"
+     },
+     "en": {
+      "name": "Volatility-turnover co-movement",
+      "idea": "When absolute returns move with turnover, price swings come from trading sentiment.",
+      "desc": "60-day correlation between turnover and absolute returns."
+     },
+     "code": "def factor(p):\n    \"\"\"\n    波动-换手同步性（60日）。\n    绝对收益与换手率的相关系数越高，说明波动主要来自交易情绪和\n    短线资金的反复买卖，这类股票未来收益偏低。\n    \"\"\"\n    ar = p[\"pct_chg\"].abs()\n    turn = p[\"turnover\"]\n    f = turn.rolling(60, min_periods=45).corr(ar)\n    return f.replace([np.inf, -np.inf], np.nan)\n"
+    },
+    {
+     "zh": {
+      "name": "上行波动占比",
+      "idea": "上涨日贡献的波动占总波动比例越高，收益分布越右偏、彩票特征越强，容易被过度乐观推高，未来收益偏低。",
+      "desc": "过去60日上涨日波动占总波动的比例，刻画收益分布右偏（彩票特征）程度。"
+     },
+     "en": {
+      "name": "Upside share of volatility",
+      "idea": "A larger share of volatility from up days means right-skewed, lottery-like returns.",
+      "desc": "Share of 60-day squared returns that come from up days."
+     },
+     "code": "def factor(p):\n    \"\"\"\n    上行波动占比（60日）。\n    上涨日贡献的波动占总波动比例越高，收益分布越右偏、彩票特征越强，\n    容易被过度乐观推高，未来收益偏低。\n    \"\"\"\n    r = p[\"pct_chg\"]\n    # 正收益的平方和 / 全部收益的平方和\n    up = (r.clip(lower=0) ** 2).rolling(60, min_periods=45).sum()\n    tot = (r ** 2).rolling(60, min_periods=45).sum().replace(0, np.nan)\n    f = up / tot\n    return f.replace([np.inf, -np.inf], np.nan)\n"
+    }
+   ]
+  }
+ ]
+}

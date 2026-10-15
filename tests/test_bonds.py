@@ -292,3 +292,17 @@ def test_every_cb_factor_computes(store):
         v = compute(p, key)
         assert v.shape == p["close"].shape
         assert v.iloc[-1].notna().sum() >= 3, key
+
+
+def test_call_days_counts_trigger_days_and_filters(store):
+    """强赎触发天数 = 近 30 个交易日里转股价值 ≥ 130 且当天有交易的天数；条件 max_call_days 按它排除"""
+    from simplequant.bonds.panel import CALL_TRIGGER, CALL_WINDOW
+    p = build_cb_panel(store, "2022-06-01", "2023-06-30")
+    hit = (p["conv_value"] >= CALL_TRIGGER) & p.tradable
+    want = hit.astype(float).rolling(CALL_WINDOW, min_periods=1).sum().where(p["raw_close"].notna())
+    pd.testing.assert_frame_equal(p["call_days"], want, check_names=False)
+    assert p["call_days"].max().max() > 0
+    m = eligible_mask(p, cb_filters({"max_price": None, "min_amount": None, "min_remain_years": None,
+                                     "max_call_days": 10}))
+    assert not (m & (p["call_days"] > 10)).any().any()
+    assert "cb_call_days" in factors_for("cb") and "cb_call_days" not in factors_for("stock")

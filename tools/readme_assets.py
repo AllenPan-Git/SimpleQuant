@@ -85,15 +85,18 @@ SHOTS = {
     # 可转债选股：单独启动一次服务（readme_server.py 加 cb），选股页的股票池为「可转债（全市场）」
     "selection-cb": ("/selection", [{"zh": "开始回测", "en": "Run backtest"}],
                      {"zh": ("回测结果", "每期选股", 32, -16), "en": ("Results", "Picks per period", 32, -16)}),
+    # AI 因子挖掘：单独启动一次服务（readme_server.py 加 mine），重放一次真实挖掘里模型的回复
+    "mining": ("/selection", [{"zh": "开始挖掘", "en": "Start mining"}],
+               {"zh": ("提出", "全部候选", 36, -16), "en": ("Proposed", "All candidates", 36, -16)}),
 }
 # 按截图名称：打开页面后、点击后各等几秒
-WAIT = {"selection": 30, "selection-cb": 45, "optimize": 8, "allocation": 8}
-CLICK_WAIT = {"optimize": 45, "selection": 40, "selection-cb": 60, "paper": 3, "paper-portfolio": 3}
+WAIT = {"selection": 30, "selection-cb": 45, "optimize": 8, "allocation": 8, "mining": 30}
+CLICK_WAIT = {"optimize": 45, "selection": 40, "selection-cb": 60, "paper": 3, "paper-portfolio": 3, "mining": 300}
 # 每次启动服务截哪几张：(主题, 服务的附加参数, 截图名称)
 # 首页单独启动一次服务（加 up）：模拟账户盈利、已设置每日自动运行；组合模拟账户加 pf
-RUNS = [("light", [], [n for n in SHOTS if n not in ("selection-cb", "home", "paper-portfolio")]),
+RUNS = [("light", [], [n for n in SHOTS if n not in ("selection-cb", "home", "paper-portfolio", "mining")]),
         ("dark", [], ["backtest"]), ("light", ["cb"], ["selection-cb"]), ("light", ["up"], ["home"]),
-        ("light", ["pf"], ["paper-portfolio"])]
+        ("light", ["pf"], ["paper-portfolio"]), ("light", ["mine"], ["mining"])]
 
 
 def start_server(lang: str, theme: str, extra: list | None = None) -> subprocess.Popen:

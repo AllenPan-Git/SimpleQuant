@@ -48,22 +48,37 @@ def build_grid(spec: dict, axes: dict[str, list]) -> list[tuple[dict, dict]]:
     return grid
 
 
-def split_prices(prices: dict[str, pd.DataFrame], oos_frac: float):
-    """按公共时间区间切分成 (样本内, 样本外, 切分时刻)"""
+def split_prices(prices: dict[str, pd.DataFrame], oos_frac: float, trade_start=None):
+    """
+    按公共时间区间切分成 (样本内, 样本外, 切分时刻)
+    trade_start：行情里带了预热段时只按这天之后切分，样本内、样本外都保留之前的全部数据作为预热
+    （样本外的交易起点用 oos_start）
+    """
     start = max(df.index[0] for df in prices.values())
+    if trade_start is not None:
+        start = max(start, pd.Timestamp(trade_start))
     end = min(df.index[-1] for df in prices.values())
     cut = start + (end - start) * (1 - oos_frac)
-    ins = {k: df[(df.index >= start) & (df.index <= cut)] for k, df in prices.items()}
-    oos = {k: df[(df.index > cut) & (df.index <= end)] for k, df in prices.items()}
+    if trade_start is not None:
+        ins = {k: df[df.index <= cut] for k, df in prices.items()}
+        oos = {k: df[df.index <= end] for k, df in prices.items()}
+    else:
+        ins = {k: df[(df.index >= start) & (df.index <= cut)] for k, df in prices.items()}
+        oos = {k: df[(df.index > cut) & (df.index <= end)] for k, df in prices.items()}
     return ins, oos, cut
+
+
+def oos_start(prices: dict[str, pd.DataFrame], cut) -> pd.Timestamp:
+    """切分时刻之后的第一根 K 线（带预热段时样本外从这里开始交易）"""
+    return min(df.index[df.index > cut][0] for df in prices.values() if (df.index > cut).any())
 
 
 # ---------- 工作进程 ----------
 _G: dict = {}
 
 
-def _init(prices, broker):
-    _G["prices"], _G["broker"] = prices, broker
+def _init(prices, broker, trade_start=None):
+    _G["prices"], _G["broker"], _G["trade_start"] = prices, broker, trade_start
 
 
 def yearly_returns(value: pd.Series, initial_cash: float) -> dict:
@@ -78,7 +93,7 @@ def yearly_returns(value: pd.Series, initial_cash: float) -> dict:
 def _run(spec):
     try:
         cls, params = resolve(spec)
-        res = run_backtest(_G["prices"], cls, params, _G["broker"])
+        res = run_backtest(_G["prices"], cls, params, _G["broker"], trade_start=_G.get("trade_start"))
         return {**res.metrics, **yearly_returns(res.equity["value"], _G["broker"].cash)}
     except Exception as e:  # noqa: BLE001 - 单个组合失败不影响整体
         return {"error": explain_error(e)}
@@ -89,9 +104,11 @@ def default_workers() -> int:
 
 
 def optimize(prices: dict[str, pd.DataFrame], spec: dict, axes: dict[str, list],
-             broker: BrokerConfig | None = None, workers: int | None = None, progress=None) -> pd.DataFrame:
+             broker: BrokerConfig | None = None, workers: int | None = None, progress=None,
+             trade_start=None) -> pd.DataFrame:
     """
     :param axes: {参数路径: 取值列表}
+    :param trade_start: 行情里带了预热段时，交易从这天开始（见 runner.run_backtest）
     :param progress: 回调 progress(已完成数, 总数)
     :return: 每个组合一行，列 = 参数路径 + 各项指标（出错的组合有 error 列）
     """
@@ -106,7 +123,7 @@ def optimize(prices: dict[str, pd.DataFrame], spec: dict, axes: dict[str, list],
     workers = workers or default_workers()
 
     def sequential():
-        _init(prices, broker)
+        _init(prices, broker, trade_start)
         for i, (_, s) in enumerate(grid):
             results[i] = _run(s)
             if progress:
@@ -116,7 +133,7 @@ def optimize(prices: dict[str, pd.DataFrame], spec: dict, axes: dict[str, list],
         sequential()
     else:
         try:
-            with ProcessPoolExecutor(max_workers=workers, initializer=_init, initargs=(prices, broker)) as ex:
+            with ProcessPoolExecutor(max_workers=workers, initializer=_init, initargs=(prices, broker, trade_start)) as ex:
                 futures = {ex.submit(_run, s): i for i, (_, s) in enumerate(grid)}
                 for done, f in enumerate(as_completed(futures), 1):
                     results[futures[f]] = f.result()

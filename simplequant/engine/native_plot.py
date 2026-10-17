@@ -58,9 +58,10 @@ def _observers(lang: str):
 
 def render(prices: dict[str, pd.DataFrame], strategy_cls, params: dict | None = None,
            broker: BrokerConfig | None = None, start=None, end=None, lang: str = "zh",
-           size=(16, 10), dpi: int = 110) -> bytes:
+           size=(16, 10), dpi: int = 110, trade_start=None) -> bytes:
     """
     跑一次回测并把 [start, end] 区间画成 PNG（回测仍从数据开头运行，保证指标和持仓状态正确）
+    trade_start：行情带预热段时与 run_backtest 相同，这天之前不下单
     """
     first = max(df.index[0] for df in prices.values())
     last = min(df.index[-1] for df in prices.values())
@@ -76,7 +77,7 @@ def render(prices: dict[str, pd.DataFrame], strategy_cls, params: dict | None = 
                                               "DejaVu Sans"]
     matplotlib.rcParams["axes.unicode_minus"] = False
 
-    cerebro = build_cerebro(prices, strategy_cls, params, broker)
+    cerebro = build_cerebro(prices, strategy_cls, params, broker, trade_start)
     for obs in _observers(lang):
         cerebro.addobserver(obs)
     strat = cerebro.run()[0]

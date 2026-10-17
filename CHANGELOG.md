@@ -5,6 +5,16 @@
 
 Changes in each release. `tools/release.py` copies the matching section into the GitHub release notes.
 
+## 未发布
+
+### 更新内容
+- 改进：择时规则用到「市盈率 / 市净率历史百分位」时，所选回测区间开始前的数据只用于计算指标、不交易，收益与交易仍从区间开始日计算。之前百分位只用区间内的数据计算，第 1 年没有百分位，回看年数也凑不满；例如 510300「百分位低于 20 买入、高于 80 卖出」，2020 年起的收益由 +12.9% 变为 +48.8%。回测、批量回测、参数优化（含样本外检验）与滚动优化都按此计算；区间开始前的估值数据不足回看年数时会提示。没有用到估值百分位的策略，结果不变
+- 新增：可信度检查加入「调仓日检验」。定期调仓的策略（动量轮动、定比再平衡、多因子选股）结果可能取决于调仓恰好落在哪一天：规则与区间不变，把调仓日依次错开 1 ~ N−1 个交易日重新回测（N 为调仓间隔，最多 20 种），列出总收益与最大回撤的范围、中位数和当前结果的排名；当前结果明显高于中位数时警告。例如 510300 + 510500 动量轮动（回看 20、每 5 天调仓），2014 年起当前结果 +267%，错开调仓日后为 +131%～+224%，中位数 +141%。择时回测在报告显示后自动进行；选股回测较慢，在可信度检查中点「调仓日检验」进行，可随时停止
+
+### Changes
+- Improved: when a timing rule uses the P/E or P/B percentile, data before the chosen backtest start is used only to compute indicators, with no trading; returns and trades still count from the start date. Previously the percentile used only data inside the range, so there was none in the first year and the lookback was never full; for example, 510300 "buy below the 20th percentile, sell above the 80th" from 2020 goes from +12.9% to +48.8%. Single and batch backtests, optimization (including the out-of-sample check) and walk-forward all work this way, with a note when the valuation data before the start is shorter than the lookback. Results of strategies that do not use valuation percentiles are unchanged
+- New: a "rebalance-day test" in the credibility assessment. Strategies that rebalance on a schedule (momentum rotation, fixed-weight rebalancing, multi-factor selection) can depend on which day the rebalance happens to fall: with the same rules and period, the rebalance days are shifted by 1 to N−1 trading days (N = the rebalance interval, at most 20 variants) and re-run, showing the range and median of total return and maximum drawdown and where the current result ranks, with a warning when it is well above the median. For example, 510300 + 510500 momentum rotation (20-bar lookback, every 5 bars) from 2014 returns +267%, versus +131% to +224% (median +141%) with shifted rebalance days. Timing backtests run the test automatically after the report appears; selection backtests are slower, so click "Rebalance-day test" in the credibility assessment (it can be stopped at any time)
+
 ## 1.3.0（2026-10-15）
 
 ### 更新内容

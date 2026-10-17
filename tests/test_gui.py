@@ -482,6 +482,24 @@ async def test_backtest_run_and_results(user: User, lib_dir):
     assert state.STATE["bt"]["native_png"][1:4] == b"PNG"             # PNG 文件头
 
 
+async def test_backtest_phase_check(user: User, lib_dir):
+    """动量轮动：报告出来后在后台做调仓日检验，结果补进可信度检查"""
+    for i, sym in enumerate(("510300", "510500")):
+        library.save(make_prices(n=300, seed=i + 1, period=40 + 15 * i),
+                     library.DatasetMeta(id=f"x_{sym}", name=sym, symbol=sym, source="akshare", freq="1d"))
+    state.STATE["bt_ids"] = ["x_510300", "x_510500"]
+    state.STATE["current_spec"] = {"kind": "template", "template": "momentum_rotation", "name": "轮动",
+                                   "params": {"period": 20, "rebalance_bars": 3}}      # 2 个相位，单进程
+    await user.open("/backtest")
+    user.find(marker="run").click()
+    BT = lambda: state.STATE.get("bt", {})
+    assert await _wait(lambda: BT().get("result") is not None and "phase_pending" not in BT()
+                       and any(c["key"].startswith("cred.phase_") for c in BT().get("checks", [])))
+    await asyncio.sleep(0.7)                              # 检验进行时可信度检查每 0.5 秒重画一次
+    await user.should_see("调仓日检验")
+    await user.should_not_see(marker="cred_pending")
+
+
 async def test_backtest_batch_mode(user: User, lib_dir):
     """选两个标的、分别回测：区间取并集，结果给出跑赢比例与明细；可打开单个标的的完整回测"""
     _save_prices()
@@ -798,6 +816,24 @@ async def test_selection_backtest(user: User):
     assert (buys["size"] % 100 == 0).all()
     await user.should_see("调仓次数")
     await user.should_see("可信度检查")
+
+
+@needs_stocks
+async def test_selection_phase_check(user: User):
+    """选股：点按钮做调仓日检验（每 3 天调仓 → 2 个相位）"""
+    from gui.pages.selection import sp_state
+    SP = sp_state()
+    SP["reb"], SP["reb_n"] = "n", 3
+    await _open_selection(user)
+    user.find(marker="sp_run").click()
+    assert await _wait(lambda: SP.get("result"), n=1200)
+    await settle()
+    user.find(marker="phase_run").click()
+    assert await _wait(lambda: SP.get("phase", {}).get("found"), n=2400)
+    await settle()
+    assert SP["phase"]["found"][0]["args"]["n"] == 3
+    await user.should_see("调仓日检验")
+    await user.should_not_see(marker="phase_run")
 
 
 @needs_stocks

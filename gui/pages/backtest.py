@@ -10,7 +10,8 @@ from simplequant.strategies.code_strategy import explain_error
 from simplequant.data.base import freq_label
 from simplequant.engine import run_backtest, COST_PRESETS
 from simplequant.engine.batch import run_batch, summarize
-from simplequant.engine.credibility import check_backtest
+from simplequant.engine.credibility import check_backtest, check_phase
+from simplequant.engine.phase import run_timing, timing_cycle, phases
 from simplequant.engine.native_plot import render as render_native, MAX_BARS as NATIVE_MAX_BARS
 from simplequant.export import PLATFORMS
 from gui import state, history
@@ -19,7 +20,7 @@ from simplequant import plan as plan_mod
 from gui.common import t, p, lang
 from gui.components import (require_data, data_selector, strategy_selector, broker_settings, prepare_prices,
                             metric_tiles, metric_tile, missing_factor_warnings, dividend_notices,
-                            unadjusted_warning, fallback_warning, percentile_warnings, credibility_box)
+                            unadjusted_warning, fallback_warning, percentile_warnings, warm_start, credibility_box)
 from gui.layout import frame, page_title
 from gui.widgets import df_table, fmt_table, plot, notice, download_btn
 from ui.charts import equity_chart, strategy_chart, batch_scatter
@@ -122,8 +123,8 @@ def page():
                     notice(w, "warning", "warning")
                 if w := fallback_warning(by_id, pick.ids):
                     notice(w, "warning", "warning")
-                for w in percentile_warnings(by_id, pick, strat["spec"]):
-                    notice(w, "warning", "warning")
+                for w, kind in percentile_warnings(by_id, pick, strat["spec"]):
+                    notice(w, kind, kind)
             ok = ready()
             run_btn.set_enabled(ok)
             exp_btn.set_enabled(ok)
@@ -198,17 +199,19 @@ def page():
             spec, broker = strat["spec"], make_broker()
             plan_ctx = state.STATE.pop("bt_plan", None)        # 刚导入的方案：回测后与其中记录的结果核对
             sig = signature()
+            warm = warm_start(pick, spec)                      # 用到估值百分位：区间前的数据只预热
             run_btn.disable()
             running.set_visibility(True)
             BT.clear()                       # 先清掉上一份报告，免得新结果出来前又露出来
             results.refresh()
             if batch():
-                await do_batch(spec, broker)
+                await do_batch(spec, broker, warm)
                 return
             try:
                 prices, skipped, patched = await run.io_bound(prepare_prices, by_id, pick, broker, spec)
                 cls, params = strategies.resolve(spec)
-                res = await run.io_bound(run_backtest, prices, cls, params, broker, with_panels=True)
+                res = await run.io_bound(run_backtest, prices, cls, params, broker, trade_start=warm,
+                                         with_panels=True)
                 tuned = state.STATE.get("tuned") or {}          # 参数优化页「用最优参数回测」带过来的
                 tried = tuned["n"] if tuned.get("spec") == spec else 0
                 BT.clear()
@@ -226,15 +229,32 @@ def page():
             finally:
                 run_btn.enable()
                 running.set_visibility(False)
+            phased = BT.get("result") is not None and len(prices) > 1 and timing_cycle(spec) > 1
+            if phased:
+                BT["phase_pending"] = {"n": 0, "of": len(phases(timing_cycle(spec)))}
             results.refresh()
+            if phased:
+                await phase_check(BT["result"], prices, spec, broker, warm)
 
-        async def do_batch(spec, broker):
+        async def phase_check(res, prices, spec, broker, warm):
+            """调仓日检验：报告先显示，检验在后台进行，完成后补进可信度检查（_checks 会自己刷新）"""
+            prog = BT["phase_pending"]
+            try:
+                rows = await run.io_bound(run_timing, prices, spec, broker, warm, lambda n, of: prog.update(n=n, of=of))
+                found = check_phase(res.metrics, rows)
+            except Exception as e:  # noqa: BLE001
+                found = [{"level": "note", "key": "cred.phase_failed", "args": {"e": explain_error(e, lang())}}]
+            if BT.get("result") is res:          # 期间没有重新回测
+                BT["checks"] = BT.get("checks", []) + found
+                BT.pop("phase_pending", None)
+
+        async def do_batch(spec, broker, warm):
             done = {"n": 0, "of": len(pick.ids)}
             tick = ui.timer(0.3, lambda: running_text.set_text(t("bt.batch_running", n=done["n"], of=done["of"])))
             try:
                 prices, skipped, patched = await run.io_bound(prepare_prices, by_id, pick, broker, spec)
                 df = await run.io_bound(run_batch, prices, spec, broker, None,
-                                        lambda n, of: done.update(n=n, of=of))
+                                        lambda n, of: done.update(n=n, of=of), warm)
                 BT.clear()
                 BT.update(batch=df, summary=summarize(df), spec=spec, broker=broker,
                           name=strat.get("name", "") or strat["label"], freq=next(iter(pick.freqs)),
@@ -408,6 +428,22 @@ def _rule_title(text: str, top: bool = False):
         .style("border-bottom: 1px solid var(--sq-text)")
 
 
+def _checks(BT: dict):
+    """可信度检查；调仓日检验在后台进行时每 0.5 秒重画一次，完成后补上结果"""
+    box = ui.column().classes("w-full")
+
+    def draw():
+        if box.is_deleted:
+            return
+        box.clear()
+        with box:
+            prog = BT.get("phase_pending")
+            credibility_box(BT.get("checks", []), t("cred.phase_running", **prog) if prog else None)
+            if prog:
+                ui.timer(0.5, draw, once=True)
+    draw()
+
+
 def _results(BT: dict, exp_menu):
     lg = lang()
     res = BT["result"]
@@ -442,7 +478,7 @@ def _results(BT: dict, exp_menu):
                 with ui.column().classes("w-full pt-4"):
                     plan_check_notice(*BT["plan_check"], res.metrics)
             with ui.column().classes("w-full pt-6"):
-                credibility_box(BT.get("checks", []))
+                _checks(BT)
             explain_out = ui.column().classes("w-full pt-4")
 
             with ui.column().classes("w-full gap-1 pt-6"):
@@ -593,8 +629,9 @@ def _native(BT: dict):
         btn.disable()
         try:
             cls, params = strategies.resolve(BT["spec"])
-            BT["native_png"] = await run.io_bound(render_native, res.prices, cls, params, BT.get("broker"),
-                                                  start=a, end=b, lang=lang())
+            BT["native_png"] = await run.io_bound(render_native, res.warm_prices or res.prices, cls, params,
+                                                  BT.get("broker"), start=a, end=b, lang=lang(),
+                                                  trade_start=res.trade_start)
         except ValueError as e:
             BT.pop("native_png", None)
             ui.notify(str(e), type="negative", multi_line=True)

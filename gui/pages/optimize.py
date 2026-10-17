@@ -7,15 +7,15 @@ from simplequant import strategies
 from simplequant.strategies.code_strategy import explain_error
 from simplequant.engine import run_backtest
 from simplequant.engine.credibility import check_grid, check_backtest
-from simplequant.engine.optimize import (optimize, value_range, build_grid, split_prices, best_row, apply_combo,
-                                         yearly_ranks, TARGET_METRICS, MAX_COMBOS, default_workers)
+from simplequant.engine.optimize import (optimize, value_range, build_grid, split_prices, oos_start, best_row,
+                                         apply_combo, yearly_ranks, TARGET_METRICS, MAX_COMBOS, default_workers)
 from simplequant.engine.walkforward import (walk_forward, make_windows, count_backtests, STITCH_MODES,
                                             MAX_BACKTESTS as WF_MAX)
 from gui import state
 from gui.common import t, lang
 from gui.components import (require_data, data_selector, strategy_selector, broker_settings, load_prices,
                             prepare_prices, metric_tile, walkforward_results, dividend_notices,
-                            unadjusted_warning, fallback_warning, percentile_warnings, credibility_box)
+                            unadjusted_warning, fallback_warning, percentile_warnings, warm_start, credibility_box)
 from gui.layout import frame, page_title
 from gui.widgets import section, df_table, plot, notice, Progress
 from ui.charts import heatmap, param_curve
@@ -192,8 +192,8 @@ def page():
                     notice(w, "warning", "warning")
                 if w := fallback_warning(by_id, pick.ids):
                     notice(w, "warning", "warning")
-                for w in percentile_warnings(by_id, pick, spec):
-                    notice(w, "warning", "warning")
+                for w, kind in percentile_warnings(by_id, pick, spec):
+                    notice(w, kind, kind)
             ok = base_ready(n_combos)
             run_btn.set_enabled(ok)
             # 滚动优化：估算窗口数和回测次数
@@ -217,21 +217,26 @@ def page():
             ax, is_int, labels = axes()
             oos = O["oos"] / 100
             n = len(build_grid(spec, ax))
+            warm = warm_start(pick, spec)                      # 用到估值百分位：区间前的数据只预热
             run_btn.disable()
             prog.start(t("opt.progress", done=0, n=n))
 
             def work():
                 prices, skipped, patched = prepare_prices(by_id, pick, broker, spec)
-                ins, outs, cut = split_prices(prices, oos) if oos > 0 else (prices, None, None)
+                ins, outs, cut = split_prices(prices, oos, warm) if oos > 0 else (prices, None, None)
                 df = optimize(ins, spec, ax, broker, workers=int(O["workers"]),
-                              progress=lambda d, n_: prog.set(d / n_, t("opt.progress", done=d, n=n_)))
+                              progress=lambda d, n_: prog.set(d / n_, t("opt.progress", done=d, n=n_)),
+                              trade_start=warm)
                 best = best_row(df, O["metric"])
                 best_spec = apply_combo(spec, best, is_int)
-                is_res = run_backtest(ins, *strategies.resolve(best_spec), broker)
+                is_res = run_backtest(ins, *strategies.resolve(best_spec), broker, trade_start=warm)
                 compare = {"is_best": is_res.metrics}
                 if outs is not None:
-                    compare["oos_best"] = run_backtest(outs, *strategies.resolve(best_spec), broker).metrics
-                    compare["oos_orig"] = run_backtest(outs, *strategies.resolve(spec), broker).metrics
+                    oos_from = oos_start(outs, cut) if warm is not None else None
+                    compare["oos_best"] = run_backtest(outs, *strategies.resolve(best_spec), broker,
+                                                       trade_start=oos_from).metrics
+                    compare["oos_orig"] = run_backtest(outs, *strategies.resolve(spec), broker,
+                                                       trade_start=oos_from).metrics
                 ok = df[O["metric"]].notna().sum() if O["metric"] in df else 0
                 # 最优参数自身的交易检查只列出问题（样本内的成绩本来就偏乐观，不说「通过」）
                 years = yearly_ranks(df, best)
@@ -239,7 +244,8 @@ def page():
                     [c for c in check_backtest(is_res.metrics, is_res.trades, positions=is_res.positions, prices=is_res.prices) if c["level"] != "ok"]
                 return dict(df=df, axes=list(ax), is_int=is_int, labels=labels, metric=O["metric"], spec=spec,
                             spec_label=strat["label"], best_spec=best_spec, compare=compare, cut=cut,
-                            start=min(d.index[0] for d in prices.values()),
+                            start=is_res.equity.index[0] if warm is not None
+                            else min(d.index[0] for d in prices.values()),
                             end=max(d.index[-1] for d in prices.values()), div_notes=(skipped, patched),
                             checks=checks, tried=int(ok), years=years)
             try:
@@ -255,6 +261,7 @@ def page():
         async def do_wf():
             spec, broker = strat["spec"], make_broker()
             ax, is_int, labels = axes()
+            warm = warm_start(pick, spec)
             wf_btn.disable()
             prog.start(t("wf.progress", w=0, n="…"))
 
@@ -264,7 +271,7 @@ def page():
                 prices, skipped, patched = await run.io_bound(prepare_prices, by_id, pick, broker, spec)
                 res = await run.io_bound(walk_forward, prices, spec, ax, is_int, broker, O["metric"], int(O["train"]),
                                          int(O["test"]), O["window"] == "anchored", int(O["workers"]), progress,
-                                         O["stitch"])
+                                         O["stitch"], warm)
                 O["wf"] = (res, labels, O["metric"], O["stitch"])
                 O["wf_div_notes"] = (skipped, patched)
             except Exception as e:  # noqa: BLE001

@@ -89,13 +89,14 @@ class MomentumRotation(BaseStrategy):
     动量轮动
     每隔 rebalance_bars 根 K 线，持有过去 period 根 K 线涨幅最高的标的；
     若所有标的涨幅都 <= 0 则空仓。换仓时先卖出，下一根 K 线资金到账后再买入。
+    phase：调仓日在周期里提前几根 K 线（界面上没有，调仓日检验 engine/phase.py 用）
     """
-    params = (("period", 20), ("rebalance_bars", 5), ("position_pct", 95))
+    params = (("period", 20), ("rebalance_bars", 5), ("position_pct", 95), ("phase", 0))
 
     def __init__(self):
         super().__init__()
         self.mom = {d: bt.ind.PercentChange(d.close, period=int(self.p.period)) for d in self.datas}
-        self.counter = 0
+        self.counter = int(self.p.phase)
         self.pending_target = None
 
     def next(self):
@@ -133,12 +134,13 @@ class FixedWeight(BaseStrategy):
     第一个标的占 weight%，其余标的平分剩下的比例，合计投入 position_pct 的资金。
     每隔 rebalance_bars 根 K 线检查一次，任一标的实际比例偏离目标超过 band 个百分点时全部调回目标：
     先卖出超配的、用现有资金买入低配的，下一根 K 线卖出的资金到账后再补足。
+    phase：同动量轮动
     """
-    params = (("weight", 60), ("rebalance_bars", 20), ("band", 5), ("position_pct", 95))
+    params = (("weight", 60), ("rebalance_bars", 20), ("band", 5), ("position_pct", 95), ("phase", 0))
 
     def __init__(self):
         super().__init__()
-        self.counter = 0
+        self.counter = int(self.p.phase)
         self.top_up = False
 
     def targets(self) -> dict:

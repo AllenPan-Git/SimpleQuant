@@ -40,6 +40,8 @@ class BacktestResult:
     pending: list = field(default_factory=list)       # 最后一根 K 线上未成交的委托（下一个开盘执行）
     positions: list = field(default_factory=list)     # 结束时的持仓
     panels: dict = field(default_factory=dict)        # 标的名 -> 指标栏（交互式策略图用，见 engine/panels.py）
+    trade_start: pd.Timestamp | None = None           # 有预热段时的交易起点（prices / panels 已从这天截取）
+    warm_prices: dict = field(default_factory=dict)   # 有预热段时：含预热段的完整行情（原生图重新运行用）
 
 
 def compute_metrics(equity: pd.Series, benchmark: pd.Series, trades: pd.DataFrame,

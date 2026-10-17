@@ -84,15 +84,21 @@ def count_backtests(spec: dict, axes: dict, n_windows: int) -> int:
 def walk_forward(prices: dict[str, pd.DataFrame], spec: dict, axes: dict[str, list], is_int: dict[str, bool],
                  broker: BrokerConfig, metric: str = "sharpe", train_months: int = 24, test_months: int = 6,
                  anchored: bool = False, workers: int | None = None, progress=None,
-                 stitch: str = "continuous") -> WalkForwardResult:
+                 stitch: str = "continuous", trade_start=None) -> WalkForwardResult:
     """
     :param stitch: "continuous" 延续持仓 / "restart" 每段重新开始（见模块说明）
+    :param trade_start: 行情里带了区间开始前的预热段时，窗口只从这天之后划分；
+        每个窗口的训练期之前的数据都只用来预热指标（不加时训练期从空白开始计算指标）
     :param progress: progress(当前窗口序号, 窗口总数, 窗口内已完成, 窗口内总数)
     """
     if stitch not in STITCH_MODES:
         raise ValueError(f"unknown stitch mode {stitch}")
     capital = broker.cash
     common = sorted(set.intersection(*[set(df.index) for df in prices.values()]))
+    warm = trade_start is not None
+    if warm:
+        common = [d for d in common if d >= pd.Timestamp(trade_start)]
+    lead = lambda w: None if warm else w.train_start      # noqa: E731 - 每个窗口的行情从哪天开始截
     windows = make_windows(pd.DatetimeIndex(common), train_months, test_months, anchored)
     if not windows:
         raise ValueError("not enough data for one train+test window / 数据不够一个训练期加测试期")
@@ -102,9 +108,10 @@ def walk_forward(prices: dict[str, pd.DataFrame], spec: dict, axes: dict[str, li
 
     rows, param_rows, segments, test_trades, notes = [], [], [], [], []
     for w_i, w in enumerate(windows, 1):
-        train = _slice(prices, w.train_start, w.train_end)
+        train = _slice(prices, lead(w), w.train_end)
         grid = optimize(train, spec, axes, broker, workers=workers,
-                        progress=(lambda d, n, w_i=w_i: progress(w_i, len(windows), d, n)) if progress else None)
+                        progress=(lambda d, n, w_i=w_i: progress(w_i, len(windows), d, n)) if progress else None,
+                        trade_start=w.train_start if warm else None)
         try:
             best = best_row(grid, metric)
             chosen = apply_combo(spec, best, is_int)
@@ -116,13 +123,14 @@ def walk_forward(prices: dict[str, pd.DataFrame], spec: dict, axes: dict[str, li
 
         if stitch == "continuous":
             # 用选出的参数从训练期开头跑到测试期结束，只取测试期（含测试期前一天作为收益起点）
-            run = run_backtest(_slice(prices, w.train_start, w.test_end), *resolve(chosen), broker)
+            run = run_backtest(_slice(prices, lead(w), w.test_end), *resolve(chosen), broker,
+                               trade_start=w.train_start if warm else None)
             test_eq = run.equity["value"].loc[w.train_end:w.test_end]
             seg = test_eq.pct_change().dropna()
         else:
             # 测试期从空仓开始（之前的数据只预热指标），资金接力；结束时按全部卖出扣成本
             seg_broker = replace(broker, cash=capital)
-            run = run_backtest(_slice(prices, w.train_start, w.test_end), *resolve(chosen), seg_broker,
+            run = run_backtest(_slice(prices, lead(w), w.test_end), *resolve(chosen), seg_broker,
                                trade_start=w.test_start)
             eq = run.equity
             values = pd.concat([pd.Series([capital], index=[w.train_end]), eq["value"]])
@@ -153,7 +161,7 @@ def walk_forward(prices: dict[str, pd.DataFrame], spec: dict, axes: dict[str, li
     value = pd.concat([pd.Series([broker.cash], index=[windows[0].train_end]), value])
 
     # 参照 1：原参数从数据开头一直运行，取样本外区间的收益（与"延续持仓"口径一致）
-    base = run_backtest(_slice(prices, None, windows[-1].test_end), *resolve(spec), broker)
+    base = run_backtest(_slice(prices, None, windows[-1].test_end), *resolve(spec), broker, trade_start=trade_start)
     base_ret = base.equity["value"].pct_change().reindex(value.index).fillna(0)
     base_ret.iloc[0] = 0.0
     baseline = broker.cash * (1 + base_ret).cumprod()

@@ -12,7 +12,8 @@ import pandas as pd
 from nicegui import background_tasks, run, ui
 
 from simplequant import llm, strategies
-from simplequant.engine.credibility import check_backtest, check_ml, check_mining
+from simplequant.engine.credibility import check_backtest, check_ml, check_mining, check_phase
+from simplequant.engine.phase import run_selection_phases, selection_cycle, phases
 from simplequant.engine.optimize import value_range, default_workers
 from simplequant.engine.walkforward import make_windows
 from simplequant.stocks import (StockStore, UNIVERSES, FACTORS, GROUPS, REBALANCE, WEIGHTING, DIVIDEND,
@@ -1500,6 +1501,7 @@ def _backtest_form(SP, ctx, rebuild):
             SP["explanation"] = None
             SP["result_range"] = (ctx.start, ctx.end, ps)
             SP["result_broker"] = broker
+            SP["result_panel"] = run_panel          # 调仓日检验要用同一份面板重跑
             SP["plan_check"] = (plan_mod.compare(plan_ctx.get("result"), res.metrics), plan_ctx) if plan_ctx else None
             uni = p(UNIVERSES[spec["universe"]]["label"])
             title = SP["name"].strip() or t("sel.kind")
@@ -1590,6 +1592,45 @@ def _backtest_form(SP, ctx, rebuild):
         ui.timer(0.1, do_run, once=True)
 
 
+def _sel_checks(SP, base: list[dict]):
+    """可信度检查 + 调仓日检验（选股回测较慢，点按钮才做）。SP["phase"]：{res, prog, stop, found}；
+    检验进行时每 0.5 秒重画一次"""
+    res, rspec, _ = SP["result"]
+    ks = phases(selection_cycle(rspec))
+    box = ui.column().classes("w-full gap-2")
+
+    def draw():
+        if box.is_deleted:
+            return
+        box.clear()
+        ph = SP.get("phase")
+        ph = ph if ph and ph["res"] is res else None
+        running = ph is not None and "found" not in ph
+        with box:
+            credibility_box(base + (ph.get("found", []) if ph else []),
+                            t("cred.phase_running", **ph["prog"]) if running else None)
+            if running:
+                ui.button(t("cred.phase_stop"), icon="stop", on_click=lambda: ph.update(stop=True))                     .props("flat dense no-caps").mark("phase_stop")
+                ui.timer(0.5, draw, once=True)
+            elif ks and ph is None:
+                ui.button(t("cred.phase_btn"), icon="event_repeat", on_click=lambda: start())                     .props("outline no-caps").mark("phase_run").tooltip(t("cred.phase_btn_help", m=max(ks), k=len(ks)))
+
+    async def start():
+        ph = SP["phase"] = {"res": res, "prog": {"n": 0, "of": len(ks)}, "stop": False}
+        draw()
+        try:
+            rows = await run.io_bound(run_selection_phases, SP["result_panel"], rspec, SP["result_broker"],
+                                      SP["result_range"][0], lambda n, of: ph["prog"].update(n=n, of=of),
+                                      lambda: ph["stop"])
+            ph["found"] = check_phase(res.metrics, rows)
+        except Exception as e:  # noqa: BLE001
+            ph["found"] = [{"level": "note", "key": "cred.phase_failed", "args": {"e": str(e)}}]
+        if not ph["found"] and SP.get("phase") is ph:      # 停得太早，相位不够下结论：恢复按钮
+            SP.pop("phase", None)
+        draw()
+    draw()
+
+
 def _selection_results(SP, ctx):
     lg = lang()
     panel = ctx.panel
@@ -1619,8 +1660,8 @@ def _selection_results(SP, ctx):
         eg = sep.join(f"{res.names.get(r.code, r.code)} {r.ex_date:%Y-%m-%d} {r.cash:g}" for r in cash.head(5).itertuples())
         notice(t("sp.div_patched", n=len(cash), m=len(rights), eg=eg + ("…" if len(cash) > 5 else "")), "info", "info")
     ml_info = res.schedule.ml if res.schedule else None
-    credibility_box(check_backtest(res.metrics, res.trades, positions=res.positions)
-                    + (check_ml(ml_info["summary"]) if ml_info else []))
+    _sel_checks(SP, check_backtest(res.metrics, res.trades, positions=res.positions)
+                + (check_ml(ml_info["summary"]) if ml_info else []))
     _explain(SP, rspec, res)
     if ml_info:
         _ml_results(ml_info, rspec)

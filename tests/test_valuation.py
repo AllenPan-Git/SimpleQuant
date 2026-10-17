@@ -111,8 +111,8 @@ def test_pe_percentile_schema_and_export():
                             asdict(broker))
 
 
-def test_percentile_warning_when_range_cuts_off_earlier_valuation(monkeypatch):
-    """回测区间开始前还有估值数据时提示：百分位只用区间内的数据算（待办 30）"""
+def test_percentile_rule_warms_up_with_data_before_range(monkeypatch):
+    """规则用到估值百分位：区间开始前的数据只预热，先说明一句；区间前的估值不足回看年数时再提示（待办 30）"""
     import datetime as dt
     from types import SimpleNamespace
     import gui.components as C
@@ -121,15 +121,23 @@ def test_percentile_warning_when_range_cuts_off_earlier_valuation(monkeypatch):
     monkeypatch.setattr(C.library, "load", lambda i: df)
     by_id = {"a": SimpleNamespace(name="510300", symbol="510300", source="akshare", adjust="hfq", freq="1d",
                                   start="2012-01-02", end="2026-09-30", extra={})}
-    pick = SimpleNamespace(ids=["a"], start=dt.date(2020, 1, 2), end=dt.date(2026, 9, 30))
+    pick = SimpleNamespace(ids=["a"], start=dt.date(2020, 1, 2), end=dt.date(2026, 9, 30),
+                           date_range=(dt.date(2020, 1, 2), dt.date(2026, 9, 30)))
     rule = {"buy": {"logic": "all", "conditions": [{"left": make_ind("pe_pct", years=10), "op": "<", "right": {"value": 20}}]},
             "sell": {"logic": "all", "conditions": [{"left": make_ind("pe"), "op": ">", "right": {"value": 30}}]}}
     spec = {"kind": "rule", "rule": rule}
-    (w,) = C.percentile_warnings(by_id, pick, spec)
-    assert "10 年" in w and "约 7.2 年" in w and "约 7.5 年" in w   # 工作日日历每年约 261 天，按 244 折算
-    pick.start = dt.date(2012, 6, 1)                           # 区间从估值数据开始之前起：不提示
+    assert C.warm_start(pick, spec) == pd.Timestamp("2020-01-02")
+    prices = C.load_prices(by_id, pick, warm=True)
+    assert prices["510300"].index[0] == cal[0] and prices["510300"].index[-1] == pd.Timestamp("2026-09-30")
+    (info, k1), (short, k2) = C.percentile_warnings(by_id, pick, spec)
+    assert (k1, k2) == ("info", "warning") and "2020-01-02" in info
+    assert "10 年" in short and "约 7.5 年" in short          # 工作日日历每年约 261 天，按 244 折算
+    rule["buy"]["conditions"][0]["left"] = make_ind("pe_pct", years=5)     # 区间前的估值够 5 年：只有说明
+    assert [k for _, k in C.percentile_warnings(by_id, pick, spec)] == ["info"]
+    pick.start = dt.date(2012, 6, 1)                           # 区间前没有估值数据：只有说明
+    assert [k for _, k in C.percentile_warnings(by_id, pick, spec)] == ["info"]
+    pick.start = dt.date(2012, 1, 2)                           # 区间前没有任何数据：不提示
     assert C.percentile_warnings(by_id, pick, spec) == []
-    rule["buy"]["conditions"][0]["left"] = make_ind("pe")      # 没用百分位：不提示
-    pick.start = dt.date(2020, 1, 2)
-    assert C.percentile_warnings(by_id, pick, spec) == []
+    rule["buy"]["conditions"][0]["left"] = make_ind("pe")      # 没用百分位：照常截到区间内，不提示
+    assert C.warm_start(pick, spec) is None and C.percentile_warnings(by_id, pick, spec) == []
     assert C.percentile_warnings(by_id, pick, {"kind": "template"}) == []

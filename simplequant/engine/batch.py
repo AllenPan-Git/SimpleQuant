@@ -25,13 +25,15 @@ COLUMNS = ["symbol", "start", "end", "total_return", "benchmark_return", "excess
            "lot_too_big", "limit_blocked", "error"]
 
 
-def _one(name: str, df: pd.DataFrame, spec: dict, broker: BrokerConfig) -> dict:
-    row = {"symbol": name, "start": df.index[0] if len(df) else pd.NaT, "end": df.index[-1] if len(df) else pd.NaT}
-    if len(df) < MIN_BARS:
-        return {**row, "error": f"too few bars ({len(df)}) / K 线不足 {MIN_BARS} 根"}
+def _one(name: str, df: pd.DataFrame, spec: dict, broker: BrokerConfig, trade_start=None) -> dict:
+    live = df.loc[trade_start:] if trade_start is not None else df       # 交易段（之前的只预热指标）
+    row = {"symbol": name, "start": live.index[0] if len(live) else pd.NaT,
+           "end": live.index[-1] if len(live) else pd.NaT}
+    if len(live) < MIN_BARS:
+        return {**row, "error": f"too few bars ({len(live)}) / K 线不足 {MIN_BARS} 根"}
     try:
         cls, params = resolve(spec)
-        res = run_backtest({name: df}, cls, params, broker)
+        res = run_backtest({name: df}, cls, params, broker, trade_start=trade_start)
     except Exception as e:  # noqa: BLE001 - 单个标的失败不影响整体
         return {**row, "error": explain_error(e)}
     m, bench = res.metrics, res.equity["benchmark"]
@@ -46,9 +48,10 @@ def _task(args):
 
 
 def run_batch(prices: dict[str, pd.DataFrame], spec: dict, broker: BrokerConfig | None = None,
-              workers: int | None = None, progress=None) -> pd.DataFrame:
+              workers: int | None = None, progress=None, trade_start=None) -> pd.DataFrame:
     """
     :param prices: {名称: 行情}，已按所选区间截好
+    :param trade_start: 行情里带了区间开始前的预热段时，交易从这天开始（见 runner.run_backtest）
     :param progress: 回调 progress(已完成数, 总数)
     :return: 每个标的一行，列见 COLUMNS；出错的标的只有 symbol / start / end / error
     """
@@ -57,7 +60,7 @@ def run_batch(prices: dict[str, pd.DataFrame], spec: dict, broker: BrokerConfig 
     if len(prices) > MAX_ASSETS:
         raise ValueError(f"too many assets ({len(prices)} > {MAX_ASSETS}) / 标的过多")
     broker = broker or BrokerConfig()
-    tasks = [(name, df, spec, broker) for name, df in prices.items()]
+    tasks = [(name, df, spec, broker, trade_start) for name, df in prices.items()]
     n, rows = len(tasks), [None] * len(tasks)
     workers = workers or default_workers()
 

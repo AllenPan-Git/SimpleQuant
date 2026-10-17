@@ -120,10 +120,18 @@ def run_backtest(prices: dict[str, pd.DataFrame], strategy_cls, strategy_params:
     if with_panels:
         from .panels import collect_panels
         panels = collect_panels(strat)
+    warm = {}
+    if trade_start is not None:
+        warm, first = prices, equity.index[0]
+        prices = {k: v.loc[first:] for k, v in prices.items()}
+        for items in panels.values():
+            for item in items:
+                item["lines"] = {n: s.loc[first:] for n, s in item["lines"].items()}
     return BacktestResult(equity=equity, orders=orders, trades=trades, metrics=metrics,
                           logs=strat.logs, prices=prices, lot_too_big=sorted(strat.lot_too_big),
                           t0=list(getattr(strat.p, "t0_names", ())),
-                          pending=_pending_orders(strat), positions=_positions(strat), panels=panels)
+                          pending=_pending_orders(strat), positions=_positions(strat), panels=panels,
+                          trade_start=equity.index[0] if trade_start is not None else None, warm_prices=warm)
 
 
 def _limit_events(broker, strat) -> int:

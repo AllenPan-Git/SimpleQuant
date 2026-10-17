@@ -131,18 +131,39 @@ def data_selector(by_id: dict, key: str, on_change) -> DataPick:
     return pick
 
 
-def load_prices(by_id: dict, pick: DataPick) -> dict:
+def load_prices(by_id: dict, pick: DataPick, warm: bool = False) -> dict:
+    """warm：保留区间开始前的全部数据（预热指标用，交易起点见 warm_start）"""
     names = shared.asset_names(by_id, pick.ids, lang())
-    return shared.slice_prices({names[i]: library.load(i) for i in pick.ids}, pick.date_range)
+    frames = {names[i]: library.load(i) for i in pick.ids}
+    if warm:
+        end = pd.Timestamp(pick.end) + pd.Timedelta(days=1)
+        return {name: df[df.index < end] for name, df in frames.items()}
+    return shared.slice_prices(frames, pick.date_range)
+
+
+def _pct_uses(spec: dict | None) -> list:
+    """规则里用到估值历史百分位（pe_pct / pb_pct）的条件两侧"""
+    if not spec or spec.get("kind") != "rule":
+        return []
+    return [s for side in ("buy", "sell") for c in (spec["rule"].get(side) or {}).get("conditions", [])
+            for s in (c["left"], c["right"]) if s.get("ind") in ("pe_pct", "pb_pct")]
+
+
+def warm_start(pick: DataPick, spec: dict | None) -> pd.Timestamp | None:
+    """
+    规则用到估值历史百分位时，区间开始前的数据只用来预热指标（百分位要回看好几年，只用区间内的数据算会缺一大段），
+    交易与收益从区间起点算；返回这个交易起点，其他情况返回 None（行情照常截到区间内）
+    """
+    return pd.Timestamp(pick.start) if _pct_uses(spec) and pick.date_range else None
 
 
 def prepare_prices(by_id: dict, pick: DataPick, broker: BrokerConfig, spec: dict | None = None) -> tuple[dict, dict, dict]:
     """
     回测用的行情；现金分红模式下换成「不复权价 + 分红」计算的行情（可能要联网下载，放在后台线程调用）。
-    规则用到利率条件时并入利率数据。
+    规则用到利率条件时并入利率数据；用到估值历史百分位时带上区间开始前的数据（交易起点用 warm_start）。
     返回 (行情, 没能改用现金分红的 {名称: 原因}, 按复权价补上分红的 {名称: 日期})
     """
-    prices = with_rates(load_prices(by_id, pick), spec)
+    prices = with_rates(load_prices(by_id, pick, warm_start(pick, spec) is not None), spec)
     if broker.dividend != "cash":
         return prices, {}, {}
     from simplequant.data import cash_dividend
@@ -295,35 +316,33 @@ def fallback_warning(by_id: dict, ids: list) -> str | None:
     return t("bt.sina_stock", names="、".join(names) if lang() == "zh" else ", ".join(names)) if names else None
 
 
-def percentile_warnings(by_id: dict, pick: DataPick, spec: dict) -> list[str]:
+def percentile_warnings(by_id: dict, pick: DataPick, spec: dict) -> list[tuple[str, str]]:
     """
-    规则用到估值历史百分位：回测只用所选区间内的数据计算，区间开始前的估值数据不参与。
-    区间开始前还有估值数据时，提示区间内的年数与回看年数（开始日期提前即可用上更早的数据）
+    规则用到估值历史百分位、区间开始前还有数据时：这些数据只用来预热（见 warm_start），先说明一句；
+    区间开始前的估值数据不足回看年数的，再逐个提示。返回 [(文字, "info" / "warning")]
     """
-    if spec.get("kind") != "rule" or not pick.ids or not (pick.start and pick.end):
-        return []
-    uses = [s for side in ("buy", "sell") for c in (spec["rule"].get(side) or {}).get("conditions", [])
-            for s in (c["left"], c["right"]) if s.get("ind") in ("pe_pct", "pb_pct")]
-    if not uses:
+    uses = _pct_uses(spec)
+    if not uses or not pick.ids or not (pick.start and pick.end):
         return []
     try:
         years = max(int((s.get("params") or {}).get("years", 5)) for s in uses)
     except (TypeError, ValueError):
         years = 5
     cols = {INDICATORS[s["ind"]]["requires"] for s in uses}
-    start, end = pd.Timestamp(pick.start), pd.Timestamp(pick.end) + pd.Timedelta(days=1)
-    names, out = shared.asset_names(by_id, pick.ids, lang()), []
+    start = pd.Timestamp(pick.start)
+    names, out, earlier = shared.asset_names(by_id, pick.ids, lang()), [], False
     for i in pick.ids:
         df = library.load(i)
+        earlier = earlier or (len(df) > 0 and df.index[0] < start)
         have = sorted(cols & set(df.columns))
         first = df[have].dropna(how="all").index.min() if have else None
         if first is None or pd.isna(first) or first >= start:
-            continue
+            continue          # 没有估值数据（missing_factor_warnings 会提示），或区间前没有估值数据（与原来一样）
         before = int(((df.index >= first) & (df.index < start)).sum())
-        inside = int(((df.index >= max(first, start)) & (df.index < end)).sum())
-        out.append(t("bt.pct_window", name=names[i], years=years,
-                     inside=f"{inside / BARS_PER_YEAR:.1f}", before=f"{before / BARS_PER_YEAR:.1f}"))
-    return out
+        if before < years * BARS_PER_YEAR:
+            out.append((t("bt.pct_short", name=names[i], years=years, before=f"{before / BARS_PER_YEAR:.1f}"),
+                        "warning"))
+    return ([(t("bt.pct_warm", start=f"{start:%Y-%m-%d}"), "info")] if earlier else []) + out
 
 
 def missing_factor_warnings(by_id: dict, ids: list, spec: dict) -> list[str]:
@@ -389,9 +408,9 @@ def metric_tiles(m: dict):
 CRED_STYLE = {"warn": ("warning", "warning"), "note": ("info", "info"), "ok": ("check_circle", "info")}
 
 
-def credibility_box(findings: list[dict]):
-    """可信度检查（engine/credibility.py 的结果）：浮点参数是比例，显示成百分数"""
-    if not findings:
+def credibility_box(findings: list[dict], pending: str | None = None):
+    """可信度检查（engine/credibility.py 的结果）：浮点参数是比例，显示成百分数；pending：仍在进行的检查（显示在最后）"""
+    if not findings and not pending:
         return
     with ui.column().classes("w-full gap-2").mark("credibility"):
         with ui.row().classes("w-full items-baseline gap-3"):
@@ -401,6 +420,10 @@ def credibility_box(findings: list[dict]):
             args = {k: shared.pct(v, 1) if isinstance(v, float) else v for k, v in f["args"].items()}
             icon, kind = CRED_STYLE[f["level"]]
             notice(t(f["key"], **args), icon, kind)
+        if pending:
+            with ui.row().classes("items-center gap-2 px-1").mark("cred_pending"):
+                ui.spinner(size="1.2em")
+                ui.label(pending).classes("sq-muted text-sm")
 
 
 def walkforward_results(res, labels: dict, metric: str, stitch_label: str, note: str, fmt_param=None):

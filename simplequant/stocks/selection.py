@@ -48,14 +48,16 @@ DIVIDEND = {"reinvest": L("分红再投资（后复权）", "Reinvest dividends 
 DEFAULT_FILTERS = {"exclude_st": True, "min_list_days": 250}
 
 
-def rebalance_dates(calendar: pd.DatetimeIndex, rule) -> pd.DatetimeIndex:
+def rebalance_dates(calendar: pd.DatetimeIndex, rule, phase: int = 0) -> pd.DatetimeIndex:
+    """phase：调仓日整体错开几个交易日（调仓日检验 engine/phase.py 用）——每月 / 每周提前，每 N 天推后"""
+    if rule not in ("monthly", "weekly"):
+        return calendar[int(phase)::int(rule)]
     s = pd.Series(calendar, index=calendar)
-    if rule == "monthly":
-        return pd.DatetimeIndex(s.groupby(calendar.to_period("M")).last().values)
-    if rule == "weekly":
-        return pd.DatetimeIndex(s.groupby(calendar.to_period("W")).last().values)
-    n = int(rule)
-    return calendar[::n]
+    ends = pd.DatetimeIndex(s.groupby(calendar.to_period("M" if rule == "monthly" else "W")).last().values)
+    if not phase:
+        return ends
+    pos = calendar.get_indexer(ends) - int(phase)
+    return calendar[pos[pos >= 0]]
 
 
 def rebalance_horizon(rule) -> int:
@@ -124,7 +126,7 @@ def build_schedule(panel, spec: dict, start=None, next_days=None, cache: dict | 
     cal = panel.calendar
     if next_days is not None and len(next_days):
         cal = cal.union(pd.DatetimeIndex(next_days)[pd.DatetimeIndex(next_days) > cal[-1]])
-    dates = rebalance_dates(cal, spec.get("rebalance", "monthly"))
+    dates = rebalance_dates(cal, spec.get("rebalance", "monthly"), spec.get("phase", 0))
     dates = dates[dates <= panel.calendar[-1]]
     if start is not None:
         dates = dates[dates >= pd.Timestamp(start)]

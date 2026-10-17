@@ -6,6 +6,7 @@
 - 按交易重抽样（bootstrap）：把已平仓交易有放回地抽 N 笔、求和，重复多次，看累计收益的区间和亏损的概率
 - 随机买卖对照：同样的笔数和持有时间、随机的买卖时机，看策略的已平仓交易排在第几
 - 期末未平仓：胜率、盈亏比只统计已平仓交易；期末持仓浮亏较大，或收益多半是还没兑现的浮盈时提示
+- 调仓日检验：定期调仓的策略把调仓日错开 1 ~ N−1 天重跑（engine/phase.py），当前结果明显高于中位数时警告
 - 参数优化：试的组数多时最好的一组可能是运气；多数组合亏损；样本外明显比样本内差；
   最优参数逐年排名（多数年份排不进前一半 = 全段第一靠的是个别年份）
 - 机器学习合成因子：样本外 IC 是否为正、比训练集 IC 低多少（过拟合）、是否不如 ICIR 合成
@@ -33,6 +34,9 @@ YEARS_MIN = 3           # 至少这么多个自然年才看最优参数的逐年
 ML_FEW = 12              # 机器学习样本外不足这么多期：IC 均值误差大
 ML_OVERFIT = 0.5         # 样本外 IC 不到训练集 IC 的这个比例：过拟合
 MINE_FEW = 12            # AI 因子挖掘：检验期不足这么多期，IC 均值误差大
+PHASE_MIN = 3            # 调仓日检验：连同当前结果至少这么多个相位才下结论
+PHASE_FLAT = 0.05        # 期末资产最高与最低相差不到这个比例：调仓日影响不大
+PHASE_HIGH = 0.15        # 当前结果的期末资产比中位数高（低）这个比例：明显偏高（偏低）
 
 
 def _f(key: str, level: str, **args) -> dict:
@@ -168,6 +172,29 @@ def check_backtest(metrics: dict, trades: pd.DataFrame, tried: int = 0, position
     if tried > 1:
         out.append(_f("tuned", "warn" if tried >= MANY_COMBOS else "note", n=tried))
     return out
+
+
+def check_phase(metrics: dict, rows: pd.DataFrame) -> list[dict]:
+    """
+    调仓日检验。rows：engine/phase.py 的结果（其他相位的 total_return、max_drawdown），当前结果来自 metrics。
+    比较用期末资产（1 + 收益）的比值，长区间收益很大时也不会因为差几十个百分点就报警
+    """
+    cur = float(metrics.get("total_return", 0.0))
+    ret = np.r_[cur, rows["total_return"].dropna().to_numpy(dtype=float)]
+    if len(ret) < PHASE_MIN:
+        return []
+    dd = np.r_[float(metrics.get("max_drawdown", 0.0)), rows["max_drawdown"].dropna().to_numpy(dtype=float)]
+    lo, med, hi = float(ret.min()), float(np.median(ret)), float(ret.max())
+    args = dict(n=len(ret), m=int(rows["phase"].max()), lo=lo, med=med, hi=hi, cur=cur,
+                rank=int((ret > cur + 1e-12).sum()) + 1, dd_lo=float(dd.min()), dd_hi=float(dd.max()))
+    gap = (1 + cur) / max(1 + med, 1e-9) - 1
+    if (1 + hi) / max(1 + lo, 1e-9) - 1 < PHASE_FLAT:
+        return [_f("phase_flat", "ok", **args)]
+    if gap >= PHASE_HIGH:
+        return [_f("phase_high", "warn", **args)]
+    if gap <= -PHASE_HIGH:
+        return [_f("phase_low", "note", **args)]
+    return [_f("phase_wide", "note", **args)]
 
 
 def check_grid(df: pd.DataFrame, metric: str, compare: dict, years: pd.DataFrame | None = None) -> list[dict]:

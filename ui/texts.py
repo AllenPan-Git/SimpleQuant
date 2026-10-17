@@ -584,6 +584,21 @@ TEXT.update({
                            "The best parameters ranked in the top half of all combinations in {upper} of {years} years ({first} year(s) ranked first); the lead does not come from just a few years."),
     "cred.oos_ok": L("样本外表现与样本内基本一致（年化收益 {is_cagr} → {oos_cagr}）。",
                      "Out-of-sample performance is broadly consistent with in-sample performance (CAGR {is_cagr} → {oos_cagr})."),
+    "cred.phase_flat": L("调仓日检验：规则与区间不变，仅将调仓日错开 1 ~ {m} 个交易日重新回测（共 {n} 种调仓日），总收益在 {lo} ~ {hi} 之间，调仓日的选择对结果影响不大。",
+                         "Rebalance-day test: with the same rules and period, the rebalance days were shifted by 1 to {m} trading days ({n} variants in total). Total return ranges from {lo} to {hi}; the choice of rebalance day has little effect."),
+    "cred.phase_high": L("调仓日检验：规则与区间不变，仅将调仓日错开 1 ~ {m} 个交易日重新回测（共 {n} 种调仓日），总收益在 {lo} ~ {hi} 之间，中位数 {med}；最大回撤在 {dd_lo} ~ {dd_hi} 之间。当前结果 {cur} 排第 {rank} 位，**明显高于中位数**，可能是恰好选中了有利的调仓日，换一个起点结果可能相差很大。评估策略时应以中位数为准。",
+                         "Rebalance-day test: with the same rules and period, the rebalance days were shifted by 1 to {m} trading days ({n} variants in total). Total return ranges from {lo} to {hi} (median {med}); maximum drawdown ranges from {dd_lo} to {dd_hi}. The current result of {cur} ranks {rank}, **well above the median**: it may owe much to a favourable choice of rebalance day, and a different start could give a very different result. Evaluate the strategy by the median instead."),
+    "cred.phase_low": L("调仓日检验：规则与区间不变，仅将调仓日错开 1 ~ {m} 个交易日重新回测（共 {n} 种调仓日），总收益在 {lo} ~ {hi} 之间，中位数 {med}；最大回撤在 {dd_lo} ~ {dd_hi} 之间。当前结果 {cur} 排第 {rank} 位，明显低于中位数。调仓日对结果影响较大，评估策略时应以中位数为准。",
+                        "Rebalance-day test: with the same rules and period, the rebalance days were shifted by 1 to {m} trading days ({n} variants in total). Total return ranges from {lo} to {hi} (median {med}); maximum drawdown ranges from {dd_lo} to {dd_hi}. The current result of {cur} ranks {rank}, well below the median. The rebalance day has a large effect; evaluate the strategy by the median."),
+    "cred.phase_wide": L("调仓日检验：规则与区间不变，仅将调仓日错开 1 ~ {m} 个交易日重新回测（共 {n} 种调仓日），总收益在 {lo} ~ {hi} 之间，中位数 {med}；最大回撤在 {dd_lo} ~ {dd_hi} 之间。当前结果 {cur} 排第 {rank} 位，与中位数接近，但调仓日对结果影响较大，评估策略时应参考整个区间。",
+                         "Rebalance-day test: with the same rules and period, the rebalance days were shifted by 1 to {m} trading days ({n} variants in total). Total return ranges from {lo} to {hi} (median {med}); maximum drawdown ranges from {dd_lo} to {dd_hi}. The current result of {cur} ranks {rank}, close to the median, but the rebalance day has a large effect; consider the whole range when evaluating the strategy."),
+    "cred.phase_running": L("调仓日检验进行中：将调仓日依次错开重新回测（{n}/{of}）…",
+                            "Rebalance-day test in progress: re-running with shifted rebalance days ({n}/{of})…"),
+    "cred.phase_failed": L("调仓日检验未能完成：{e}", "The rebalance-day test could not be completed: {e}"),
+    "cred.phase_btn": L("调仓日检验", "Rebalance-day test"),
+    "cred.phase_btn_help": L("规则与区间不变，仅将调仓日错开 1 ~ {m} 个交易日，再回测 {k} 次，查看结果是否依赖于碰巧选中的调仓日。每次约需与本次回测相同的时间。",
+                             "Keeps the rules and period, shifts the rebalance days by 1 to {m} trading days and runs {k} more backtests, to see whether the result depends on a lucky choice of rebalance day. Each run takes about as long as this backtest."),
+    "cred.phase_stop": L("停止", "Stop"),
     "opt.x_axis": L("横轴", "X axis"),
     "opt.y_axis": L("纵轴", "Y axis"),
     "opt.fix": L("固定 {name}", "Fix {name} at"),
@@ -676,11 +691,14 @@ TEXT.update({
                         "No valuation or turnover columns (download stock daily data from BaoStock to obtain turnover, P/E, P/B and P/S)"),
     "bt.lot_too_big": L("{names}：出现买入信号，但资金不足以买入一手（100 股），因此未成交。建议提高初始资金，或改用前复权 / 不复权数据——后复权价格可能远高于实际成交价，会高估一手所需资金。",
                         "{names}: buy signals occurred, but the capital was insufficient for one 100-share lot, so no shares were bought. Increase the initial capital, or use forward-adjusted or unadjusted data: back-adjusted prices can be far above actual trading prices and overstate the cost of a lot."),
-    "bt.pct_window": L("「{name}」的估值历史百分位仅使用回测区间内的数据计算：区间内约 {inside} 年估值数据（其中第 1 年没有百分位），回看年数设为 {years} 年；"
-                       "区间开始前另有约 {before} 年数据未参与计算。如需按完整的回看年数计算，可将开始日期提前。",
-                       "\"{name}\": the valuation percentile is computed only from data inside the backtest range: about {inside} years of valuation data "
-                       "(no percentile in the first year), with a {years}-year lookback; about {before} years of earlier data are not used. "
-                       "Move the start date earlier to use the full lookback."),
+    "bt.pct_warm": L("规则用到估值历史百分位：区间开始前的数据只用来计算指标、不交易，收益和交易从 {start} 开始计算。",
+                     "The rule uses valuation percentiles: data before the start date is used only to compute indicators, "
+                     "with no trading; returns and trades are counted from {start}."),
+    "bt.pct_short": L("「{name}」在区间开始前只有约 {before} 年估值数据，不足回看年数 {years} 年：区间前段的百分位按已有的数据计算，"
+                      "累计不足 1 年时没有百分位。如需按完整的回看年数计算，可在数据页下载更早的数据。",
+                      "\"{name}\" has only about {before} years of valuation data before the start date, less than the {years}-year lookback: "
+                      "early percentiles use the data available, and there is no percentile until a full year has accumulated. "
+                      "Download earlier data on the Data page to use the full lookback."),
     "bt.missing_factor": L("「{name}」缺少 {cols} 数据，相关条件将始终无法满足。建议改用 BaoStock 下载股票日线。",
                            "\"{name}\" has no {cols} data, so the related conditions will never be met. Download stock daily data from BaoStock instead."),
 

@@ -51,9 +51,10 @@ def test_akshare_fetch_attaches_valuation(monkeypatch):
     from simplequant.data import akshare_src
     raw = make_prices(n=80).reset_index()
     monkeypatch.setattr(akshare_src, "eastmoney", lambda *a, **k: raw)
+    monkeypatch.setattr(akshare_src.sina, "adjust_table", lambda sym: pd.DataFrame(columns=["f", "u"]))
     monkeypatch.setattr(valuation, "index_valuation", lambda code: _monthly_val(pd.DatetimeIndex(raw["datetime"])))
     df = akshare_src.AKShareSource().fetch("510300", "2021-01-01", "2021-12-31", asset="etf")
-    assert df.attrs["valuation"] == "000300" and df.attrs["provider"] == "eastmoney" and df["pe"].notna().any()
+    assert df.attrs["valuation"] == "000300" and df.attrs["provider"] == "eastmoney+dividends" and df["pe"].notna().any()
 
 
 def _pct_reference(s: pd.Series, window: int, min_count: int) -> pd.Series:

@@ -10,7 +10,8 @@
 不直接用 akshare 的对应函数：它们不设超时、不检查 HTTP 状态（被封时无法识别），并用 eval 解析复权表。
 复权口径：
 - 股票：等比复权（不复权价 × 后复权因子），与 BaoStock 一致（600519、300750 逐日收益率一致）
-- ETF：加法复权（不复权价 + 累计分红），与东方财富一致（510300 共 1635 个交易日，误差不超过 0.001）。
+- ETF：等比复权，由行情与累计分红计算（data/ratio_adjust.py）；ratio=False 时为加法复权（不复权价 + 累计分红），
+  与东方财富的复权价一致（510300 共 1635 个交易日，误差不超过 0.001），供改为等比之前开设的模拟盘账户使用。
   份额拆分 / 折算新浪不给比例，只在复权表里留一行累计分红不变的记录，比例按当天收盘价跳空推算（见 etf_splits）
 成交量换算成「手」、换手率为百分比，与东方财富一致。
 """
@@ -172,9 +173,10 @@ def etf_splits(df: pd.DataFrame, table: pd.DataFrame) -> pd.Series:
     return pd.Series(out, dtype=float)
 
 
-def etf(symbol: str, adjust: str = "") -> pd.DataFrame:
+def etf(symbol: str, adjust: str = "", ratio: bool = True) -> pd.DataFrame:
     """
-    ETF 日线。复权按东方财富的口径（加法调整），价格以第一天的一份为单位（M = 截至当天的累计拆分倍数，
+    ETF 日线。复权默认为等比复权（data/ratio_adjust.py）；ratio=False 时按东方财富的口径（加法调整，
+    改为等比复权之前开设的模拟盘账户用），价格以第一天的一份为单位（M = 截至当天的累计拆分倍数，
     没有拆分时 M = 1，即 不复权价 + 累计分红）：
     - 后复权 = 不复权价 × M + 截至当天（含除息日）的 Σ 每份分红 × 除息日的 M
     - 前复权 = (不复权价 × M − 当天之后还会发生的 Σ 每份分红 × 除息日的 M) / 最新的 M
@@ -188,6 +190,9 @@ def etf(symbol: str, adjust: str = "") -> pd.DataFrame:
         return df
     _check_adjust(adjust)
     table = adjust_table(sym)
+    if ratio:
+        from .ratio_adjust import apply, etf_factor
+        return _check_moves(apply(df, etf_factor(df, table), adjust), symbol)
     splits = etf_splits(df, table)
     m = as_of(splits.cumprod(), df.index).fillna(1.0) if len(splits) else pd.Series(1.0, index=df.index)
     if "u" in table and table["u"].notna().any():
@@ -203,6 +208,10 @@ def etf(symbol: str, adjust: str = "") -> pd.DataFrame:
     for c in ("open", "high", "low", "close"):
         hfq = df[c] * m + cum
         df[c] = (hfq if adjust == "hfq" else (hfq - total) / last_m).round(3)
+    return _check_moves(df, symbol)
+
+
+def _check_moves(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
     move = df["close"].pct_change().abs()
     if (move > MAX_MOVE).any():
         days = ", ".join(d.strftime("%Y-%m-%d") for d in move.index[move > MAX_MOVE][:3])

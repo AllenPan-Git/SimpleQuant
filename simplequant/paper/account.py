@@ -43,6 +43,15 @@ class PaperAccount:
     last_run: str = ""
     data_through: str = ""      # 已处理到哪天的数据
     note: str = ""
+    # AKShare 股票 / ETF 的复权算法：ratio 等比；改为等比之前开设的账户没有这个字段，保持加法（不改写已有的成交）
+    adjust_method: str = "additive"
+
+    def fetch_kwargs(self, asset: str = "", source: str = "akshare") -> dict:
+        """模拟盘取行情时给数据源的额外参数"""
+        kw = {"asset": asset} if asset else {}
+        if source == "akshare":
+            kw["ratio"] = self.adjust_method == "ratio"
+        return kw
 
     def __post_init__(self):
         # 同一标的选了两份数据（例如同一只 ETF 的两次下载）时只保留一份：模拟盘按代码重新取数据，重复会被当成两个标的

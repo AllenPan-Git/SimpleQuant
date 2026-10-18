@@ -8,6 +8,7 @@ from nicegui import ui
 
 from simplequant import strategies
 from simplequant.data import library
+from simplequant.data.ratio_adjust import is_additive
 from simplequant.engine import BrokerConfig, COST_PRESETS
 from simplequant.rules import INDICATORS, required_columns, macro_columns
 from simplequant.rules.schema import BARS_PER_YEAR
@@ -310,10 +311,9 @@ def unadjusted_warning(by_id: dict, ids: list) -> str | None:
 
 
 def fallback_warning(by_id: dict, ids: list) -> str | None:
-    """股票数据改用了新浪（等比复权）：与东方财富的加法复权口径不同，长期收益会有差别"""
-    names = [by_id[i].name for i in ids if shared.sina_fallback(by_id[i]) and by_id[i].adjust
-             and by_id[i].extra.get("asset") == "stock"]
-    return t("bt.sina_stock", names="、".join(names) if lang() == "zh" else ", ".join(names)) if names else None
+    """加法复权的数据（改为等比复权之前下载的，或下载时取不到复权因子）：涨跌幅被压缩，提示重新下载"""
+    names = [by_id[i].name for i in ids if is_additive(by_id[i])]
+    return t("bt.additive", names="、".join(names) if lang() == "zh" else ", ".join(names)) if names else None
 
 
 def bench_label(universe: str, total_return: bool) -> str:

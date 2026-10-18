@@ -92,19 +92,26 @@ def fake_akshare(monkeypatch):
 
 
 def test_akshare_sina_fallback_rebuilds_adjusted_prices(fake_akshare):
-    """东方财富连不上：ETF 改用新浪行情 + 新浪累计分红，按东方财富口径（加法）算复权价；成交量换算成手"""
+    """东方财富连不上：ETF 改用新浪行情 + 新浪累计分红，等比复权（ratio=False 时按东方财富口径加法）；成交量换算成手"""
     from simplequant.data import AKShareSource
     src = AKShareSource()
     raw = src.fetch("510300", "2024-01-01", "2024-01-31", adjust="", asset="etf")
     assert len(raw) == 5 and raw.attrs["provider"] == "sina"
     assert raw["volume"].iloc[0] == pytest.approx(1e4)                       # 1e6 股 = 1e4 手
     hfq = src.fetch("510300", "2024-01-01", "2024-01-31", adjust="hfq", asset="etf")
-    assert hfq.attrs["provider"] == "sina+dividends"
-    # 1/2、1/3 只经历过第一次分红（+0.3）；1/4 除息当天起累计 +0.4
-    assert hfq["close"].round(3).tolist() == [4.35, 4.35, 4.45, 4.45, 4.45]
+    assert hfq.attrs["provider"] == "sina+dividends" and hfq.attrs["adjust_method"] == "ratio"
+    # 1/4 除息 0.1：因子乘以 前收 / (前收 − 0.1) = 4.05 / 3.95（上市前那次分红在数据之前，不影响）
+    assert hfq["close"].round(4).tolist() == [4.05, 4.05, 4.1525, 4.1525, 4.1525]
     qfq = src.fetch("510300", "2024-01-01", "2024-01-31", adjust="qfq", asset="etf")
     assert qfq["close"].round(3).tolist() == [3.95, 3.95, 4.05, 4.05, 4.05]  # 最新价格等于真实价格
-    assert (hfq["close"] - qfq["close"]).round(6).nunique() == 1             # 两种复权只差一个常数
+    assert (hfq["close"] / qfq["close"]).round(9).nunique() == 1             # 两种复权只差一个比例
+
+    # 加法（改为等比之前开设的模拟盘账户）：1/2、1/3 只经历过第一次分红（+0.3）；1/4 除息当天起累计 +0.4
+    add = src.fetch("510300", "2024-01-01", "2024-01-31", adjust="hfq", asset="etf", ratio=False)
+    assert add.attrs["adjust_method"] == "additive"
+    assert add["close"].round(3).tolist() == [4.35, 4.35, 4.45, 4.45, 4.45]
+    add_q = src.fetch("510300", "2024-01-01", "2024-01-31", adjust="qfq", asset="etf", ratio=False)
+    assert (add["close"] - add_q["close"]).round(6).nunique() == 1           # 两种复权只差一个常数
 
 
 def test_sina_etf_share_split(fake_akshare, monkeypatch):
@@ -118,7 +125,7 @@ def test_sina_etf_share_split(fake_akshare, monkeypatch):
         {"f": 1.0, "u": [0.0, 0.1]}, index=pd.to_datetime(["2024-01-04", "2024-01-08"])))
     src = AKShareSource()
     hfq = src.fetch("510500", "2024-01-01", "2024-01-31", adjust="hfq", asset="etf")
-    # 1/8：1.9 × 2 + 0.1 × 2 = 4.0（除息当天复权价不变）
+    # 拆分日因子 ×2；1/8 除息因子再 × 2 / 1.9：1.9 × 2 × 2 / 1.9 = 4.0（价格没动，复权价不变）
     assert hfq["close"].round(3).tolist() == [4.0, 4.0, 4.0, 4.0, 4.0]
     qfq = src.fetch("510500", "2024-01-01", "2024-01-31", adjust="qfq", asset="etf")
     assert qfq["close"].round(3).tolist() == [1.9, 1.9, 1.9, 1.9, 1.9]
@@ -347,3 +354,78 @@ def test_tunables_include_pacing():
     plain = {"kind": "rule", "rule": {**spec["rule"], "cooldown": 0, "scale": None}}
     plain["rule"]["buy"]["conditions"][0]["days"] = 1
     assert not {"rule.cooldown", "rule.scale.adds", "rule.buy.conditions.0.days"} & {tb.path for tb in strategies.tunables(plain)}
+
+
+# ---------------- 等比复权（东方财富不复权 × 复权因子） ----------------
+def _em_frame(close, adjust_offset=0.0):
+    days = pd.bdate_range("2024-01-02", periods=len(close))
+    return pd.DataFrame({"日期": days.strftime("%Y-%m-%d"), "开盘": close, "最高": close, "最低": close,
+                         "收盘": [c + adjust_offset for c in close], "成交量": 1e4})
+
+
+def test_eastmoney_raw_times_factors(monkeypatch):
+    """东方财富可用：股票 = 不复权 × BaoStock 后复权因子，ETF = 不复权 + 新浪累计分红；都取不到因子时退回东方财富的加法复权并标记"""
+    import akshare as ak
+    from simplequant.data import AKShareSource, net, sina, ratio_adjust
+    monkeypatch.setattr(net.time, "sleep", lambda s: None)
+    close = [10.0, 10.0, 9.0, 9.0, 9.9]
+    calls = []
+
+    def em(symbol, period, start_date, end_date, adjust):
+        calls.append((symbol, start_date, adjust))
+        return _em_frame([c + 0.1 for c in close] if adjust else close)     # 复权价：加法，统一 +0.1
+    monkeypatch.setattr(ak, "stock_zh_a_hist", em)
+    monkeypatch.setattr(ak, "fund_etf_hist_em", em)
+    days = pd.bdate_range("2024-01-02", periods=5)
+    monkeypatch.setattr(ratio_adjust, "stock_factor", lambda sym, dates: pd.Series([1, 1, 1.1, 1.1, 1.1], index=dates[:5]))
+    src = AKShareSource()
+    hfq = src.fetch("600519", "2024-01-01", "2024-01-31", adjust="hfq", asset="stock")
+    assert hfq.attrs["provider"] == "eastmoney+factors" and hfq.attrs["adjust_method"] == "ratio"
+    assert hfq["close"].round(2).tolist() == [10.0, 10.0, 9.9, 9.9, 10.89]
+    assert calls[-1] == ("600519", "20240101", "")                           # 取的是不复权行情
+
+    # ETF：不复权行情取全部历史（因子从上市第一天起算）；1/4 除息 1.0：因子 × 10 / 9
+    monkeypatch.setattr(sina, "adjust_table", lambda sym: pd.DataFrame({"f": [1.0], "u": [1.0]},
+                                                                     index=pd.to_datetime(["2024-01-04"])))
+    etf = src.fetch("510880", "2024-01-03", "2024-01-31", adjust="hfq", asset="etf")
+    assert etf.attrs["provider"] == "eastmoney+dividends" and calls[-1][1] == "19900101"
+    assert etf.index[0] == days[1]                                           # 结果仍按所选区间截取
+    assert etf["close"].round(3).tolist() == [10.0, 10.0, 10.0, 11.0]
+
+    # BaoStock 与新浪都取不到：退回东方财富的加法复权
+    def down(*a, **k):
+        raise ConnectionError("down")
+    monkeypatch.setattr(ratio_adjust, "stock_factor", down)
+    monkeypatch.setattr(sina, "kline", down)
+    add = src.fetch("600519", "2024-01-01", "2024-01-31", adjust="hfq", asset="stock")
+    assert add.attrs["provider"] == "eastmoney" and add.attrs["adjust_method"] == "additive"
+    assert add["close"].round(2).tolist() == [10.1, 10.1, 9.1, 9.1, 10.0]
+
+
+def test_ratio_factor_matches_true_returns():
+    """等比因子：每天复权价的涨跌 = 真实涨跌（拆分当天连续，除息当天按除息参考价再投资）"""
+    from simplequant.data.ratio_adjust import etf_factor, apply
+    raw = pd.DataFrame({c: [2.0, 2.2, 1.1, 1.0, 1.05] for c in ("open", "high", "low", "close")},
+                       index=pd.bdate_range("2024-01-02", periods=5))
+    table = pd.DataFrame({"f": 1.0, "u": [0.0, 0.05]}, index=pd.to_datetime(["2024-01-04", "2024-01-06"]))
+    f = etf_factor(raw, table)                                                # 1/4 一拆二；1/6 是周六，1/8 除息 0.05
+    out = apply(raw, f, "hfq")["close"]
+    assert out.pct_change().tolist()[1:] == pytest.approx([0.1, 0.0, 1.0 / 1.1 - 1, 1.05 / (1.0 - 0.05) - 1])
+    assert apply(raw, f, "qfq")["close"].iloc[-1] == pytest.approx(1.05)
+
+
+def test_is_additive():
+    from simplequant.data.library import DatasetMeta
+    from simplequant.data.ratio_adjust import is_additive
+
+    def m(adjust="hfq", source="akshare", **extra):
+        return DatasetMeta(id="x", name="x", symbol="510300", source=source, freq="1d", adjust=adjust,
+                           extra={"asset": "etf", **extra})
+    assert is_additive(m(provider="eastmoney"))                              # 旧数据
+    assert is_additive(m(provider="sina+dividends"))                         # 旧的新浪 ETF 也是加法
+    assert not is_additive(m(provider="sina+factors", asset="stock"))        # 新浪股票本来就是等比
+    assert not is_additive(m(provider="eastmoney+dividends", adjust_method="ratio"))
+    assert is_additive(m(provider="eastmoney", adjust_method="additive"))    # 新版取不到因子
+    assert not is_additive(m(adjust=""))                                     # 不复权
+    assert not is_additive(m(source="baostock"))
+    assert not is_additive(m(asset="index"))

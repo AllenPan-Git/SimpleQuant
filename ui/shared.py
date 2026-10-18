@@ -12,6 +12,7 @@ import pandas as pd
 
 from simplequant.data import library
 from simplequant.data.base import freq_label
+from simplequant.data.ratio_adjust import is_additive
 from simplequant.i18n import L, render, tr
 from simplequant.rules import make_ind
 from ui import texts  # noqa: F401  注册界面文字
@@ -42,7 +43,12 @@ def data_source_text(m: library.DatasetMeta, lg: str) -> str:
     """一份数据实际来自哪个接口、什么复权方式（如「东方财富 · 后复权」）；旧数据没有记录接口时写数据源"""
     prov = (m.extra or {}).get("provider", "")
     src = tr(f"prov.{prov}", lg) if prov else tr("src." + m.source, lg)
-    return src if m.source == "csv" else f"{src} · {tr(ADJUST.get(m.adjust, 'adj.none'), lg)}"
+    if m.source == "csv":
+        return src
+    adj = tr(ADJUST.get(m.adjust, 'adj.none'), lg)
+    if is_additive(m):
+        adj += f"（{tr('adj.additive', lg)}）" if lg == "zh" else f" ({tr('adj.additive', lg)})"
+    return f"{src} · {adj}"
 
 
 def sina_fallback(m: library.DatasetMeta) -> bool:

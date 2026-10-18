@@ -31,7 +31,7 @@ def create_account(name: str, spec: dict, broker: BrokerConfig, start: str, asse
                    universe: str = "") -> PaperAccount:
     kind = "selection" if spec.get("kind") == "selection" else "single"
     acc = PaperAccount(id=new_id(name), name=name, kind=kind, spec=spec, broker=asdict(broker), start=start,
-                       assets=assets or [], universe=universe or spec.get("universe", ""))
+                       assets=assets or [], universe=universe or spec.get("universe", ""), adjust_method="ratio")
     acc.save()
     return acc
 
@@ -53,7 +53,7 @@ def refresh_single_data(acc: PaperAccount, today: str | None = None) -> dict[str
     out = {}
     for a in acc.assets:
         src = SOURCES[a.get("source", "akshare")]
-        kw = {"asset": a["asset"]} if a.get("asset") else {}
+        kw = acc.fetch_kwargs(a.get("asset", ""), a.get("source", "akshare"))
         df = src.fetch(a["symbol"], hist_start, today, freq="1d", adjust="qfq", **kw)
         df = df.loc[:complete_through]
         if cash_div:

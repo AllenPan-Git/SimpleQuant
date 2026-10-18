@@ -62,7 +62,9 @@ def make_plan(name: str, spec: dict, metas: list, start, end, broker: BrokerConf
         "created": dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
         "name": name, "strategy": spec,
         "assets": [{"name": m.name, "symbol": m.symbol, "source": m.source, "freq": m.freq, "adjust": m.adjust,
-                    "asset": m.extra.get("asset", ""), "provider": m.extra.get("provider", "")} for m in metas],
+                    "asset": m.extra.get("asset", ""), "provider": m.extra.get("provider", ""),
+                    **({"adjust_method": m.extra["adjust_method"]} if m.extra.get("adjust_method") else {})}
+                   for m in metas],
         "range": [str(start), str(end)],
         "broker": asdict(broker),
         "mode": mode if mode in MODES and len(metas) > 1 else "portfolio",
@@ -258,9 +260,18 @@ def check_assets(plan: dict, metas: list) -> list[dict]:
 
 
 def provider_differs(asset: dict, meta) -> bool:
-    """本机数据的实际行情来源与方案不同（如方案用东方财富、本机数据来自新浪）：复权方式可能不同，结果会有差异"""
+    """
+    本机数据的实际行情来源或复权算法与方案不同（如方案用东方财富、本机数据来自新浪；方案是加法复权、本机是等比）：
+    结果会有差异
+    """
+    from types import SimpleNamespace
+    from .data.ratio_adjust import is_additive
     want, got = asset.get("provider", ""), (meta.extra.get("provider", "") if meta else "")
-    return bool(want and got and want != got)
+    if not (want and got):
+        return False
+    planned = SimpleNamespace(source=asset.get("source"), adjust=asset.get("adjust"),
+                              extra={k: asset[k] for k in ("asset", "provider", "adjust_method") if asset.get(k)})
+    return want != got or is_additive(planned) != is_additive(meta)
 
 
 def compare(recorded: dict | None, metrics: dict, tol: float = 0.0005) -> str | None:

@@ -408,3 +408,19 @@ def test_single_cash_dividend_falls_back_to_qfq(monkeypatch):
     assert runner.dividend_notes(acc)["skipped"] == {"510300": "no_dividends"}
     s = run_account(acc, idx, prices=runner.load_single_data(acc))
     assert "dividend_cash" not in s["metrics"]
+
+
+def test_adjust_method_new_accounts_ratio_old_accounts_additive():
+    """新开的账户用等比复权；改为等比之前开设的账户（account.json 没有这个字段）保持加法，不改写已有成交"""
+    import json
+    acc = create_account("复权测试", {"kind": "template", "template": "sma_cross", "params": {}}, BrokerConfig(),
+                         "2024-01-02", assets=[{"source": "akshare", "symbol": "510300", "asset": "etf", "name": "510300"}])
+    assert acc.adjust_method == "ratio"
+    assert acc.fetch_kwargs("etf") == {"asset": "etf", "ratio": True}
+    assert acc.fetch_kwargs("", "baostock") == {}                           # 其他数据源不认识这个参数
+    path = acc.dir / "account.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    del data["adjust_method"]
+    path.write_text(json.dumps(data), encoding="utf-8")
+    old = load_account(acc.id)
+    assert old.adjust_method == "additive" and old.fetch_kwargs("etf") == {"asset": "etf", "ratio": False}

@@ -34,7 +34,7 @@ def fetch_to_library(source_key: str, symbol: str, start: str, end: str, freq: s
     if freq == "1d" and source_key in ONLINE_DAILY:
         df = complete_bars_only(df)
     extra = {k: v for k, v in kwargs.items() if isinstance(v, str)}
-    for k in ("provider", "valuation"):            # 实际使用的接口；附上的估值来自哪个指数
+    for k in ("provider", "valuation", "adjust_method"):   # 实际使用的接口；附上的估值来自哪个指数；复权算法
         if df.attrs.get(k):
             extra[k] = df.attrs[k]
     meta = library.DatasetMeta(id=ds_id, name=name or symbol, symbol=symbol, source=source_key,

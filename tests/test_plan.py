@@ -82,6 +82,19 @@ def test_check_assets_matches_local_data():
     assert P.check_assets(plan, [])[0]["status"] == "download"
 
 
+def test_provider_differs_by_adjust_method():
+    """新浪 ETF 改为等比后接口名不变：方案是旧的加法复权、本机是等比时也算来源不同；方案写了 adjust_method 时按它比"""
+    old_plan = P.make_plan("x", RULE, [meta(provider="sina+dividends")], "2020-01-02", "2026-09-29", BrokerConfig())
+    assert "adjust_method" not in old_plan["assets"][0]
+    new_local = meta(provider="sina+dividends")
+    new_local.extra["adjust_method"] = "ratio"
+    assert P.provider_differs(old_plan["assets"][0], new_local)
+    assert not P.provider_differs(old_plan["assets"][0], meta(provider="sina+dividends"))
+    new_plan = P.make_plan("x", RULE, [new_local], "2020-01-02", "2026-09-29", BrokerConfig())
+    assert new_plan["assets"][0]["adjust_method"] == "ratio"
+    assert not P.provider_differs(new_plan["assets"][0], new_local)
+
+
 def test_compare():
     assert P.compare(None, {"total_return": 0.1}) is None
     assert P.compare({"total_return": 0.3758, "trades": 7}, {"total_return": 0.37581, "trades": 7}) == "same"

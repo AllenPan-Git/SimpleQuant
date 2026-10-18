@@ -84,7 +84,11 @@ def test_data_sources_and_fallback():
                        extra={"asset": "stock", "provider": "sina+factors"})
     old = DatasetMeta(id="c", name="510500", symbol="510500", source="akshare", freq="1d", adjust="")
     csv = DatasetMeta(id="d", name="X", symbol="X", source="csv", freq="1d", adjust="hfq")
-    assert shared.data_source_text(em, "zh") == "东方财富 · 后复权"
+    assert shared.data_source_text(em, "zh") == "东方财富 · 后复权（加法）"       # 改为等比之前下载的
+    assert shared.data_source_text(em, "en") == "Eastmoney · Back-adjusted (additive)"
+    new = DatasetMeta(id="f", name="600519", symbol="600519", source="akshare", freq="1d", adjust="hfq",
+                      extra={"asset": "stock", "provider": "eastmoney+factors", "adjust_method": "ratio"})
+    assert shared.data_source_text(new, "zh") == "东方财富·不复权 × BaoStock 复权因子 · 后复权"
     assert shared.data_source_text(sina, "zh") == "新浪财经·等比复权 · 后复权"
     assert shared.data_source_text(old, "zh") == "AKShare · 不复权"          # 旧数据没记录接口
     assert shared.data_source_text(csv, "zh") == "CSV 导入"

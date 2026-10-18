@@ -19,29 +19,48 @@ class AKShareSource(DataSource):
     key = "akshare"
     label = L("AKShare（免费，日线）", "AKShare (free, daily)")
     freqs = ("1d",)
-    description = L("ETF 及股票优先使用东方财富日线（支持复权）；东方财富无法连接时自动改用新浪财经，并在随后 15 分钟内直接使用新浪。"
-                    "新浪 ETF 复权价由行情与累计分红计算，与东方财富逐日一致（份额拆分或折算按当天价格跳空推算比例）；新浪股票复权为等比复权，与 BaoStock 一致。"
+    description = L("ETF 及股票优先使用东方财富日线；东方财富无法连接时自动改用新浪财经，并在随后 15 分钟内直接使用新浪。"
+                    "复权一律为等比复权（分红再投资，与 BaoStock、选股一致）：股票为不复权价 × BaoStock 复权因子，"
+                    "ETF 由不复权价与新浪累计分红计算（份额拆分或折算按当天价格跳空推算比例）。东方财富自带的复权价是加法复权，"
+                    "涨跌幅会被压缩，只在取不到复权因子时使用。"
                     "指数优先使用新浪财经，中证指数官网备用。数据库中记录每份数据实际使用的接口。"
                     "沪深300、中证500 等常见宽基 ETF / 指数附带指数的市盈率、市净率（乐咕乐股，每月更新），可用于估值百分位条件。",
-                    "ETFs and stocks use Eastmoney daily bars (with price adjustment) first. If Eastmoney is unreachable, "
-                    "Sina Finance is used instead, and directly for the next 15 minutes. Sina ETF adjusted prices are rebuilt "
-                    "from prices plus cumulative dividends and match Eastmoney day by day (share split ratios are inferred from the price gap); Sina stock adjustment is proportional, "
-                    "matching BaoStock. Indices use Sina Finance first, with the CSI website as a fallback. "
+                    "ETFs and stocks use Eastmoney daily bars first. If Eastmoney is unreachable, "
+                    "Sina Finance is used instead, and directly for the next 15 minutes. Adjustment is always proportional "
+                    "(dividends reinvested, matching BaoStock and stock selection): stocks are raw prices × BaoStock adjustment "
+                    "factors, ETFs are rebuilt from raw prices and Sina cumulative dividends (share split ratios are inferred from "
+                    "the price gap). Eastmoney's own adjusted prices are additive and compress percentage moves, so they are used "
+                    "only when the factors are unavailable. Indices use Sina Finance first, with the CSI website as a fallback. "
                     "The library records which interface each dataset came from. "
                     "Common broad-index ETFs / indices such as CSI 300 and CSI 500 also get the index P/E and P/B "
                     "(Legulegu, updated monthly) for valuation-percentile conditions.")
 
-    def fetch(self, symbol, start, end, freq="1d", adjust="hfq", asset="etf", **kwargs):
+    def fetch(self, symbol, start, end, freq="1d", adjust="hfq", asset="etf", ratio=True, **kwargs):
+        """ratio=False：股票 / ETF 用东方财富的加法复权（改为等比复权之前开设的模拟盘账户用，见 ratio_adjust.py）"""
         if freq != "1d":
             raise ValueError("AKShare provides daily bars only; use BaoStock / TDX / CSV for intraday / AKShare 数据源只提供日线，分钟数据请用 BaoStock / 通达信 / CSV")
-        if asset == "etf":
+        additive = ("eastmoney", lambda: eastmoney(symbol, start, end, adjust, asset))
+        if asset == "etf" and adjust and ratio:
+            # 等比因子要从上市第一天算起：不复权行情取全部历史
             raw, provider = first_available([
-                ("eastmoney", lambda: eastmoney(symbol, start, end, adjust, asset)),
-                ("sina" + ("+dividends" if adjust else ""), lambda: sina.etf(symbol, adjust)),
+                ("eastmoney+dividends", lambda: em_ratio_etf(symbol, end, adjust)),
+                ("sina+dividends", lambda: sina.etf(symbol, adjust)),
+                additive,
+            ])
+        elif asset == "stock" and adjust and ratio:
+            raw, provider = first_available([
+                ("eastmoney+factors", lambda: em_ratio_stock(symbol, start, end, adjust)),
+                ("sina+factors", lambda: sina.stock(symbol, adjust)),
+                additive,
+            ])
+        elif asset == "etf":
+            raw, provider = first_available([
+                additive,
+                ("sina" + ("+dividends" if adjust else ""), lambda: sina.etf(symbol, adjust, ratio=False)),
             ])
         elif asset == "stock":
             raw, provider = first_available([
-                ("eastmoney", lambda: eastmoney(symbol, start, end, adjust, asset)),
+                additive,
                 ("sina" + ("+factors" if adjust else ""), lambda: sina.stock(symbol, adjust)),
             ])
         elif asset == "index":
@@ -56,6 +75,10 @@ class AKShareSource(DataSource):
         if df.empty:
             raise ValueError(f"No data for {symbol} in {start} ~ {end} / {symbol} 在该区间内无数据")
         df.attrs["provider"] = provider          # 实际使用的接口，存进数据库元数据供界面显示
+        if asset in ("etf", "stock") and adjust:
+            ratio_used = provider in ("eastmoney+factors", "eastmoney+dividends", "sina+factors") or \
+                (provider == "sina+dividends" and ratio)
+            df.attrs["adjust_method"] = "ratio" if ratio_used else "additive"
         if asset in ("etf", "index"):            # 常见宽基 ETF / 指数附上指数估值（月度，见 data/valuation.py）
             df = valuation.try_attach(df, symbol, asset)
         return df
@@ -85,6 +108,20 @@ def eastmoney(symbol, start, end, adjust, asset):
     get = ak.fund_etf_hist_em if asset == "etf" else ak.stock_zh_a_hist
     return net.call("eastmoney", lambda: get(symbol=symbol, period="daily", start_date=s, end_date=e, adjust=adjust),
                     retries=3, wait=2.0)
+
+
+def em_ratio_stock(symbol, start, end, adjust):
+    """东方财富不复权日线 × BaoStock 后复权因子"""
+    from .ratio_adjust import apply, stock_factor
+    df = normalize(pd.DataFrame(eastmoney(symbol, start, end, "", "stock")))
+    return apply(df, stock_factor(symbol, df.index), adjust)
+
+
+def em_ratio_etf(symbol, end, adjust):
+    """东方财富不复权日线（全部历史）+ 新浪累计分红"""
+    from .ratio_adjust import apply, etf_factor
+    df = normalize(pd.DataFrame(eastmoney(symbol, "1990-01-01", end, "", "etf")))
+    return sina._check_moves(apply(df, etf_factor(df, sina.adjust_table(sina.symbol_of(symbol, "etf"))), adjust), symbol)
 
 
 def csindex(symbol, start, end):

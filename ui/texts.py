@@ -95,6 +95,8 @@ TEXT.update({
     "prov.sina": L("新浪财经", "Sina Finance"),
     "prov.sina+dividends": L("新浪财经·行情与累计分红", "Sina Finance · prices and cumulative dividends"),
     "prov.sina+factors": L("新浪财经·等比复权", "Sina Finance · proportional adjustment"),
+    "prov.eastmoney+factors": L("东方财富·不复权 × BaoStock 复权因子", "Eastmoney · raw prices × BaoStock adjustment factors"),
+    "prov.eastmoney+dividends": L("东方财富·不复权 + 新浪累计分红", "Eastmoney · raw prices + Sina cumulative dividends"),
     "prov.csindex": L("中证指数官网", "CSI website"),
     "lib.valuation": L(" · 含指数估值", " · with index valuation"),
     "adj.hfq": L("后复权", "Back-adjusted"),
@@ -396,25 +398,26 @@ TEXT.update({
         "分红再投资：直接使用所选数据（后复权数据下分红全额再投资、不扣税，与多数回测软件一致）。\n"
         "现金分红：根据不复权价及分红送转数据重新计算行情（等比复权），信号不受除权除息影响；"
         "除息日现金到账，保留在账户中直至下次买入；股票卖出时按持股期限扣缴红利税（≤1 个月 20%，1 个月至 1 年 10%，超过 1 年免税），"
-        "个人持有 ETF 所获分红免税。首次使用需联网下载不复权行情及分红数据，之后将缓存于本机。\n"
-        "注意：东方财富的后复权采用加法复权，长期收益略低于等比复权，因此两种方式的差异并非全部来自分红。",
+        "个人持有 ETF 所获分红免税。首次使用需联网下载不复权行情及分红数据，之后将缓存于本机。",
         "Reinvest: use the selected data as-is (with back-adjusted data, dividends are fully reinvested and untaxed, like most backtesters).\n"
         "Cash: prices are rebuilt from unadjusted bars plus dividend data (proportional adjustment), so signals are unaffected by ex-dates; "
         "cash arrives on the ex-date and stays in the account until the next purchase; for stocks, dividend tax is deducted on sale by "
         "holding period (≤1 month 20%, ≤1 year 10%, over 1 year exempt); ETF dividends are tax-free for individuals. "
-        "Downloads unadjusted bars and dividend data (cached afterwards).\n"
-        "Note: Eastmoney's back-adjustment is additive and slightly understates long-run returns compared with proportional "
-        "adjustment, so not all of the difference between the two options comes from dividends."),
+        "Downloads unadjusted bars and dividend data (cached afterwards)."),
     "bt.sources": L("数据来源：{s}", "Data source: {s}"),
-    "bt.sina_stock": L("{names} 的数据来自新浪财经（下载时无法连接东方财富），采用等比复权；东方财富的股票数据采用加法复权，长期收益通常偏低。"
-                       "与此前或他人的回测结果比较时，差异可能源于数据口径。如需使用东方财富的数据，可稍后在「数据」页勾选「忽略本地已有数据，重新下载」后重新下载。",
-                       "{names}: data from Sina Finance (Eastmoney was unreachable at download time), with proportional adjustment. "
-                       "Eastmoney stock data uses additive adjustment, which usually gives lower long-term returns. When comparing with earlier "
-                       "results or someone else's, differences may come from the data. To use Eastmoney data, re-download it later on the Data page."),
+    "bt.additive": L("{names} 为加法复权的数据（复权价 = 不复权价 + 上市以来的累计分红；改为等比复权之前下载，或下载时无法取得复权因子）："
+                     "每天的涨跌幅被压缩，分红越多压缩越多（如红利 ETF 510880 约为真实涨跌的三分之二），"
+                     "按百分比的止损、持仓收益率、波动率都会偏小。在「数据」页勾选「忽略本地已有数据，重新下载」后重新下载，可改为等比复权。",
+                     "{names}: additively adjusted data (adjusted price = raw price + cumulative dividends since listing; downloaded "
+                     "before the switch to proportional adjustment, or the adjustment factors were unavailable). Daily percentage moves "
+                     "are compressed, more so the more dividends were paid (about two thirds of the real move for the dividend ETF 510880), "
+                     "so percentage stop-losses, position returns and volatility come out too small. Re-download on the Data page "
+                     "(tick \"Ignore local data and re-download\") to get proportional adjustment."),
     "data.fallback": L("无法连接东方财富，已改用{prov}。", "Eastmoney was unreachable; used {prov} instead."),
-    "data.fallback_stock": L("新浪财经的股票数据采用等比复权，与东方财富（加法复权）口径不同，长期收益存在差异；可稍后勾选「忽略本地已有数据，重新下载」，重新尝试东方财富。",
-                             "Sina stock prices use proportional adjustment, unlike Eastmoney (additive), so long-term returns differ; "
-                             "you can re-download later to use Eastmoney."),
+    "data.additive": L("暂时无法取得复权因子（BaoStock / 新浪），这份数据是东方财富的加法复权，涨跌幅会被压缩；可稍后勾选「忽略本地已有数据，重新下载」改为等比复权。",
+                       "Adjustment factors (BaoStock / Sina) were unavailable, so this is Eastmoney's additive adjustment, which "
+                       "compresses percentage moves; re-download later to get proportional adjustment."),
+    "adj.additive": L("加法", "additive"),
     "bt.unadjusted": L("{names} 为不复权数据：除权除息日价格下跳，可能产生虚假的卖出信号，且分红不计入收益。"
                        "建议改用后复权数据，或在「资金与交易成本」中选择「现金分红」。",
                        "{names}: unadjusted data. Prices drop on ex-dates, which can trigger false sell signals, and dividends "

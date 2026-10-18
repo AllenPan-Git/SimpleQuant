@@ -9,6 +9,7 @@ from nicegui import run, ui
 
 from simplequant.data import SOURCES, ASSET_TYPES, RESAMPLE_RULES, fetch_to_library, library
 from simplequant.data.base import freq_label, EXTRA_COLUMNS
+from simplequant.data.ratio_adjust import is_additive
 from simplequant.data.csv_src import read_csv_any, is_snapshot
 from simplequant.data.tdx_local_src import DEFAULT_TDX_DIR
 from simplequant.rules import INDICATORS
@@ -107,10 +108,10 @@ def _download_tab(on_change):
                         meta = await run.io_bound(fetch_to_library, key, sym, start.value, end.value, freq=freq.value,
                                                   adjust=adj, name=name, force=force.value, **kwargs)
                         text = t("data.fetched", sym=sym, n=meta.rows, start=meta.start, end=meta.end)
-                        if sina_fallback(meta):        # 东方财富连不上，改用了新浪：说明一下，股票还要提醒复权口径不同
+                        if is_additive(meta):          # 取不到复权因子，退回了东方财富的加法复权
+                            _status(row, "check_circle", "text-warning", text, t("data.additive"), "text-sm sq-muted")
+                        elif sina_fallback(meta):      # 东方财富连不上，改用了新浪
                             note = t("data.fallback", prov=t(f"prov.{meta.extra['provider']}"))
-                            if meta.extra.get("asset") == "stock" and meta.adjust:
-                                note += t("data.fallback_stock")
                             _status(row, "check_circle", "text-warning", text, note, "text-sm sq-muted")
                         else:
                             _status(row, "check_circle", "text-positive", text)

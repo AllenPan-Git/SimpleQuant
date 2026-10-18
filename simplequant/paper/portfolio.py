@@ -55,7 +55,7 @@ def create_account(name: str, sleeves: list[dict], weights: dict[str, float], re
     spec = {"kind": "portfolio", "sleeves": frozen, "weights": {s["id"]: weights[s["id"]] / total for s in frozen},
             "rebalance": rebalance, "cost": COST}
     acc = PaperAccount(id=new_id(name), name=name, kind="portfolio", spec=spec, broker={"cash": float(cash)},
-                       start=start)
+                       start=start, adjust_method="ratio")
     acc.save()
     return acc
 
@@ -80,7 +80,7 @@ def refresh_data(acc: PaperAccount, store=None, done: set | None = None, calenda
     fetched = set()
     for s in acc.spec["sleeves"]:
         if s["kind"] in ("hold", "timing") and s["symbol"] not in fetched:
-            kw = {"asset": s["asset"]} if s.get("asset") else {}
+            kw = acc.fetch_kwargs(s.get("asset", ""), s.get("source", "akshare"))
             df = SOURCES[s.get("source", "akshare")].fetch(s["symbol"], hist_start, today, freq="1d", adjust="qfq", **kw)
             df.loc[:complete_through].to_parquet(acc.dir / "prices" / f"{s['symbol']}.parquet")
             fetched.add(s["symbol"])

@@ -248,15 +248,84 @@ def _normalize(df):
 
 
 def load_akshare(symbol, start, end, adjust, asset):
+    """
+    股票 / ETF 与 SimpleQuant 相同，用等比复权：东方财富不复权日线 × 复权因子
+    （东方财富自带的复权价是加法复权，每天的涨跌幅会被压缩）。股票因子来自 BaoStock，ETF 用新浪的累计分红
+    """
     import akshare as ak
     s, e = start.replace("-", ""), end.replace("-", "")
-    if asset == "etf":
-        raw = ak.fund_etf_hist_em(symbol=symbol, period="daily", start_date=s, end_date=e, adjust=adjust)
-    elif asset == "stock":
-        raw = ak.stock_zh_a_hist(symbol=symbol, period="daily", start_date=s, end_date=e, adjust=adjust)
-    else:
-        raw = ak.index_zh_a_hist(symbol=symbol, period="daily", start_date=s, end_date=e)
-    return _normalize(raw)
+    if asset == "index":
+        return _normalize(ak.index_zh_a_hist(symbol=symbol, period="daily", start_date=s, end_date=e))
+    get = ak.fund_etf_hist_em if asset == "etf" else ak.stock_zh_a_hist
+    if not adjust:
+        return _normalize(get(symbol=symbol, period="daily", start_date=s, end_date=e, adjust=""))
+    df = _normalize(get(symbol=symbol, period="daily", start_date="19900101" if asset == "etf" else s,
+                        end_date=e, adjust=""))
+    f = _etf_factor(symbol, df) if asset == "etf" else _stock_factor(symbol, df.index)
+    if adjust == "qfq":
+        f = f / f.iloc[-1]
+    for c in ("open", "high", "low", "close"):
+        df[c] = df[c] * f
+    return df.loc[start:end]
+
+
+def _steps(steps, dates):
+    steps = steps.dropna().sort_index()
+    steps = steps[~steps.index.duplicated(keep="last")]
+    return steps.reindex(dates.union(steps.index)).ffill().reindex(dates).fillna(1.0)
+
+
+def _stock_factor(symbol, dates):
+    import baostock as bs
+    prefix = "sh" if symbol[:1] in "569" else "bj" if symbol[:1] in "48" else "sz"
+    bs.login()
+    try:
+        rs = bs.query_adjust_factor(code=f"{prefix}.{symbol}", start_date="1990-01-01",
+                                    end_date=dates[-1].strftime("%Y-%m-%d"))
+        rows = []
+        while rs.error_code == "0" and rs.next():
+            rows.append(rs.get_row_data())
+        if rs.error_code != "0":
+            raise ConnectionError(rs.error_msg)
+    finally:
+        bs.logout()
+    adj = pd.DataFrame(rows, columns=rs.fields)
+    if adj.empty:
+        return pd.Series(1.0, index=dates)
+    return _steps(pd.Series(pd.to_numeric(adj["backAdjustFactor"]).values,
+                            index=pd.to_datetime(adj["dividOperateDate"])), dates)
+
+
+def _etf_factor(symbol, df):
+    """新浪复权表：每个日期起的累计每份分红 u；累计分红不变的一行是份额拆分 / 折算（比例按当天收盘跳空推算）"""
+    import json
+    import requests
+    sym = ("sh" if symbol[:1] in "569" else "sz") + symbol
+    r = requests.get(f"https://finance.sina.com.cn/realstock/company/{sym}/hfq.js", timeout=20,
+                     headers={"User-Agent": "Mozilla/5.0", "Referer": "https://finance.sina.com.cn/"})
+    if r.status_code == 404:
+        return pd.Series(1.0, index=df.index)
+    r.raise_for_status()
+    t = pd.DataFrame(json.loads(r.text[r.text.index("{"): r.text.rindex("}") + 1]).get("data") or [])
+    if t.empty or "u" not in t:
+        return pd.Series(1.0, index=df.index)
+    t["d"] = pd.to_datetime(t["d"], errors="coerce")
+    t = t[t["d"] > pd.Timestamp("1901-01-01")].set_index("d").sort_index()
+    u = pd.to_numeric(t["u"], errors="coerce").ffill().fillna(0.0)
+    u = u[~u.index.duplicated(keep="last")]
+    cash = u.diff().fillna(u)
+    close, prev = df["close"], df["close"].shift(1)
+    jump = pd.Series(1.0, index=close.index)
+    for d, c in cash.items():
+        i = close.index.searchsorted(d)
+        if i == 0 or i >= len(close):
+            continue
+        if abs(c) < 1e-9:                          # 拆分 / 折算
+            if close.index[i] == d and abs(prev.iloc[i] / close.iloc[i] - 1) >= 0.05:
+                jump.iloc[i] *= prev.iloc[i] / close.iloc[i]
+        elif c > 0:
+            jump.iloc[i] *= prev.iloc[i] / (prev.iloc[i] - c)
+    return jump.cumprod()
 
 
 def load_baostock(symbol, start, end, adjust):

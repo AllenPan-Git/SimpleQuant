@@ -20,7 +20,8 @@ class BaoStockSource(DataSource):
                     "Long intraday history for stocks (from ~2000); ETF intraday data is recent only. No 1-minute bars. "
                     "Stock daily bars include turnover, P/E, P/B and P/S.")
 
-    def fetch(self, symbol, start, end, freq="1d", adjust="hfq", **kwargs):
+    def fetch(self, symbol, start, end, freq="1d", adjust="hfq", with_raw=True, **kwargs):
+        """with_raw：复权日线附上不复权收盘价 raw_close（回测按真实股价凑整手，见 engine/base_strategy.py）"""
         import baostock as bs
 
         if freq not in _FREQ_MAP:
@@ -31,14 +32,14 @@ class BaoStockSource(DataSource):
         # 股票日线可带换手率与估值；ETF 请求这些字段会返回空表，此时退回基础字段
         with_factors = None if minute else basic + ",turn,peTTM,pbMRQ,psTTM"
 
-        def _query(fields):
+        def _query(fields, flag=None):
             lg = bs.login()
             if lg.error_code != "0":
                 raise ConnectionError(f"BaoStock login failed / 登录失败: {lg.error_msg}")
             try:
                 rs = bs.query_history_k_data_plus(code, fields, start_date=start, end_date=end,
                                                   frequency=_FREQ_MAP[freq],
-                                                  adjustflag=_ADJUST_MAP.get(adjust, "3"))
+                                                  adjustflag=flag or _ADJUST_MAP.get(adjust, "3"))
                 if rs.error_code != "0":
                     raise ConnectionError(f"BaoStock query failed / 查询失败: {rs.error_msg}")
                 rows = []
@@ -60,4 +61,15 @@ class BaoStockSource(DataSource):
             raw = raw.drop(columns=["date", "time"])
         else:
             raw = raw.rename(columns={"date": "datetime"})
-        return clip_dates(normalize(raw), start, end)
+        df = clip_dates(normalize(raw), start, end)
+        if adjust and with_raw and not minute:
+            df = attach_raw(df, with_retry(lambda: _query("date,close", flag="3")))
+        return df
+
+
+def attach_raw(df: pd.DataFrame, raw: pd.DataFrame) -> pd.DataFrame:
+    """附上不复权收盘价（raw：date / close 两列）；对不齐的日子留空，回测时这些 K 线按复权价凑整手"""
+    s = pd.Series(pd.to_numeric(raw["close"], errors="coerce").values, index=pd.to_datetime(raw["date"]))
+    df = df.copy()
+    df["raw_close"] = s[~s.index.duplicated(keep="last")].reindex(df.index).values
+    return df

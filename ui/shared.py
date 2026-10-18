@@ -122,6 +122,23 @@ TILE_HELP = {"benchmark_return": "help.benchmark", "trades": "help.trades", "pro
 
 
 # ---------------- 表格 ----------------
+def real_orders(orders: pd.DataFrame, prices: dict) -> pd.DataFrame:
+    """
+    成交记录换算成真实股数、真实成交价（行情带不复权收盘价 raw_close 时；成交额不变）。
+    回测内部用复权价，K 线图上的买卖点也画在复权价上，所以只在成交明细表里换算
+    """
+    df = orders.copy()
+    for name, p in prices.items():
+        if "raw_close" not in p.columns or df.empty:
+            continue
+        f = (p["close"] / p["raw_close"]).where(p["raw_close"] > 0)
+        hit = df["symbol"] == name
+        fac = f.reindex(pd.DatetimeIndex(df.loc[hit, "time"])).fillna(1.0).values
+        df.loc[hit, "size"] = (df.loc[hit, "size"] * fac).round(2)
+        df.loc[hit, "price"] = df.loc[hit, "price"] / fac
+    return df
+
+
 def orders_table(orders: pd.DataFrame, lg: str) -> pd.DataFrame:
     df = orders.copy()
     df["side"] = df["side"].map(lambda s: tr(f"side.{s}", lg))

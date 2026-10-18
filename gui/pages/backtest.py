@@ -24,7 +24,7 @@ from gui.components import (require_data, data_selector, strategy_selector, brok
 from gui.layout import frame, page_title
 from gui.widgets import df_table, fmt_table, plot, notice, download_btn
 from ui.charts import equity_chart, strategy_chart, batch_scatter
-from ui.shared import (export_script, export_filename, platform_export, orders_table, trades_table,
+from ui.shared import (export_script, export_filename, platform_export, orders_table, real_orders, trades_table,
                        logs_table, pct, num, asset_names, data_source_text, sources_line)
 
 
@@ -532,7 +532,7 @@ def _results(BT: dict, exp_menu):
             if res.orders.empty:
                 ui.label(t("bt.no_orders")).classes("sq-muted")
             else:
-                tbl = orders_table(res.orders, lg)
+                tbl = orders_table(real_orders(res.orders, res.prices), lg)
                 df_table(fmt_table(tbl, {t("col.price"): "{:.3f}", t("col.value"): "{:,.2f}",
                                          t("col.commission"): "{:.2f}"}), rows_per_page=20)
                 download_btn(t("bt.download_orders"), lambda: tbl.to_csv(index=False).encode("utf-8-sig"),

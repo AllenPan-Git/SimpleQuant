@@ -417,7 +417,7 @@ def test_adjust_method_new_accounts_ratio_old_accounts_additive():
                          "2024-01-02", assets=[{"source": "akshare", "symbol": "510300", "asset": "etf", "name": "510300"}])
     assert acc.adjust_method == "ratio"
     assert acc.fetch_kwargs("etf") == {"asset": "etf", "ratio": True}
-    assert acc.fetch_kwargs("", "baostock") == {}                           # 其他数据源不认识这个参数
+    assert acc.fetch_kwargs("", "baostock") == {"with_raw": True}
     path = acc.dir / "account.json"
     data = json.loads(path.read_text(encoding="utf-8"))
     del data["adjust_method"]

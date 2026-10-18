@@ -159,7 +159,9 @@ def test_sina_stock_proportional_adjustment(fake_akshare, monkeypatch):
     monkeypatch.setattr(sina, "float_shares", lambda sym: pd.Series([1e8], index=pd.to_datetime(["2000-01-01"])))
     src = AKShareSource()
     hfq = src.fetch("600519", "2024-01-01", "2024-01-31", adjust="hfq", asset="stock")
-    assert hfq.attrs["provider"] == "sina+factors"
+    assert hfq.attrs["provider"] == "sina+factors" and hfq["raw_close"].eq(4.05).all()
+    old = src.fetch("600519", "2024-01-01", "2024-01-31", adjust="hfq", asset="stock", ratio=False)
+    assert "raw_close" not in old                                            # 旧模拟盘账户：仍按复权价凑整手
     assert hfq["close"].round(2).tolist() == [4.05, 4.05, 8.1, 8.1, 8.1]
     qfq = src.fetch("600519", "2024-01-01", "2024-01-31", adjust="qfq", asset="stock")
     assert qfq["close"].round(3).tolist() == [2.025, 2.025, 4.05, 4.05, 4.05]
@@ -382,6 +384,7 @@ def test_eastmoney_raw_times_factors(monkeypatch):
     hfq = src.fetch("600519", "2024-01-01", "2024-01-31", adjust="hfq", asset="stock")
     assert hfq.attrs["provider"] == "eastmoney+factors" and hfq.attrs["adjust_method"] == "ratio"
     assert hfq["close"].round(2).tolist() == [10.0, 10.0, 9.9, 9.9, 10.89]
+    assert hfq["raw_close"].tolist() == close                                # 附上不复权收盘价（按真实股价凑整手）
     assert calls[-1] == ("600519", "20240101", "")                           # 取的是不复权行情
 
     # ETF：不复权行情取全部历史（因子从上市第一天起算）；1/4 除息 1.0：因子 × 10 / 9
@@ -399,6 +402,7 @@ def test_eastmoney_raw_times_factors(monkeypatch):
     monkeypatch.setattr(sina, "kline", down)
     add = src.fetch("600519", "2024-01-01", "2024-01-31", adjust="hfq", asset="stock")
     assert add.attrs["provider"] == "eastmoney" and add.attrs["adjust_method"] == "additive"
+    assert "raw_close" not in add
     assert add["close"].round(2).tolist() == [10.1, 10.1, 9.1, 9.1, 10.0]
 
 
@@ -429,3 +433,11 @@ def test_is_additive():
     assert not is_additive(m(adjust=""))                                     # 不复权
     assert not is_additive(m(source="baostock"))
     assert not is_additive(m(asset="index"))
+
+
+def test_baostock_attach_raw():
+    from simplequant.data.baostock_src import attach_raw
+    df = pd.DataFrame({"close": [30.0, 31.0, 32.0]}, index=pd.bdate_range("2024-01-02", periods=3))
+    raw = pd.DataFrame({"date": ["2024-01-02", "2024-01-03", "2024-01-03"], "close": ["10", "10.3", "10.4"]})
+    out = attach_raw(df, raw)
+    assert out["raw_close"].iloc[:2].tolist() == [10.0, 10.4] and pd.isna(out["raw_close"].iloc[2])

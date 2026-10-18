@@ -241,6 +241,7 @@ def stock(symbol: str, adjust: str = "") -> pd.DataFrame:
     f = as_of(table["f"], df.index)
     if adjust == "qfq":
         f = f / float(table["f"].dropna().iloc[-1])           # 最新价格等于真实价格
+    df["raw_close"] = df["close"]
     for c in ("open", "high", "low", "close"):
         df[c] = df[c] * f
     return df.dropna(subset=["close"])

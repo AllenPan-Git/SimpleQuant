@@ -234,13 +234,14 @@ DATA_CODE = r'''
 COLUMN_ALIASES = {"日期": "date", "开盘": "open", "最高": "high", "最低": "low", "收盘": "close", "成交量": "volume",
                   "换手率": "turnover", "turn": "turnover", "peTTM": "pe", "pbMRQ": "pb", "psTTM": "ps"}
 EXTRA = ["turnover", "pe", "pb", "ps"]
+RAW = ["raw_close"]          # 不复权收盘价：按真实股价凑整手（与 SimpleQuant 相同）
 
 
 def _normalize(df):
     df = df.rename(columns={c: COLUMN_ALIASES.get(c, c) for c in df.columns})
     df["date"] = pd.to_datetime(df["date"])
     df = df.set_index("date").sort_index()
-    cols = ["open", "high", "low", "close", "volume"] + [c for c in EXTRA if c in df.columns]
+    cols = ["open", "high", "low", "close", "volume"] + [c for c in EXTRA + RAW if c in df.columns]
     df = df[cols].apply(pd.to_numeric, errors="coerce")
     df = df.drop(columns=[c for c in EXTRA if c in df.columns and df[c].isna().all()])
     df = df[~df.index.duplicated(keep="last")].dropna(subset=["close"])
@@ -264,6 +265,7 @@ def load_akshare(symbol, start, end, adjust, asset):
     f = _etf_factor(symbol, df) if asset == "etf" else _stock_factor(symbol, df.index)
     if adjust == "qfq":
         f = f / f.iloc[-1]
+    df["raw_close"] = df["close"]
     for c in ("open", "high", "low", "close"):
         df[c] = df[c] * f
     return df.loc[start:end]
@@ -341,7 +343,17 @@ def load_baostock(symbol, start, end, adjust):
             while rs.error_code == "0" and rs.next():
                 rows.append(rs.get_row_data())
             if rows:
-                return _normalize(pd.DataFrame(rows, columns=rs.fields))
+                df = _normalize(pd.DataFrame(rows, columns=rs.fields))
+                if adjust:                            # 附上不复权收盘价（按真实股价凑整手）
+                    rs = bs.query_history_k_data_plus(f"{prefix}.{symbol}", "date,close", start_date=start,
+                                                      end_date=end, frequency="d", adjustflag="3")
+                    raw = []
+                    while rs.error_code == "0" and rs.next():
+                        raw.append(rs.get_row_data())
+                    s = pd.DataFrame(raw, columns=rs.fields)
+                    s = pd.Series(pd.to_numeric(s["close"], errors="coerce").values, index=pd.to_datetime(s["date"]))
+                    df["raw_close"] = s[~s.index.duplicated(keep="last")].reindex(df.index).values
+                return df
         raise ValueError(f"no data for {symbol}")
     finally:
         bs.logout()
@@ -356,8 +368,8 @@ def load(item):
 
 
 class Feed(bt.feeds.PandasData):
-    lines = tuple(EXTRA)
-    params = tuple((c, -1) for c in EXTRA)
+    lines = tuple(EXTRA + RAW)
+    params = tuple((c, -1) for c in EXTRA + RAW)
 '''
 
 RUN_CODE = r'''
@@ -384,7 +396,7 @@ def run(prices: dict):
         filler.broker = cerebro.broker
         cerebro.broker.set_filler(filler)
     for name, df in prices.items():
-        extras = {c: c for c in EXTRA if c in df.columns}
+        extras = {c: c for c in EXTRA + RAW if c in df.columns}
         cerebro.adddata(Feed(dataname=df, name=name, datetime=None, openinterest=-1, **extras), name=name)
     t0 = tuple(n for n in T0_NAMES if n in prices) if BROKER["t_plus_1"] else ()
     cerebro.addstrategy(Strategy, t_plus_1=BROKER["t_plus_1"], **({"t0_names": t0} if t0 else {}), **STRATEGY_PARAMS)

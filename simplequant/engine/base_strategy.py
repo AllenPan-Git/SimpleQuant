@@ -53,8 +53,21 @@ class BaseStrategy(bt.Strategy):
     def has_pending(self, data) -> bool:
         return data in self._pending
 
+    @staticmethod
+    def real_factor(data) -> float:
+        """
+        一股真实股票 = 多少「行情股」的倒数，即 复权价 / 不复权价（行情带 raw_close 列时）。
+        整手按真实股价凑：茅台这类后复权价远高于实际的，按复权价凑会多出很多钱一手、最低佣金也对不上。
+        没有不复权价（旧数据、CSV、分钟线）时为 1，按行情价凑整手
+        """
+        raw = getattr(data.lines, "raw_close", None)
+        if raw is None:
+            return 1.0
+        r, c = raw[0], data.close[0]
+        return c / r if r == r and r > 0 and c > 0 else 1.0
+
     def order_target_pct(self, data, pct: float, reason: tuple = ("", {})):
-        """把 data 的持仓调整到账户总资产的 pct（0~1），数量按整手取整"""
+        """把 data 的持仓调整到账户总资产的 pct（0~1），数量按真实股数整手取整（见 real_factor）"""
         if self.has_pending(data):
             return None
         if self.p.trade_start is not None and data.datetime.date(0) < self.p.trade_start:
@@ -62,37 +75,40 @@ class BaseStrategy(bt.Strategy):
         price = data.close[0]
         if price <= 0:
             return None
+        f = self.real_factor(data)
+        real = price / f                               # 真实股价
         lot = self.p.lot_size
-        target = int(self.broker.getvalue() * pct / price / lot) * lot
+        target = int(self.broker.getvalue() * pct / real / lot) * lot      # 真实股数
         current = self.getposition(data).size
-        delta = target - current
+        held = round(current * f, 6)                   # 持有的真实股数（分红再投资后可能不是整手）
 
         if pct > 0 and current == 0 and target < lot:
-            # 分到的资金连一手都不够（常见于高价股，或后复权抬高了价格）：不下单，只提示一次
+            # 分到的资金连一手都不够（常见于高价股）：不下单，只提示一次
             if data not in self._lot_warned:
                 self._lot_warned.add(data)
                 self.lot_too_big.add(data._name)
-                self.log("log.lot_too_big", data, name=data._name, cost=price * lot)
+                self.log("log.lot_too_big", data, name=data._name, cost=real * lot)
             return None
 
-        if delta > 0:
-            affordable = int(self.broker.getcash() / (price * (1 + self.p.cash_buffer)) / lot) * lot
-            delta = min(delta, affordable)
+        # 买卖都按整手：持仓与目标相差不到一手时不动（避免为零头付最低佣金）；清仓时全部卖出
+        if target - held >= lot:
+            affordable = int(self.broker.getcash() / (real * (1 + self.p.cash_buffer)) / lot) * lot
+            delta = min(int((target - held) / lot) * lot, affordable)
             if delta >= lot:
                 self.log("log.buy", data, name=data._name, size=delta, reason=reason)
-                return self._track(data, self.buy(data=data, size=delta))
-        elif delta < 0 and current > 0:
+                return self._track(data, self.buy(data=data, size=delta / f))
+        elif current > 0 and (target <= 0 or held - target >= lot):
             if not self.can_sell(data):
                 self.log("log.t1", data, name=data._name)
                 return None
             self.log("log.sell", data, name=data._name, reason=reason)
             if target <= 0:
                 return self._track(data, self.close(data=data))
-            return self._track(data, self.sell(data=data, size=-delta))
+            return self._track(data, self.sell(data=data, size=int((held - target) / lot) * lot / f))
         return None
 
     def order_add_pct(self, data, pct: float, reason: tuple = ("", {})):
-        """在现有持仓上再买入账户总资产 pct（0~1）的金额，数量按整手取整、不超过可用资金（分批建仓的加仓）"""
+        """在现有持仓上再买入账户总资产 pct（0~1）的金额，数量按真实股数整手取整、不超过可用资金（分批建仓的加仓）"""
         if self.has_pending(data):
             return None
         if self.p.trade_start is not None and data.datetime.date(0) < self.p.trade_start:
@@ -100,14 +116,16 @@ class BaseStrategy(bt.Strategy):
         price = data.close[0]
         if price <= 0:
             return None
+        f = self.real_factor(data)
+        real = price / f
         lot = self.p.lot_size
-        size = int(self.broker.getvalue() * pct / price / lot) * lot
-        affordable = int(self.broker.getcash() / (price * (1 + self.p.cash_buffer)) / lot) * lot
+        size = int(self.broker.getvalue() * pct / real / lot) * lot
+        affordable = int(self.broker.getcash() / (real * (1 + self.p.cash_buffer)) / lot) * lot
         size = min(size, affordable)
         if size < lot:
             return None
         self.log("log.buy", data, name=data._name, size=size, reason=reason)
-        return self._track(data, self.buy(data=data, size=size))
+        return self._track(data, self.buy(data=data, size=size / f))
 
     def _track(self, data, order):
         if order is not None:

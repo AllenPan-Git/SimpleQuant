@@ -72,6 +72,8 @@ class AKShareSource(DataSource):
             raise ValueError(f"Unknown asset type / 未知品种类型: {asset}")
 
         df = clip_dates(normalize(pd.DataFrame(raw)), start, end)
+        if not ratio and "raw_close" in df:      # 旧模拟盘账户：保持原来按复权价凑整手
+            df = df.drop(columns="raw_close")
         if df.empty:
             raise ValueError(f"No data for {symbol} in {start} ~ {end} / {symbol} 在该区间内无数据")
         df.attrs["provider"] = provider          # 实际使用的接口，存进数据库元数据供界面显示

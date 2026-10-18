@@ -18,7 +18,7 @@ PRICES = ["open", "high", "low", "close"]
 
 
 def apply(df: pd.DataFrame, factor: pd.Series, adjust: str) -> pd.DataFrame:
-    """不复权行情（标准列名）× 因子；adjust = hfq / qfq"""
+    """不复权行情（标准列名）× 因子；adjust = hfq / qfq。附上不复权收盘价 raw_close"""
     f = factor.reindex(df.index)
     if f.isna().any():
         raise ValueError("adjustment factor does not cover the data / 复权因子没有覆盖全部日期")
@@ -27,6 +27,7 @@ def apply(df: pd.DataFrame, factor: pd.Series, adjust: str) -> pd.DataFrame:
     out = df.copy()
     for c in PRICES:
         out[c] = df[c] * f
+    out["raw_close"] = df["close"]
     return out
 
 

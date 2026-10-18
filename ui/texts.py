@@ -692,8 +692,12 @@ TEXT.update({
     "lib.factors": L("包含因子列：{cols}", "Factor columns: {cols}"),
     "lib.no_factors": L("不含估值或换手率因子列（通过 BaoStock 下载股票日线可获得换手率、PE、PB、PS）",
                         "No valuation or turnover columns (download stock daily data from BaoStock to obtain turnover, P/E, P/B and P/S)"),
-    "bt.lot_too_big": L("{names}：出现买入信号，但资金不足以买入一手（100 股），因此未成交。建议提高初始资金，或改用前复权 / 不复权数据——后复权价格可能远高于实际成交价，会高估一手所需资金。",
-                        "{names}: buy signals occurred, but the capital was insufficient for one 100-share lot, so no shares were bought. Increase the initial capital, or use forward-adjusted or unadjusted data: back-adjusted prices can be far above actual trading prices and overstate the cost of a lot."),
+    "bt.lot_too_big": L("{names}：出现买入信号，但资金不足以买入一手（100 股），因此未成交。建议提高初始资金。"
+                        "一手所需资金按真实股价计算；较早下载、没有不复权价的数据按复权价计算，后复权价可能远高于实际，会高估一手所需资金，在「数据」页重新下载即可改正。",
+                        "{names}: buy signals occurred, but the capital was insufficient for one 100-share lot, so no shares were bought. "
+                        "Increase the initial capital. The cost of a lot uses the real share price; data downloaded earlier without "
+                        "unadjusted prices uses the adjusted price instead, which can be far above the real price and overstate the "
+                        "cost, so re-download it on the Data page to fix this."),
     "bt.pct_warm": L("规则用到估值历史百分位：区间开始前的数据只用来计算指标、不交易，收益和交易从 {start} 开始计算。",
                      "The rule uses valuation percentiles: data before the start date is used only to compute indicators, "
                      "with no trading; returns and trades are counted from {start}."),

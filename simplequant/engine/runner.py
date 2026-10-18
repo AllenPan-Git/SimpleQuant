@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import backtrader as bt
 import pandas as pd
 
-from ..data.base import EXTRA_COLUMNS
+from ..data.base import EXTRA_COLUMNS, RAW_CLOSE
 from ..bonds.rates import MACRO_COLUMNS
 from ..data.cash_dividend import has_columns, events_of
 from .base_strategy import ORDER_COLUMNS, TRADE_COLUMNS
@@ -32,10 +32,13 @@ class BrokerConfig:
     price_limit: bool = True       # 日线按涨跌停与停牌限制成交（见 limits.py）
 
 
+FEED_COLUMNS = EXTRA_COLUMNS + MACRO_COLUMNS + [RAW_CLOSE]
+
+
 class FactorPandasData(bt.feeds.PandasData):
-    """在 OHLCV 之外带上可选的因子列（估值、换手、利率）；数据里没有的列为 NaN"""
-    lines = tuple(EXTRA_COLUMNS + MACRO_COLUMNS)
-    params = tuple((c, -1) for c in EXTRA_COLUMNS + MACRO_COLUMNS)
+    """在 OHLCV 之外带上可选的因子列（估值、换手、利率）与不复权收盘价；数据里没有的列为 NaN"""
+    lines = tuple(FEED_COLUMNS)
+    params = tuple((c, -1) for c in FEED_COLUMNS)
 
 
 def _feed(df: pd.DataFrame, name: str) -> bt.feeds.PandasData:
@@ -47,7 +50,7 @@ def _feed(df: pd.DataFrame, name: str) -> bt.feeds.PandasData:
         tf, comp = bt.TimeFrame.Minutes, max(int(step / pd.Timedelta(minutes=1)), 1)
     else:
         tf, comp = bt.TimeFrame.Seconds, max(int(step / pd.Timedelta(seconds=1)), 1)
-    extras = {c: c for c in EXTRA_COLUMNS + MACRO_COLUMNS if c in df.columns}
+    extras = {c: c for c in FEED_COLUMNS if c in df.columns}
     return FactorPandasData(dataname=df, name=name, timeframe=tf, compression=comp,
                             datetime=None, openinterest=-1, **extras)
 
@@ -153,12 +156,19 @@ def _pending_orders(strat) -> list[dict]:
     for d, order in strat._pending.items():
         reason = next((kw.get("reason") for _, key, kw in reversed(strat.logs)
                        if key in ("log.buy", "log.sell") and kw.get("name") == d._name), None)
-        out.append({"symbol": d._name, "side": "buy" if order.isbuy() else "sell", "size": float(abs(order.created.size)),
-                    "ref_price": float(d.close[0]), "reason": reason})
+        f = strat.real_factor(d)                     # 换算成真实股数、真实价格（数量 × 价格不变）
+        out.append({"symbol": d._name, "side": "buy" if order.isbuy() else "sell",
+                    "size": round(float(abs(order.created.size)) * f, 4), "ref_price": float(d.close[0]) / f,
+                    "reason": reason})
     return out
 
 
 def _positions(strat) -> list[dict]:
-    return [{"symbol": d._name, "size": float(strat.getposition(d).size), "price": float(d.close[0]),
-             "cost": float(strat.getposition(d).price)}
-            for d in strat.datas if strat.getposition(d).size]
+    out = []
+    for d in strat.datas:
+        pos = strat.getposition(d)
+        if pos.size:
+            f = strat.real_factor(d)
+            out.append({"symbol": d._name, "size": round(float(pos.size) * f, 4), "price": float(d.close[0]) / f,
+                        "cost": float(pos.price) / f})
+    return out

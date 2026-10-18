@@ -5,6 +5,7 @@
     index   : DatetimeIndex，名为 "datetime"，升序、无重复
     columns : open, high, low, close, volume（float）
               以及可选的 EXTRA_COLUMNS：turnover 换手率(%)、pe 市盈率TTM、pb 市净率、ps 市销率TTM
+              和 RAW_CLOSE：复权数据附带的不复权收盘价（回测按真实股价凑整手，见 engine/base_strategy.py）
 """
 
 from abc import ABC, abstractmethod
@@ -16,6 +17,7 @@ from ..i18n import L, pick
 
 STD_COLUMNS = ["open", "high", "low", "close", "volume"]
 EXTRA_COLUMNS = ["turnover", "pe", "pb", "ps"]
+RAW_CLOSE = "raw_close"
 
 # 频率代码 -> 名称
 FREQ_LABELS = {
@@ -91,7 +93,7 @@ def normalize(df: pd.DataFrame) -> pd.DataFrame:
     if missing:
         raise KeyError(f"Missing required columns / 数据缺失关键列: {missing}")
 
-    extras = [c for c in EXTRA_COLUMNS if c in df.columns]
+    extras = [c for c in EXTRA_COLUMNS + [RAW_CLOSE] if c in df.columns]
     df = df[STD_COLUMNS + extras].apply(pd.to_numeric, errors="coerce")
     df = df.drop(columns=[c for c in extras if df[c].isna().all()])   # 整列为空的因子视为没有
     df = df[~df.index.duplicated(keep="last")].sort_index()

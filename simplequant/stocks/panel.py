@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
+from . import universe as universe_mod
 from .store import StockStore, UNIVERSES
 
 PRICE_FIELDS = ["open", "high", "low", "close", "raw_open", "raw_close", "raw_preclose", "adj_factor"]
@@ -42,6 +43,7 @@ class Panel:
     exit: pd.DataFrame | None = None     # 当天开盘必须卖出（可转债强赎公告后、退市前），bool
     exit_dates: dict = field(default_factory=dict)   # 代码 -> 必须卖出的第一天（模拟盘判断明天要不要卖）
     extra_filters: dict = field(default_factory=dict)   # 选股条件名 -> fn(panel, 值) -> bool DataFrame
+    bench_total_return: bool = False     # 股票池基准是全收益指数（False：价格指数，不含分红，超额收益偏高）
 
     @property
     def calendar(self) -> pd.DatetimeIndex:
@@ -104,6 +106,7 @@ def build_panel(store: StockStore, universe: str, start: str, end: str) -> Panel
     uni = store.load_universe(universe)
     bench = store.load_index(UNIVERSES[universe]["index"])
     calendar = bench.loc[start:end].index
+    tr = universe_mod.total_return(universe, calendar, store)
     codes = sorted(uni.loc[uni["date"] <= pd.Timestamp(end), "code"].unique())
     codes = [c for c in codes if store.has(c)]
 
@@ -141,9 +144,9 @@ def build_panel(store: StockStore, universe: str, start: str, end: str) -> Panel
     div_codes, div_patched = add_dividends(frames, store, codes, calendar, is_st)
     return Panel(fields=frames, member=membership(uni, calendar, codes), tradable=tradable, is_st=is_st,
                  listed_days=listed_days, can_buy=can_buy, can_sell=can_sell,
-                 benchmark=bench.loc[calendar, "close"], names=names,
+                 benchmark=bench.loc[calendar, "close"] if tr is None else tr, names=names,
                  industry=store.load_industry().reindex(codes), has_fin=has_fin, div_codes=div_codes,
-                 div_patched=div_patched)
+                 div_patched=div_patched, bench_total_return=tr is not None)
 
 
 def add_dividends(frames: dict, store: StockStore, codes: list[str], calendar: pd.DatetimeIndex,

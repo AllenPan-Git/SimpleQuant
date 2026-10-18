@@ -29,7 +29,8 @@ from simplequant.stocks.walkforward import (walk_forward_selection, selection_tu
                                             REBALANCE_CHOICES, TARGET_METRICS as WF_TARGETS, MAX_COMBOS as WF_MAX)
 from gui import state, history
 from gui.common import t, p, lang
-from gui.components import broker_settings, metric_tiles, metric_tile, walkforward_results, credibility_box
+from gui.components import broker_settings, metric_tiles, metric_tile, walkforward_results, credibility_box, \
+    bench_label
 from gui.layout import frame, page_title
 from gui.plan_io import import_button, export_selection_bytes, plan_filename, plan_check_notice
 from simplequant import plan as plan_mod
@@ -45,6 +46,7 @@ CB_SEL_DEFAULT = [{"key": "cb_double_low", "weight": 1.0, "direction": -1}]     
 KIND_KEYS = ("factors", "excl_st", "min_list", "dividend", "ni", "ns")
 
 _PANELS: OrderedDict = OrderedDict()    # (股票池, 起, 止, 数据版本) → 面板；最多留 3 个
+_TR_TRIED: set = set()                  # 本次启动已尝试补下载全收益指数的股票池
 
 
 def store() -> StockStore:
@@ -142,7 +144,10 @@ async def spec_panel(SP, ctx, spec: dict):
 
 def get_panel(universe: str, start: str, end: str):
     st = store()
-    key = (universe, start, end, data_version(st, universe))
+    if U.kind(universe) == "stock" and universe not in _TR_TRIED:     # 每次启动只试一次，官网连不上时不反复等
+        _TR_TRIED.add(universe)
+        st.ensure_tr_index(UNIVERSES[universe]["index"])
+    key =(universe, start, end, data_version(st, universe))
     if key in _PANELS:
         _PANELS.move_to_end(key)
         return _PANELS[key]
@@ -1665,10 +1670,11 @@ def _selection_results(SP, ctx):
     _explain(SP, rspec, res)
     if ml_info:
         _ml_results(ml_info, rspec)
-    bench_label = t("cb.bench_label") if U.kind(rspec["universe"]) == "cb" else \
-        t("sp.bench_label", name=p(UNIVERSES[rspec["universe"]]["label"]))
+    tr = (SP.get("result_panel") or panel).bench_total_return
+    if U.kind(rspec["universe"]) == "stock" and not tr:
+        notice(t("sp.bench_price_note"), "info", "warning")
     with ui.card().classes("w-full p-2"):
-        plot(equity_chart(res.equity, lg, bench_label))
+        plot(equity_chart(res.equity, lg, bench_label(rspec["universe"], tr)))
 
     with ui.tabs().classes("w-full").props("align=left no-caps") as tabs:
         tab_h = ui.tab("h", t("sp.tab_holdings"))

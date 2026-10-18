@@ -57,6 +57,21 @@ def test_selection_daily_progression_equals_full_backtest():
     assert acc.data_through == panel.calendar[-1].date().isoformat()
 
 
+def test_selection_benchmark_history_rewritten_from_replay():
+    """基准只取决于指数数据：换成全收益指数后，已记录的基准整列按重放结果重写，曲线不会在切换那天断开"""
+    panel = make_panel(days=200)
+    cal = panel.calendar.append(pd.bdate_range(panel.calendar[-1] + pd.Timedelta(days=1), periods=10))
+    start = panel.calendar[50].date().isoformat()
+    acc = create_account("基准测试", SPEC, BrokerConfig(), start, universe="test")
+    run_account(acc, cal, panel=truncate_panel(panel, panel.calendar[150]))
+    tr = panel.benchmark * np.linspace(1, 1.1, len(panel.benchmark))     # 含分红的指数涨得更多
+    panel.benchmark = tr
+    full = run_selection(panel, SPEC, BrokerConfig(), start=start)
+    run_account(load_account(acc.id), cal, panel=panel)
+    nav = load_account(acc.id).nav()
+    np.testing.assert_allclose(nav["benchmark"].values, full.equity["benchmark"].values, rtol=1e-9)
+
+
 def test_selection_signal_on_month_end_is_executed_next_day():
     panel = make_panel(days=300)
     cal = panel.calendar.append(pd.bdate_range(panel.calendar[-1] + pd.Timedelta(days=1), periods=40))

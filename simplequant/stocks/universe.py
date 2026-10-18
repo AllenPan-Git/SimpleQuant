@@ -36,6 +36,19 @@ def load_benchmark(universe: str, store: StockStore | None = None) -> pd.DataFra
     return (store or StockStore()).load_index(UNIVERSES[universe]["index"])
 
 
+def total_return(universe: str, calendar: pd.DatetimeIndex, store: StockStore | None = None) -> pd.Series | None:
+    """全收益指数收盘价（对齐到交易日历）；没下载、或没覆盖整个区间（如官网当天没连上）时返回 None，退回价格指数"""
+    code = UNIVERSES.get(universe, {}).get("tr")
+    if not code or not len(calendar):
+        return None
+    try:
+        tr = (store or StockStore()).load_index(code)["close"]
+    except FileNotFoundError:
+        return None
+    tr = tr.reindex(calendar)
+    return tr if tr.notna().all() else None
+
+
 def build(universe: str, start: str, end: str, store: StockStore | None = None):
     if kind(universe) == "cb":
         from ..bonds.panel import build_cb_panel
@@ -52,6 +65,7 @@ def data_files(universe: str, store: StockStore | None = None) -> list:
     st = store or StockStore()
     return [st.root / "manifest.json", st.root / "universe" / f"{universe}.parquet",
             st.root / "index" / f"{UNIVERSES[universe]['index']}.parquet",
+            st.root / "index" / f"{UNIVERSES[universe]['tr']}.parquet",
             st.root / "fin_manifest.json", st.root / "industry.parquet", st.root / "div_manifest.json",
             st.root / "rights.parquet", st.root / "basics.parquet"]
 

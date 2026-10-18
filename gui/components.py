@@ -316,6 +316,15 @@ def fallback_warning(by_id: dict, ids: list) -> str | None:
     return t("bt.sina_stock", names="、".join(names) if lang() == "zh" else ", ".join(names)) if names else None
 
 
+def bench_label(universe: str, total_return: bool) -> str:
+    """选股 / 模拟盘资产曲线的基准名：股票池是全收益指数，没下载到时退回价格指数（不含分红）"""
+    from simplequant.stocks import UNIVERSES, universe as U
+    if U.kind(universe) == "cb":
+        return t("cb.bench_label")
+    name = p(UNIVERSES[universe]["label"])
+    return t("sp.bench_label", name=name) if total_return else t("sp.bench_label_price", name=name)
+
+
 def percentile_warnings(by_id: dict, pick: DataPick, spec: dict) -> list[tuple[str, str]]:
     """
     规则用到估值历史百分位、区间开始前还有数据时：这些数据只用来预热（见 warm_start），先说明一句；

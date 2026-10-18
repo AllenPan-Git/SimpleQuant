@@ -360,6 +360,54 @@ def test_store_incremental_update_and_panel(tmp_path):
     assert p.codes == ["sh.600000", "sz.000001"] and p.member.all().all()
     assert p["close"].shape == (len(cal), 2) and p.can_buy.all().all()
     assert (p.listed_days.iloc[-1] > 0).all()
+    assert not p.bench_total_return and p.benchmark.equals(idx["close"])     # 没有全收益指数：退回价格指数
+
+    tr = pd.DataFrame({"close": np.linspace(1, 2.1, len(cal))}, index=cal)
+    tr.to_parquet(tmp_path / "index" / "H00300.parquet")
+    p = build_panel(st, "hs300", "2024-01-01", "2024-03-29")
+    assert p.bench_total_return and p.benchmark.tolist() == tr["close"].tolist()
+    tr.iloc[:-1].to_parquet(tmp_path / "index" / "H00300.parquet")        # 少最后一天（官网当天没连上）
+    assert not build_panel(st, "hs300", "2024-01-01", "2024-03-29").bench_total_return
+
+
+def test_update_index_also_fetches_total_return(tmp_path, monkeypatch):
+    """更新价格指数（交易日历）时顺带下载全收益指数；全收益指数下载失败不影响价格指数"""
+    from simplequant.stocks import store as store_mod
+
+    def fake_query(fn, code, fields, start_date, end_date, frequency):
+        days = pd.bdate_range(start_date, end_date)
+        return pd.DataFrame({"date": days.strftime("%Y-%m-%d"), "open": "1", "close": "2"})
+    monkeypatch.setattr(store_mod, "_query", fake_query)
+    got = []
+
+    def tr_fetch(code, start, end):
+        got.append(code)
+        days = pd.bdate_range(start, end)
+        return pd.DataFrame({"date": days.strftime("%Y-%m-%d"), "open": 1.0, "close": 3.0})
+    st = StockStore(tmp_path, login=lambda: None, tr_fetcher=tr_fetch)
+    st.update_index("sh.000905", "2024-01-01", "2024-03-29")
+    assert got == ["H00905"] and st.load_index("H00905")["close"].eq(3.0).all()
+    st.update_index("sh.000905", "2024-03-01", "2024-04-30")
+    assert st.load_index("H00905").index[0] == pd.Timestamp("2024-01-01")    # 与已有的合并
+
+    def broken(code, start, end):
+        raise ConnectionError("csindex down")
+    st = StockStore(tmp_path / "b", login=lambda: None, tr_fetcher=broken)
+    st.update_index("sh.000300", "2024-01-01", "2024-03-29")
+    assert (tmp_path / "b" / "index" / "sh.000300.parquet").exists()
+    assert not (tmp_path / "b" / "index" / "H00300.parquet").exists()
+
+    # 之后增量更新（模拟盘只更新最近一段）：全收益指数从价格指数第一天补齐，而不是只下最近一段
+    st.tr_fetcher = tr_fetch
+    st.update_index("sh.000300", "2024-03-01", "2024-04-30")
+    assert st.load_index("H00300").index[0] == pd.Timestamp("2024-01-01")
+    # 升级后第一次载入：只有价格指数时补下载；已覆盖则不再下载
+    (tmp_path / "b" / "index" / "H00300.parquet").unlink()
+    got.clear()
+    assert st.ensure_tr_index("sh.000300") == "" and got == ["H00300"]
+    assert st.load_index("H00300").index.equals(st.load_index("sh.000300").index)
+    st.ensure_tr_index("sh.000300")
+    assert got == ["H00300"]
 
 
 def test_fast_feed_matches_backtrader_pandas_feed(panel, monkeypatch):

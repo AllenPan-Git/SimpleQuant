@@ -3,7 +3,7 @@
 
 目录：<项目>/data_cache/stocks/
     daily/<code>.parquet     个股日线：不复权 OHLC + 后复权 OHLC + 成交、换手、估值、停牌、ST、涨跌幅
-    index/<code>.parquet     指数日线（基准 + 交易日历）
+    index/<code>.parquet     指数日线：价格指数（BaoStock，交易日历）+ 全收益指数（中证指数官网，基准）
     universe/<name>.parquet  指数历史成分股快照（按月查询），用于避免幸存者偏差
     basics.parquet           股票名称、上市/退市日期
     manifest.json            每只股票最近一次检查更新的日期
@@ -13,6 +13,7 @@
 """
 
 import json
+import logging
 import datetime as dt
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from concurrent.futures.process import BrokenProcessPool
@@ -23,12 +24,15 @@ import pandas as pd
 from ..i18n import L
 from ..paths import CACHE_DIR
 
+log = logging.getLogger(__name__)
+
 ROOT = CACHE_DIR / "stocks"
 
 UNIVERSES = {
-    "hs300": {"label": L("沪深300", "CSI 300"), "index": "sh.000300", "query": "query_hs300_stocks"},
-    "zz500": {"label": L("中证500", "CSI 500"), "index": "sh.000905", "query": "query_zz500_stocks"},
-    "sz50": {"label": L("上证50", "SSE 50"), "index": "sh.000016", "query": "query_sz50_stocks"},
+    # index 是价格指数（不含分红），只用作交易日历；基准用全收益指数 tr（分红再投资，与后复权的策略同口径）
+    "hs300": {"label": L("沪深300", "CSI 300"), "index": "sh.000300", "tr": "H00300", "query": "query_hs300_stocks"},
+    "zz500": {"label": L("中证500", "CSI 500"), "index": "sh.000905", "tr": "H00905", "query": "query_zz500_stocks"},
+    "sz50": {"label": L("上证50", "SSE 50"), "index": "sh.000016", "tr": "H00016", "query": "query_sz50_stocks"},
     # 可转债：数据在 simplequant/bonds（东方财富 / 新浪），基准为中证转债指数；统一入口见 universe.py
     "cb": {"label": L("可转债（全市场）", "Convertible bonds (all)"), "index": "000832", "kind": "cb"},
 }
@@ -123,10 +127,21 @@ def _fetch_one(code: str, start: str, end: str) -> tuple[str, pd.DataFrame | Non
         return code, None, f"{type(e).__name__}: {e}"
 
 
+def _fetch_tr(code: str, start: str, end: str) -> pd.DataFrame:
+    from ..data.akshare_src import csindex
+    return csindex(code, start, end)
+
+
+def tr_code(index_code: str) -> str | None:
+    """价格指数代码 → 对应的全收益指数代码"""
+    return next((u["tr"] for u in UNIVERSES.values() if u["index"] == index_code and "tr" in u), None)
+
+
 class StockStore:
-    def __init__(self, root: Path = ROOT, fetcher=_fetch_one, login=_login, worker_init=_login_quietly):
+    def __init__(self, root: Path = ROOT, fetcher=_fetch_one, login=_login, worker_init=_login_quietly,
+                 tr_fetcher=_fetch_tr):
         self.root = Path(root)
-        self.fetcher, self.login, self.worker_init = fetcher, login, worker_init
+        self.fetcher, self.login, self.worker_init, self.tr_fetcher = fetcher, login, worker_init, tr_fetcher
         for sub in ("daily", "index", "universe"):
             (self.root / sub).mkdir(parents=True, exist_ok=True)
 
@@ -444,7 +459,44 @@ class StockStore:
             old = pd.read_parquet(path)
             df = pd.concat([old[~old.index.isin(df.index)], df]).sort_index()
         df.to_parquet(path)
+        if tr_code(code):
+            self.update_tr_index(tr_code(code), self._tr_from(tr_code(code), df.index[0], start), end)
         return df
+
+    def _tr_from(self, code: str, first: pd.Timestamp, start: str) -> str:
+        """全收益指数从哪天下载：还没有、或比价格指数（交易日历）开始得晚时，从价格指数第一天补齐"""
+        path = self.root / "index" / f"{code}.parquet"
+        if path.exists() and pd.read_parquet(path).index[0] <= first:
+            return start
+        return first.strftime("%Y-%m-%d")
+
+    def ensure_tr_index(self, index_code: str) -> str:
+        """全收益指数没覆盖价格指数的整个区间时补下载（升级后第一次载入、上次官网没连上）；已覆盖则什么都不做"""
+        code, path = tr_code(index_code), self.root / "index" / f"{index_code}.parquet"
+        if not code or not path.exists():
+            return ""
+        cal = pd.read_parquet(path).index
+        tr = self.root / "index" / f"{code}.parquet"
+        if tr.exists() and pd.read_parquet(tr).index.intersection(cal).size == cal.size:
+            return ""
+        return self.update_tr_index(code, cal[0].strftime("%Y-%m-%d"), cal[-1].strftime("%Y-%m-%d"))
+
+    def update_tr_index(self, code: str, start: str, end: str) -> str:
+        """全收益指数（中证指数官网）；失败只记日志、返回错误，回测退回价格指数并提示"""
+        try:
+            raw = pd.DataFrame(self.tr_fetcher(code, start, end))
+            if raw.empty:
+                raise ValueError("no data")
+            df = raw.assign(date=pd.to_datetime(raw["date"])).set_index("date")[["close"]].astype(float)
+        except Exception as e:  # noqa: BLE001
+            log.warning("total return index %s: %s", code, e)
+            return f"{type(e).__name__}: {e}"
+        path = self.root / "index" / f"{code}.parquet"
+        if path.exists():
+            old = pd.read_parquet(path)
+            df = pd.concat([old[~old.index.isin(df.index)], df]).sort_index()
+        df.to_parquet(path)
+        return ""
 
     def load_index(self, code: str) -> pd.DataFrame:
         return pd.read_parquet(self.root / "index" / f"{code}.parquet")

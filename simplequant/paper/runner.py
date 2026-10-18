@@ -209,7 +209,11 @@ def run_account(acc: PaperAccount, calendar: pd.DatetimeIndex | None = None, pri
     eq = res.equity[NAV_COLUMNS]
     new_nav = eq[eq.index > through] if through is not None else eq
     nav = pd.concat([nav, new_nav]) if len(nav) else new_nav.copy()
-    acc.save_nav(nav[~nav.index.duplicated(keep="first")].sort_index())
+    nav = nav[~nav.index.duplicated(keep="first")].sort_index()
+    if acc.kind == "selection":
+        # 基准只取决于指数数据，按重放结果整列重写（股票池基准改成全收益指数之前，记录的是价格指数）
+        nav.loc[nav.index.isin(eq.index), "benchmark"] = eq["benchmark"]
+    acc.save_nav(nav)
 
     # 3. 今日信号与持仓
     execute_on = next_trading_day(calendar, last)

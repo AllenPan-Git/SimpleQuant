@@ -180,7 +180,7 @@ def test_update_index_keeps_earlier_days(tmp_path, monkeypatch):
         days = pd.bdate_range(start_date, end_date)
         return pd.DataFrame({"date": days.strftime("%Y-%m-%d"), "open": "1", "close": "2"})
     monkeypatch.setattr(store_mod, "_query", fake_query)
-    st = StockStore(root=tmp_path, login=lambda: None)
+    st = StockStore(root=tmp_path, login=lambda: None, tr_fetcher=lambda *a: pd.DataFrame())
     st.update_index("sh.000300", "2019-01-01", "2023-12-31")
     st.update_index("sh.000300", "2022-01-01", "2024-06-30")
     idx = st.load_index("sh.000300")

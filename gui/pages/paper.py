@@ -18,7 +18,7 @@ from simplequant.strategies import TEMPLATES
 from simplequant.strategies.code_strategy import explain_error
 from gui import state
 from gui.common import t, p, lang
-from gui.components import broker_settings, metric_tile, dividend_notices
+from gui.components import broker_settings, metric_tile, dividend_notices, bench_label
 from gui.layout import frame, page_title
 from gui.widgets import df_table, fmt_table, plot, notice, download_btn, LogBox
 from ui.charts import equity_chart
@@ -337,8 +337,7 @@ def _account_view(PP, run_accounts, redraw):
                 eq["drawdown"] = eq["value"] / eq["value"].cummax() - 1
                 bench = None
                 if acc.kind == "selection":
-                    bench = t("cb.bench_label") if U.kind(acc.universe) == "cb" else \
-                        t("sp.bench_label", name=p(UNIVERSES[acc.universe]["label"]))
+                    bench = bench_label(acc.universe, U.total_return(acc.universe, eq.index[1:]) is not None)
                 with ui.card().classes("w-full p-2"):
                     plot(equity_chart(eq, lg, bench))
             else:

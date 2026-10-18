@@ -1206,7 +1206,14 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
     "sp.took": L("用时 {s} 秒", "took {s}s"),
     "sp.turnover_help": L("每年卖出金额 ÷ 平均资产。1× 表示组合每年约完整换手一次", "Annual sell value ÷ average assets; 1× means the portfolio turns over about once a year"),
     "sp.n_rebalances": L("调仓次数", "Rebalances"),
-    "sp.bench_label": L("基准（{name}指数）", "Benchmark ({name} index)"),
+    "sp.bench_label": L("基准（{name}全收益指数）", "Benchmark ({name} total return index)"),
+    "sp.bench_label_price": L("基准（{name}价格指数，不含分红）", "Benchmark ({name} price index, excl. dividends)"),
+    "sp.bench_price_note": L("全收益指数（中证指数官网）没有下载到或不完整，基准改用价格指数：不含分红，"
+                             "而策略收益含分红再投资，超额收益每年约偏高一个股息率（沪深300 约 2%）。下次启动软件或更新数据时会再下载。",
+                             "The total return index (CSI website) is missing or incomplete, so the benchmark falls back "
+                             "to the price index. It excludes dividends while the strategy reinvests them, so excess "
+                             "return is overstated by roughly the dividend yield each year (about 2% for CSI 300). "
+                             "It will be downloaded again on the next start or data update."),
     "sp.tab_holdings": L("每期选股", "Picks per period"),
     "sp.picked": L("入选股票", "Selected stocks"),
     "sp.skipped": L("有 {n} 个调仓日因可选股票不足（因子计算需要历史数据）而跳过", "{n} rebalance dates were skipped due to insufficient eligible stocks (factors require history)"),

@@ -91,7 +91,7 @@ def _slim(panel: Panel, codes: list[str]) -> Panel:
     fields = {f: panel[f][codes] for f in ("open", "high", "low", "close", "volume", "raw_close")}
     return Panel(fields=fields, member=panel.member[codes], tradable=panel.tradable[codes], is_st=panel.is_st[codes],
                  listed_days=panel.listed_days[codes], can_buy=panel.can_buy[codes], can_sell=panel.can_sell[codes],
-                 benchmark=panel.benchmark, names={})
+                 benchmark=panel.benchmark, names={}, bench_total_return=panel.bench_total_return)
 
 
 def _run_all(panel, tasks, broker, start, workers, progress):

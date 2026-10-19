@@ -1488,6 +1488,16 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
     "set.home_page": L("项目主页", "Project page"),
     "set.issues": L("问题反馈", "Report an issue"),
     "set.changelog": L("更新记录", "Changelog"),
+    "sup.eyebrow": L("第 {n} 次回测", "Backtest No. {n}"),
+    "sup.title": L("觉得 SimpleQuant 有用吗？", "Finding SimpleQuant useful?"),
+    "sup.body": L("SimpleQuant 免费开源，由作者业余维护。如果它对您有帮助，欢迎在 GitHub 上点一颗星，让更多人看到它；"
+                  "也可以通过爱发电支持后续开发。",
+                  "SimpleQuant is free, open source and maintained in spare time. If it helps you, please consider "
+                  "starring it on GitHub so more people can find it, or supporting its development on Afdian."),
+    "sup.star": L("在 GitHub 上点星", "Star on GitHub"),
+    "sup.sponsor": L("在爱发电支持", "Support on Afdian"),
+    "sup.later": L("以后再说", "Maybe later"),
+    "sup.never": L("不再提示", "Don't ask again"),
     "set.version": L("版本 {v}", "Version {v}"),
     "set.data_dir": L("数据（行情、模拟盘账户、自定义因子等）保存在本机的数据目录中。", "Data (prices, paper accounts, custom factors, etc.) is stored in the data folder on this computer."),
     "set.open_folder": L("打开所在文件夹", "Open folder"),

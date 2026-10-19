@@ -4,6 +4,7 @@ from .baostock_src import BaoStockSource
 from .tdx_local_src import TdxLocalSource
 from .csv_src import CSVSource, RESAMPLE_RULES, snapshot_to_bars, resample_bars
 from . import library
+from .ratio_adjust import is_additive
 
 SOURCES: dict[str, DataSource] = {s.key: s for s in (AKShareSource(), BaoStockSource(), TdxLocalSource(), CSVSource())}
 
@@ -39,4 +40,21 @@ def fetch_to_library(source_key: str, symbol: str, start: str, end: str, freq: s
             extra[k] = df.attrs[k]
     meta = library.DatasetMeta(id=ds_id, name=name or symbol, symbol=symbol, source=source_key,
                                freq=freq, adjust=adjust, extra=extra)
-    return library.save(df, meta)
+    meta = library.save(df, meta)
+    supersede(meta)
+    return meta
+
+
+def supersede(meta, lib_dir=None):
+    """
+    同一数据源、代码、周期、复权的旧数据，区间完全在新数据之内的删掉（重新下载、更新到最新时不留重复的旧数据，
+    回测页记住的旧数据自动改用新的）；新数据是加法复权而旧的不是时保留旧的。返回删掉的 id
+    """
+    lib_dir = lib_dir or library.LIB_DIR
+    gone = []
+    for m in library.list_datasets(lib_dir):
+        if (m.id != meta.id and (m.source, m.symbol, m.freq, m.adjust) == (meta.source, meta.symbol, meta.freq, meta.adjust)
+                and meta.start <= m.start and m.end <= meta.end and not (is_additive(meta) and not is_additive(m))):
+            library.replace(m.id, meta.id, lib_dir)
+            gone.append(m.id)
+    return gone

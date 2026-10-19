@@ -279,6 +279,7 @@ def test_download_drops_unfinished_intraday_bar(tmp_path, monkeypatch):
     monkeypatch.setitem(SOURCES, "akshare", Fake())
     monkeypatch.setattr(cal_mod, "load_calendar", lambda *a, **k: df.index)
     monkeypatch.setattr(cal_mod, "latest_expected_day", lambda cal: pd.Timestamp("2026-09-28"))
+    monkeypatch.setattr(library, "LIB_DIR", tmp_path)
     for f in (library.save, library.exists, library.list_datasets):
         monkeypatch.setattr(f, "__defaults__", (tmp_path,))
     meta = fetch_to_library("akshare", "510300", "2026-08-01", "2026-09-29", adjust="hfq", asset="etf")
@@ -441,3 +442,48 @@ def test_baostock_attach_raw():
     raw = pd.DataFrame({"date": ["2024-01-02", "2024-01-03", "2024-01-03"], "close": ["10", "10.3", "10.4"]})
     out = attach_raw(df, raw)
     assert out["raw_close"].iloc[:2].tolist() == [10.0, 10.4] and pd.isna(out["raw_close"].iloc[2])
+
+
+def test_download_replaces_older_dataset_it_covers(tmp_path, monkeypatch):
+    """重新下载 / 更新到最新：同一数据源、代码、周期、复权且区间在新数据之内的旧数据被替换，界面记住的旧 id 改用新的；
+    区间更长的、复权不同的保留；新数据退回加法复权时不替换等比的旧数据"""
+    from simplequant.data import SOURCES, fetch_to_library
+    from simplequant.paper import calendar as cal_mod
+    from ui.shared import dataset_label
+    full = make_prices(n=200, start="2025-01-02")
+    method = {"v": "ratio"}
+
+    class Fake:
+        def fetch(self, symbol, start, end, **kw):
+            out = full.loc[start:end].copy()
+            out.attrs.update(provider="eastmoney+dividends" if method["v"] == "ratio" else "eastmoney", adjust_method=method["v"])
+            return out
+    monkeypatch.setitem(SOURCES, "akshare", Fake())
+    monkeypatch.setattr(cal_mod, "latest_expected_day", lambda cal: full.index[-1])
+    monkeypatch.setattr(library, "LIB_DIR", tmp_path)
+    for f in (library.save, library.exists, library.list_datasets, library.load, library.delete):
+        monkeypatch.setattr(f, "__defaults__", (tmp_path,))
+
+    def old(start, end, adjust="hfq", extra=None):          # 1.5.0 之前下载的：没有 adjust_method = 加法
+        m = library.DatasetMeta(id=library.make_id("akshare", "510300", "1d", adjust, start, end), name="510300 沪深300ETF",
+                                symbol="510300", source="akshare", freq="1d", adjust=adjust,
+                                extra=extra or {"asset": "etf", "provider": "sina+dividends"})
+        return library.save(full.loc[start:end], m)
+    a = old("2025-02-03", "2025-06-30")
+    longer = old("2025-01-02", "2025-06-30")                # 开始得更早：新数据没覆盖，保留
+    qfq = old("2025-02-03", "2025-06-30", adjust="qfq")
+    assert "后复权（加法）" in dataset_label(a, "zh") and "前复权（加法）" in dataset_label(qfq, "zh")
+
+    new = fetch_to_library("akshare", "510300", "2025-02-01", "2025-09-30", adjust="hfq", asset="etf")
+    ids = {m.id for m in library.list_datasets()}
+    assert a.id not in ids and {new.id, longer.id, qfq.id} <= ids
+    assert library.resolve(a.id) == new.id and library.resolve(longer.id) == longer.id
+    assert "加法" not in dataset_label(new, "zh")
+
+    method["v"] = "additive"                                # 取不到复权因子退回加法：不替换等比的
+    newer = fetch_to_library("akshare", "510300", "2025-02-01", "2025-10-15", adjust="hfq", asset="etf")
+    assert {new.id, newer.id} <= {m.id for m in library.list_datasets()}
+    method["v"] = "ratio"                                   # 再下载一次等比：两份都被替换，旧 id 一路指到最新
+    latest = fetch_to_library("akshare", "510300", "2025-01-02", "2025-10-20", adjust="hfq", asset="etf")
+    assert {m.id for m in library.list_datasets()} == {latest.id, qfq.id}
+    assert library.resolve(a.id) == latest.id and library.resolve(new.id) == latest.id

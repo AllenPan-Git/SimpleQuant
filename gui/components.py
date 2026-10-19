@@ -53,7 +53,8 @@ class DataPick:
 def data_selector(by_id: dict, key: str, on_change) -> DataPick:
     """选数据 + 日期区间；key 区分页面（其他页面可在 state.STATE[f"{key}_ids"] 预选数据）"""
     lg = lang()
-    ids = [i for i in state.STATE.get(f"{key}_ids", [next(iter(by_id))]) if i in by_id]
+    ids = [library.resolve(i) for i in state.STATE.get(f"{key}_ids", [next(iter(by_id))])]   # 被新下载替换的改用新数据
+    ids = [i for i in dict.fromkeys(ids) if i in by_id]
     pick = DataPick(ids=ids)
 
     with section(t("bt.data"), "storage"):

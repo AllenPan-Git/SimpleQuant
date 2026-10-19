@@ -153,7 +153,7 @@ def _unique_name(name: str, spec: dict) -> str:
     return cand
 
 
-def _restore_broker(key: str, plan: dict, default: dict):
+def restore_broker(key: str, plan: dict, default: dict):
     """把方案里的资金与费率写进页面记住的设置（state.STATE[f"{key}_broker"]，见 components.broker_settings）"""
     b = plan["broker"]
     saved = state.STATE.setdefault(f"{key}_broker", default)
@@ -176,7 +176,7 @@ def apply(plan: dict, metas: list):
     name = _unique_name(plan["name"], spec)
     strategies.save_strategy(name, spec)
     S = state.STATE
-    _restore_broker("bt", plan, {"cash": 100_000, "preset": "etf", "t1": True, "slippage": 5.0, "custom": {}})
+    restore_broker("bt", plan, {"cash": 100_000, "preset": "etf", "t1": True, "slippage": 5.0, "custom": {}})
     S["bt_ids"] = [m.id for m in metas]
     S["bt_range"] = tuple(dt.date.fromisoformat(d) for d in plan["range"])
     S["bt_strategy"] = f"saved:{name}"
@@ -308,7 +308,7 @@ def _import_factors(plan: dict) -> dict:
 
 def apply_selection(plan: dict):
     """还原多因子选股页的设置并自动回测"""
-    from gui.pages.selection import sp_state, apply_spec, broker_key
+    from gui.pages.selection import sp_state, apply_spec, broker_key, broker_default
     from simplequant.stocks import universe as U
     mapping = _import_factors(plan)
     spec = copy.deepcopy(plan["strategy"])
@@ -322,8 +322,7 @@ def apply_selection(plan: dict):
     SP["ranges"][uni] = (dt.date.fromisoformat(start), dt.date.fromisoformat(end))
     SP["plan_warm"] = (uni, start, plan["warmup_start"])
     kind = U.kind(uni)
-    _restore_broker(broker_key(kind), plan, {"cash": 1_000_000, "preset": "bond" if kind == "cb" else "stock",
-                                             "t1": True, "slippage": 5.0, "custom": {}})
+    restore_broker(broker_key(kind), plan, broker_default(kind))
     SP["result"] = None
     SP["plan_check"] = None
     SP["autorun"] = {"name": plan["name"], "result": plan.get("result")}

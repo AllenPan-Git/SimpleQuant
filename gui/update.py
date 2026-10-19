@@ -10,6 +10,7 @@ from simplequant import __version__
 from simplequant.paths import DATA_ROOT
 from simplequant.update import HOME_PAGE, ISSUES_PAGE, CHANGELOG_PAGE
 from simplequant.update.client import UPDATER
+from gui import support
 from gui.common import t
 from gui.widgets import folder_btn, notice
 
@@ -141,6 +142,7 @@ def about():
     with ui.row().classes("items-center gap-4 text-sm"):    # 原生窗口中 new_tab 链接由系统浏览器打开
         for key, url in (("set.home_page", HOME_PAGE), ("set.issues", ISSUES_PAGE), ("set.changelog", CHANGELOG_PAGE)):
             ui.link(t(key), url, new_tab=True).mark(f"link:{key}")
+        support.links()
     with ui.row().classes("items-center gap-4"):
         ui.button(t("upd.check"), icon="update", on_click=UPDATER.check_async) \
             .props("outline no-caps").mark("update_check")

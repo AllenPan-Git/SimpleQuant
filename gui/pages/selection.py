@@ -27,12 +27,12 @@ from simplequant.bonds.panel import CB_FILTERS, CB_DEFAULT_FILTERS
 from simplequant.system import open_folder
 from simplequant.stocks.walkforward import (walk_forward_selection, selection_tunables, selection_grid,
                                             REBALANCE_CHOICES, TARGET_METRICS as WF_TARGETS, MAX_COMBOS as WF_MAX)
-from gui import state, history
+from gui import state, history, support
 from gui.common import t, p, lang
 from gui.components import broker_settings, metric_tiles, metric_tile, walkforward_results, credibility_box, \
     bench_label
 from gui.layout import frame, page_title
-from gui.plan_io import import_button, export_selection_bytes, plan_filename, plan_check_notice
+from gui.plan_io import import_button, export_selection_bytes, plan_filename, plan_check_notice, restore_broker
 from simplequant import plan as plan_mod
 from gui.widgets import section, df_table, fmt_table, plot, notice, download_btn, Progress, code_editor, LogBox
 from ui.charts import ic_chart, quantile_chart, group_bar, equity_chart, corr_heatmap
@@ -1322,7 +1322,12 @@ def _backtest_form(SP, ctx, rebuild):
                 .props(DENSE).classes("grow")
 
             def load_saved():
-                apply_spec(SP, saved[pick_saved.value], pick_saved.value)
+                name = pick_saved.value
+                apply_spec(SP, saved[name], name)
+                broker = strategies.strategy_brokers().get(name)
+                if broker:                      # 较早保存的策略没记资金与费率：保持当前设置
+                    kind = U.kind(SP["universe"])
+                    restore_broker(broker_key(kind), {"broker": broker}, broker_default(kind))
                 rebuild()
             ui.button(t("strat.load"), on_click=load_saved).props("outline no-caps").mark("sp_load_saved")
 
@@ -1450,8 +1455,8 @@ def _backtest_form(SP, ctx, rebuild):
     preview = ui.label().classes("sq-code w-full")
     with ui.row().classes("w-full items-end gap-3"):
         ui.input(t("strat.name"), value=SP["name"], placeholder=t("sp.name_ph"),
-                        on_change=lambda e: set_sp("name", e.value or "")).props("outlined dense").classes("grow")
-        save_btn = ui.button(t("strat.save"), icon="save", on_click=lambda: save()).props("outline no-caps")
+                        on_change=lambda e: set_sp("name", e.value or "")).props("outlined dense").classes("grow")             .mark("sp_name")
+        save_btn = ui.button(t("strat.save"), icon="save", on_click=lambda: save()).props("outline no-caps")             .mark("sp_save")
         run_btn = ui.button(t("bt.run"), icon="play_arrow", on_click=lambda: do_run()).props("unelevated no-caps") \
             .mark("sp_run")
         with ui.button(t("exp.menu"), icon="ios_share").props("outline no-caps") as exp_btn:
@@ -1490,7 +1495,7 @@ def _backtest_form(SP, ctx, rebuild):
                 notice(t("sp.need_div"), "warning", "warning")
 
     def save():
-        strategies.save_strategy(SP["name"].strip(), current_spec(SP))
+        strategies.save_strategy(SP["name"].strip(), {**current_spec(SP), "broker": asdict(make_broker())})
         ui.notify(t("strat.saved", name=SP["name"].strip()), type="positive")
 
     async def do_run():
@@ -1511,6 +1516,7 @@ def _backtest_form(SP, ctx, rebuild):
             uni = p(UNIVERSES[spec["universe"]]["label"])
             title = SP["name"].strip() or t("sel.kind")
             history.add("sel", title, f"{uni} · {ctx.start} ~ {ctx.end}", res.metrics, data=uni, strategy=title)
+            support.after_run()
         except Exception as ex:  # noqa: BLE001
             SP["result"] = None
             ui.notify(t("bt.failed", e=ex), type="negative", multi_line=True)
@@ -2091,6 +2097,11 @@ def _walkforward(SP, ctx):
 def broker_key(kind: str) -> str:
     """股票与可转债的资金和费率分开记（可转债默认用债券费率）"""
     return "sp_cb" if kind == "cb" else "sp"
+
+
+def broker_default(kind: str) -> dict:
+    """页面还没记过资金与费率时的初始值（与回测标签页的 broker_settings 一致）"""
+    return {"cash": 1_000_000, "preset": "bond" if kind == "cb" else "stock", "t1": True, "slippage": 5.0, "custom": {}}
 
 
 def _sp_broker(kind: str = "stock"):

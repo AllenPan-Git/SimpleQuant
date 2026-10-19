@@ -14,7 +14,7 @@ from simplequant.engine.credibility import check_backtest, check_phase
 from simplequant.engine.phase import run_timing, timing_cycle, phases
 from simplequant.engine.native_plot import render as render_native, MAX_BARS as NATIVE_MAX_BARS
 from simplequant.export import PLATFORMS
-from gui import state, history
+from gui import state, history, support
 from gui.plan_io import import_button, export_bytes, plan_filename, plan_check_notice
 from simplequant import plan as plan_mod
 from gui.common import t, p, lang
@@ -395,6 +395,7 @@ def _remember(BT: dict, by_id: dict, pick, strat: dict):
                          "broker": dict(state.STATE.get("bt_broker", {}))},
                 data=data, strategy=name)
     BT["time"] = history.recent()[0]["time"]
+    support.after_run()
 
 
 def _span(index) -> str:

@@ -14,6 +14,7 @@ HOME_PAGE = f"https://github.com/{REPO}"
 RELEASES_PAGE = f"{HOME_PAGE}/releases"
 ISSUES_PAGE = f"{HOME_PAGE}/issues"
 CHANGELOG_PAGE = f"{HOME_PAGE}/blob/main/CHANGELOG.md"
+SPONSOR_PAGE = "https://afdian.com/a/allengit"          # 爱发电主页；留空时界面只显示「GitHub 打星」
 # 返回 GitHub「最新发布」接口格式（tag_name / body / html_url / assets[].name, browser_download_url）的地址
 SOURCES = [f"https://api.github.com/repos/{REPO}/releases/latest"]
 if os.environ.get("SIMPLEQUANT_UPDATE_SOURCE"):          # 测试用：指向本机的模拟服务器（签名照样验证）

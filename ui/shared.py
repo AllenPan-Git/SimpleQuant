@@ -34,8 +34,10 @@ ADJUST = {"hfq": "adj.hfq", "qfq": "adj.qfq", "": "adj.none"}
 
 # ---------------- 格式化 ----------------
 def dataset_label(m: library.DatasetMeta, lg: str) -> str:
-    # 非后复权的在线数据标出复权方式，同一代码的两份数据才分得清（CSV 导入的复权方式未知，不标）
+    # 非后复权、加法复权的在线数据标出复权方式，同一代码的两份数据才分得清（CSV 导入的复权方式未知，不标）
     adj = f" · {tr(ADJUST.get(m.adjust, 'adj.none'), lg)}" if m.adjust != "hfq" and m.source != "csv" else ""
+    if is_additive(m):
+        adj = f" · {adjust_text(m, lg)}"
     return f"{m.name} · {freq_label(m.freq, lg)}{adj} · {m.start}~{m.end} · {tr('src.' + m.source, lg)}"
 
 
@@ -45,10 +47,15 @@ def data_source_text(m: library.DatasetMeta, lg: str) -> str:
     src = tr(f"prov.{prov}", lg) if prov else tr("src." + m.source, lg)
     if m.source == "csv":
         return src
+    return f"{src} · {adjust_text(m, lg)}"
+
+
+def adjust_text(m: library.DatasetMeta, lg: str) -> str:
+    """复权方式，加法复权的注明（如「后复权（加法）」）"""
     adj = tr(ADJUST.get(m.adjust, 'adj.none'), lg)
     if is_additive(m):
         adj += f"（{tr('adj.additive', lg)}）" if lg == "zh" else f" ({tr('adj.additive', lg)})"
-    return f"{src} · {adj}"
+    return adj
 
 
 def sina_fallback(m: library.DatasetMeta) -> bool:

@@ -188,17 +188,28 @@ def save_strategy(name: str, spec: dict, store_dir: Path = STORE_DIR) -> Path:
     return path
 
 
-def list_strategies(store_dir: Path = STORE_DIR) -> dict[str, dict]:
+def _read_all(store_dir: Path) -> dict[str, dict]:
+    """文件名 → 文件内容（含 name；选股策略可能带 broker）"""
     if not store_dir.exists():
         return {}
     out = {}
     for p in sorted(store_dir.glob("*.json")):
         try:
-            spec = json.loads(p.read_text(encoding="utf-8"))
-            out[spec.pop("name", p.stem)] = spec
+            d = json.loads(p.read_text(encoding="utf-8"))
+            out[d.pop("name", p.stem)] = d
         except json.JSONDecodeError:
             continue
     return out
+
+
+def list_strategies(store_dir: Path = STORE_DIR) -> dict[str, dict]:
+    """名字 → 策略描述（不含保存时一起记下的资金与费率，见 strategy_brokers）"""
+    return {n: {k: v for k, v in d.items() if k != "broker"} for n, d in _read_all(store_dir).items()}
+
+
+def strategy_brokers(store_dir: Path = STORE_DIR) -> dict[str, dict]:
+    """名字 → 保存时的资金与费率（asdict(BrokerConfig)，选股页保存时写入）；没记的策略不在其中"""
+    return {n: d["broker"] for n, d in _read_all(store_dir).items() if isinstance(d.get("broker"), dict)}
 
 
 def delete_strategy(name: str, store_dir: Path = STORE_DIR) -> None:

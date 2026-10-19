@@ -44,7 +44,8 @@ def isolated(tmp_path, monkeypatch):
     """每个测试：界面状态清空；保存的策略写到临时目录"""
     state.reset()
     d = tmp_path / "strategies"
-    for fn in (strategies.save_strategy, strategies.list_strategies, strategies.delete_strategy):
+    for fn in (strategies.save_strategy, strategies.list_strategies, strategies.delete_strategy,
+               strategies.strategy_brokers):
         monkeypatch.setattr(fn, "__defaults__", (d,))
     from simplequant.stocks import custom_factors
     monkeypatch.setattr(custom_factors, "FACTOR_DIR", tmp_path / "factors")
@@ -63,6 +64,7 @@ def lib_dir(tmp_path, monkeypatch):
     d = tmp_path / "lib"
     for fn in (library.save, library.load, library.exists, library.list_datasets, library.delete):
         monkeypatch.setattr(fn, "__defaults__", (d,))
+    monkeypatch.setattr(library, "LIB_DIR", d)             # 替换旧数据（replace / resolve）调用时才读目录
     return d
 
 
@@ -480,6 +482,38 @@ async def test_backtest_run_and_results(user: User, lib_dir):
             break
         await asyncio.sleep(0.05)
     assert state.STATE["bt"]["native_png"][1:4] == b"PNG"             # PNG 文件头
+
+
+async def test_support_dialog_after_runs(user: User, lib_dir):
+    """第 FIRST_ASK 次回测后弹「支持 SimpleQuant」；点「不再提示」后不再弹"""
+    from nicegui import app
+    from gui import support
+    _save_prices()
+    g = app.storage.general
+    g["runs"] = support.FIRST_ASK - 1
+    await user.open("/backtest")
+    user.find(marker="bt_strategy").elements.pop().set_value("tpl:sma_cross")
+
+    async def run_once():
+        state.STATE.pop("bt", None)
+        user.find(marker="run").click()
+        for _ in range(100):
+            if state.STATE.get("bt", {}).get("result") is not None:
+                break
+            await asyncio.sleep(0.05)
+        await settle()
+
+    await run_once()
+    await user.should_see("觉得 SimpleQuant 有用吗？")
+    await user.should_see(marker="link:sup.star")
+    await user.should_see(marker="link:sup.sponsor")
+    user.find(marker="support_never").click()
+    await settle()
+    assert g["support_done"] and g["runs"] == support.FIRST_ASK
+    g["support_next"] = 0                                 # 就算到了次数，也不再弹
+    await run_once()
+    assert g["runs"] == support.FIRST_ASK + 1
+    await user.should_not_see("觉得 SimpleQuant 有用吗？")
 
 
 async def test_backtest_phase_check(user: User, lib_dir):
@@ -1182,7 +1216,8 @@ async def test_selection_load_saved_cb_strategy_switches_universe(user: User):
     strategies.save_strategy("转债双低", {
         "kind": "selection", "universe": "cb", "factors": [{"key": "cb_double_low", "weight": 1, "direction": -1}],
         "top_n": 15, "rebalance": "monthly", "position_pct": 95,
-        "filters": {"exclude_st": False, "min_list_days": 0, "max_price": 120.0, "min_amount": None}})
+        "filters": {"exclude_st": False, "min_list_days": 0, "max_price": 120.0, "min_amount": None},
+        "broker": {"cash": 50_000.0, "commission": 0.00005, "min_commission": 1.0, "stamp_duty": 0.0}})
     SP = await _open_selection(user)
     user.find(marker="sp_load_saved").click()
     assert await _wait(lambda: (state.STATE.get("sp_panel_key") or (None,))[0] == "cb", n=1200)
@@ -1190,6 +1225,35 @@ async def test_selection_load_saved_cb_strategy_switches_universe(user: User):
     assert user.find(marker="sp_universe").elements.pop().value == "cb"
     assert SP["top_n"] == 15 and SP["cbf"]["max_price"] == 120 and SP["cbf"]["min_amount"] is None
     assert [f["key"] for f in SP["factors"]] == ["cb_double_low"]
+    b = state.STATE["sp_cb_broker"]                                      # 资金与费率一起恢复
+    assert b["cash"] == 50_000 and b["custom"][b["preset"]]["commission"] == 0.5
+
+
+@needs_cb
+async def test_selection_saved_strategy_keeps_cash(user: User):
+    """保存时记下资金与费率；改了资金再载入，恢复成保存时的；较早保存、没记资金的策略不动当前资金"""
+    SP = await _open_cb(user)
+
+    async def reopen():                                   # 重新打开页面，等面板载入完
+        state.STATE["sp_panel_key"] = None
+        await user.open("/selection")
+        assert await _wait(lambda: state.STATE.get("sp_panel_key") is not None, n=1200)
+        await settle()
+    state.STATE["sp_cb_broker"]["cash"] = 50_000
+    await reopen()
+    user.find(marker="sp_name").type("双低5万")
+    user.find(marker="sp_save").click()
+    assert strategies.strategy_brokers()["双低5万"]["cash"] == 50_000
+    assert "broker" not in strategies.list_strategies()["双低5万"]           # 策略描述本身不带资金
+    strategies.save_strategy("旧策略", strategies.list_strategies()["双低5万"])
+    state.STATE["sp_cb_broker"]["cash"] = 200_000
+    await reopen()
+    for name, cash in (("旧策略", 200_000), ("双低5万", 50_000)):    # 载入后表单重画，下拉框每次重新找
+        next(e for e in user.find(kind=ui.select).elements if e.props.get("label") == "载入已保存的选股策略")             .set_value(name)
+        user.find(marker="sp_load_saved").click()
+        await settle()
+        assert SP["name"] == name and state.STATE["sp_cb_broker"]["cash"] == cash
+    await user.should_see("双低5万")
 
 
 @needs_cb
@@ -1554,3 +1618,17 @@ async def test_allocation_add_candidate_and_missing_data(user: User, lib_dir):
     custom = A.load_config()["custom"]
     assert len(custom) == 1 and custom[0]["kind"] == "timing" and custom[0]["symbol"] == "510300"
     assert custom[0]["id"] in A.load_config()["enabled"]
+
+
+async def test_backtest_picks_dataset_that_replaced_remembered_one(user: User, lib_dir):
+    """回测页记住的数据被重新下载替换后，自动改选新数据（照加法复权提示重新下载后，不再用旧数据回测）"""
+    old = library.save(make_prices(n=60), library.DatasetMeta(id="x_old", name="510300 沪深300ETF", symbol="510300",
+                                                              source="akshare", freq="1d", adjust="hfq"))
+    new = library.save(make_prices(n=80), library.DatasetMeta(id="x_new", name="510300 沪深300ETF", symbol="510300",
+                                                              source="akshare", freq="1d", adjust="hfq"))
+    state.STATE["bt_ids"] = [old.id]
+    library.replace(old.id, new.id)
+    await user.open("/backtest")
+    await user.should_see(marker="run")
+    assert user.find(marker="bt_ids").elements.pop().value == [new.id]
+    assert state.STATE["bt_ids"] == [new.id]

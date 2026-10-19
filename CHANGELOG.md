@@ -5,6 +5,18 @@
 
 Changes in each release. `tools/release.py` copies the matching section into the GitHub release notes.
 
+## 1.5.1（2026-10-19）
+
+### 更新内容
+- 新增：完成 10 次回测（择时或选股）后，询问一次是否愿意在 GitHub 上点星或支持开发；选「以后再说」时过一段时间再询问一次，选「不再提示」或打开了链接后不再询问。设置页「关于」中也有这两个链接
+- 修复：多因子选股「载入已保存的选股策略」没有恢复保存时的初始资金与费率。现在保存策略时一并记下，载入时恢复；此前保存的策略没有记录，载入时保持当前设置，重新保存一次即可
+- 修复：按加法复权提示重新下载数据后，回测页仍选着旧数据。现在下载同一标的（同一数据源、周期、复权）且区间覆盖旧数据时，旧数据被替换，回测页等处自动改用新数据；数据选择框中加法复权的数据标为「后复权（加法）」
+
+### Changes
+- New: after 10 backtests (timing or stock selection), SimpleQuant asks once whether you would like to star it on GitHub or support its development. "Maybe later" asks again much later; "Don't ask again" or opening a link stops the prompt for good. The links are also in Settings → About
+- Fix: loading a saved stock selection strategy did not restore its starting capital and costs. They are now saved with the strategy and restored on load; strategies saved earlier keep the current settings until saved again
+- Fix: after downloading again as the additive-adjustment notice suggests, the backtest page still used the old data. A new download of the same symbol (same source, frequency and adjustment) whose range covers an older dataset now replaces it, and pages that had the old data selected switch to the new one; additively adjusted data is labelled "Back-adjusted (additive)" in data pickers
+
 ## 1.5.0（2026-10-18）
 
 ### 更新内容

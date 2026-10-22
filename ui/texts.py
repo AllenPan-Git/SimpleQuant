@@ -237,6 +237,22 @@ TEXT.update({
     "bt.edit_strategy": L("编辑或新建策略", "Edit or create a strategy"),
     "bt.costs": L("资金与交易成本", "Capital & trading costs"),
     "bt.cash": L("初始资金（元）", "Initial capital (CNY)"),
+    "bt.contribution": L("每期追加（元）", "Contribution per period (CNY)"),
+    "bt.contrib_freq": L("追加频率", "Frequency"),
+    "bt.contrib_monthly": L("每月", "monthly"),
+    "bt.contrib_weekly": L("每周", "weekly"),
+    "pp.contribution_due": L("{date} 是新一期的第一个交易日：定投账户在那天开盘前追加 {v} 元，请提前把这笔钱转入证券账户；"
+                             "到账当天收盘后才会给出买入信号。",
+                             "{date} is the first trading day of a new period: this DCA account adds {v} before the open. "
+                             "Transfer the money to your brokerage account in time; the buy signal comes after that day's close."),
+    "bt.contribution_help": L("定投：每月或每周第一个交易日开盘前追加这笔资金，0 表示不追加。初始资金视为第一期投入，从第二期开始追加。"
+                              "「定期定额定投」「估值定投」模板在资金到账当天买入；其他策略只在自身发出买入信号时动用这部分资金。"
+                              "设置后，总收益按累计投入计算，并给出资金加权年化收益率（XIRR）。",
+                              "Dollar-cost averaging: this amount is added before the open on the first trading day of each "
+                              "month or week; 0 adds nothing. The initial capital counts as the first installment, and "
+                              "contributions start from the second period. The DCA templates buy on the day the money "
+                              "arrives; other strategies only use it when they signal a buy. With contributions, total "
+                              "return is measured against the total invested, and a money-weighted annual return (XIRR) is shown."),
     "bt.cost_preset": L("费率预设", "Cost preset"),
     "bt.t1": L("T+1（按品种执行）", "T+1 (by product type)"),
     "bt.t1_help": L("开启时，股票及境内股票 ETF 当日买入、次日方可卖出；债券 ETF、可转债、货币 ETF、黄金 ETF、商品期货 ETF、"
@@ -423,6 +439,7 @@ TEXT.update({
                        "{names}: unadjusted data. Prices drop on ex-dates, which can trigger false sell signals, and dividends "
                        "are not counted. Use back-adjusted data, or choose \"Cash\" dividends under Capital & trading costs"),
     "bt.chip_cash_div": L("现金分红", "cash dividends"),
+    "bt.chip_contribution": L("{freq}追加 {v} 元", "+{v} {freq}"),
     "cd.skipped": L("以下标的无法使用现金分红，仍按所选数据计算（分红再投资）：{items}",
                     "These assets could not use cash dividends and are computed from the selected data (dividends reinvested): {items}"),
     "cd.patched": L("分红数据中缺失的现金分红已根据复权价推算补齐：{items}",
@@ -453,6 +470,16 @@ TEXT.update({
     "help.benchmark": L("所选标的等权买入并持有", "Equal-weight buy & hold of the selected assets"),
     "help.trades": L("一次买入与对应的卖出计为一笔交易", "One buy and its matching sell count as one trade"),
     "help.profit_factor": L("盈利交易总额 ÷ 亏损交易总额", "Gross profit ÷ gross loss"),
+    "help.dca_return": L("期末市值 ÷ 累计投入 − 1", "Final value ÷ total invested − 1"),
+    "help.xirr": L("资金加权年化收益率：考虑每笔资金投入的时间，与银行理财的年化收益可直接比较",
+                   "Money-weighted annual return: accounts for when each contribution was made, comparable to a deposit rate"),
+    "help.dca_benchmark": L("同样的资金、同样的日期，等权买入所选标的并一直持有",
+                            "The same contributions on the same dates, buying the selected assets equally and holding"),
+    "help.twr": L("时间加权收益率：扣除追加资金后的净值涨幅，不受投入节奏影响，反映标的与策略本身的表现",
+                  "Time-weighted return: growth of the unit value with contributions removed, independent of their timing"),
+    "help.dca_drawdown": L("按扣除追加资金后的净值计算，追加的资金不会掩盖亏损",
+                           "Computed on the unit value with contributions removed, so new money does not hide losses"),
+    "help.invested": L("初始资金与各期追加资金之和", "Initial capital plus all contributions"),
 
     # ---- 图表 ----
     "chart.batch_x": L("买入持有收益", "Buy-and-hold return"),
@@ -464,6 +491,7 @@ TEXT.update({
     "chart.drawdown": L("回撤", "Drawdown"),
     "chart.strategy": L("策略", "Strategy"),
     "chart.benchmark": L("基准（等权买入持有）", "Benchmark (equal-weight buy & hold)"),
+    "chart.invested": L("累计投入", "Total invested"),
     "chart.close": L("收盘价", "close"),
 
     # ---- 参数优化页 ----
@@ -1022,9 +1050,14 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
     "sp.downloaded": L("已下载", "Downloaded"),
     "sp.no_data": L("该股票池暂无数据，请先下载。", "No data for this universe yet. Please download it first."),
     "sp.workers": L("并行连接数", "Parallel connections"),
-    "sp.workers_help": L("同时下载的连接数。连接过多可能被数据服务器断开，建议设为 4", "Number of simultaneous downloads. Too many may cause the data server to drop connections; 4 is recommended"),
-    "sp.download_note": L("首次下载沪深300约需 8–10 分钟，数据量约 80 MB；此后仅增量更新最近几日数据。如下载中断，再次点击即可从断点继续。",
-                          "The first download of CSI 300 takes about 8–10 minutes and about 80 MB; later updates fetch only the latest days. If the download is interrupted, click again to resume."),
+    "sp.download_note": L("BaoStock 规定每天请求不超过 5 万次、不能多个连接同时访问，超过后 IP 会被暂停访问 6 小时以上，因此逐只下载，"
+                          "当天请求接近上限时自动停止。首次下载沪深300（含财务、分红）约 2 万次请求，数据量约 80 MB；"
+                          "全 A 股约 22 万次，需分 5 天左右完成。此后仅增量更新最近几日数据。下载停止或中断后，再次点击即可从断点继续。",
+                          "BaoStock allows 50,000 requests a day and no concurrent connections, and suspends the IP for 6+ hours "
+                          "beyond that, so stocks are downloaded one at a time and the download stops when today's requests near "
+                          "the limit. The first CSI 300 download (with financials and dividends) takes about 20,000 requests and "
+                          "80 MB; all A-shares take about 220,000, spread over about 5 days. Later updates fetch only the latest "
+                          "days. After a stop or interruption, click again to resume."),
     "sp.download": L("下载 / 更新数据", "Download / update data"),
     "sp.step_universe": L("正在获取历史成分股…", "Fetching historical constituents…"),
     "sp.step_index": L("正在获取指数及股票信息…", "Fetching index and stock information…"),
@@ -1183,6 +1216,8 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
     "sp.lookback": L("回看期（交易日）", "Lookback (days)"),
     "sp.lookback_help": L("计算 IC 权重时参考的历史长度", "History used to compute IC weights"),
     "sp.ic_fallback_note": L("历史数据不足时（起始阶段），暂按手动设定的方向与权重。", "Until sufficient history is available, the manual directions and weights are used."),
+    "sp.ic_short": L("本地数据从 {lo} 开始，回看期设为 {lookback} 个交易日，但前 {n} 个调仓日可用的历史较短（最短仅约 {known} 个交易日的 IC），这一阶段的权重与设定口径不一致。下载更早的数据或将开始日期后移即可避免。",
+                     "Local data starts on {lo}. The lookback is {lookback} trading days, but the first {n} rebalance dates have less history (as few as about {known} days of IC), so their weights do not follow the configured lookback. Download earlier data or move the start date later to avoid this."),
     "sp.industry_mix": L("行业分布", "Industry mix"),
     "sp.ai": L("以自然语言描述选股规则（AI）", "Describe your stock selection in plain language (AI)"),
     "sp.ai_placeholder": L("例如：每月从沪深300中选取 20 只估值低、ROE 高、近期跌幅较大的股票，行业需分散",
@@ -1642,9 +1677,18 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
     "bt.lede_lag": L("策略跑输买入持有 {v} 个百分点。", "The strategy trailed buy-and-hold by {v} percentage points."),
     "bt.lede_calmer": L("回撤小于买入持有，走势更平稳。", "Its drawdown was smaller than buy-and-hold, so the ride was smoother."),
     "bt.lede_rougher": L("回撤大于买入持有，需要承受更大的波动。", "Its drawdown was larger than buy-and-hold, so expect a bumpier ride."),
+    "bt.lede_dca": L("在{span}的回测期内，追加投入 {n} 次，累计投入 <em>{invested}</em> 元，期末市值 <em>{final}</em> 元，按累计投入计算的收益为 <em>{ret}</em>，资金加权年化 <em>{xirr}</em>；同样的资金按同样的日期买入持有，收益为 <em>{bench}</em>（年化 {bxirr}）。最大回撤 <em>{dd}</em>（扣除追加资金后）。",
+                     "Over a backtest period of {span}, {n} contributions brought the total invested to <em>{invested}</em>; the final value was <em>{final}</em>, a return of <em>{ret}</em> on the money invested, or <em>{xirr}</em> money-weighted per year. Investing the same amounts on the same dates and holding returned <em>{bench}</em> ({bxirr} per year). Maximum drawdown, with contributions removed, was <em>{dd}</em>."),
+    "bt.lede_dca_beat": L("策略比同样节奏的买入持有多 {v} 个百分点。", "The strategy was {v} percentage points ahead of holding with the same contributions."),
+    "bt.lede_dca_lag": L("策略比同样节奏的买入持有少 {v} 个百分点。", "The strategy was {v} percentage points behind holding with the same contributions."),
+    "bt.bench_dca": L("基准（同样的资金与日期买入持有）", "Benchmark (same contributions, buy & hold)"),
+    "bt.dca_no_contribution": L("未设置每期追加金额，定投模板只投入初始资金，结果等同于买入持有。可在「资金与交易成本」中填写每期追加金额。",
+                                "No contribution amount is set, so the DCA template only invests the initial capital and behaves like buy & hold. Set a contribution in Capital & trading costs."),
     "bt.fig1": L("图 1", "Figure 1"),
     "bt.fig2": L("图 2", "Figure 2"),
     "bt.fig1_caption": L("资产曲线与回撤。实线为策略，虚线为买入持有基准。", "Equity and drawdown. Solid line: strategy; dotted line: buy-and-hold benchmark."),
+    "bt.fig1_caption_dca": L("资产曲线与回撤。实线为策略，虚线为同样资金与日期的买入持有，阶梯线为累计投入；回撤按扣除追加资金后的净值计算。",
+                             "Equity and drawdown. Solid line: strategy; dotted line: buy & hold with the same contributions; step line: total invested. Drawdown uses the unit value with contributions removed."),
     "bt.fig2_caption": L("价格与买卖点。▲ 买入，▼ 卖出。", "Price with trades. ▲ buy, ▼ sell."),
     "bt.details": L("交易明细", "Trade details"),
     "bt.next": L("下一步", "Next steps"),

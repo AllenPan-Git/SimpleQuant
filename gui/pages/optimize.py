@@ -37,7 +37,7 @@ def page():
 
         pick = data_selector(by_id, "opt", lambda: update())
         strat = strategy_selector("opt", lambda: (params_box.refresh(), update()))
-        make_broker = broker_settings("opt", show_dividend=True)
+        make_broker = broker_settings("opt", show_dividend=True, show_contribution=True)
 
         def set_mode(e):
             O["mode"] = e.value
@@ -344,6 +344,8 @@ def _grid_results(res: dict):
     cmp = res["compare"]
     if "oos_best" in cmp:
         rows = ["total_return", "cagr", "sharpe", "max_drawdown", "win_rate", "trades"]
+        if "xirr" in cmp["is_best"]:             # 定投：总收益相对累计投入，另看 XIRR
+            rows.insert(1, "xirr")
         table = pd.DataFrame({t(f"opt.col_{k}"): [fmt_metric(r, cmp[k][r]) for r in rows] for k in cmp})
         table.insert(0, "", [t(f"m.{r}") for r in rows])
         ui.label(t("opt.robustness")).classes("font-semibold")
@@ -399,6 +401,8 @@ def _grid_results(res: dict):
             ui.label(t("opt.heatmap_hint")).classes("sq-muted text-xs")
 
     show = ["total_return", "cagr", "sharpe", "max_drawdown", "win_rate", "trades"]
+    if "xirr" in ok:
+        show.insert(1, "xirr")
     top = ok.sort_values(metric, ascending=False).head(20)[paths + show].copy()
     for m_ in show:
         top[m_] = top[m_].map(lambda v, m_=m_: fmt_metric(m_, v))

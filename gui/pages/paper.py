@@ -8,6 +8,7 @@ from nicegui import run, ui
 from simplequant import strategies
 from simplequant.allocation import KINDS
 from simplequant.data import library
+from simplequant.engine.results import nav_of
 from simplequant.i18n import render
 from simplequant.paper import list_accounts, load_account, delete_account, create_account, run_all, load_calendar
 from simplequant.paper import account as account_mod
@@ -152,7 +153,8 @@ def _new_account_form(PP, run_accounts, redraw):
             make_broker = broker_settings("pp_" + PP["kind"] + ("_cb" if cb else ""),
                                           default_preset="etf" if single else "bond" if cb else "stock",
                                           default_cash=100_000 if single else 1_000_000, show_t1=single,
-                                          show_dividend=single)   # 选股账户的分红处理跟随选股策略
+                                          show_dividend=single,   # 选股账户的分红处理跟随选股策略
+                                          show_contribution=single)
             with ui.row().classes("w-full items-end gap-3"):
                 name = ui.input(t("pp.name"), value=PP["name"], placeholder=t("pp.name_ph")) \
                     .props("outlined dense").classes("grow").mark("pp_name")
@@ -270,20 +272,33 @@ def _account_view(PP, run_accounts, redraw):
     # ---------------- 概况 ----------------
     cash0 = acc.broker["cash"]
     value = st["value"]
+    m = st.get("metrics") or {}
+    dca = "invested" in nav
     day_pnl = float(nav["value"].iloc[-1] - nav["value"].iloc[-2]) if len(nav) > 1 else 0.0
+    if dca and len(nav) > 1:                          # 当天到账的追加资金不算盈亏
+        day_pnl -= float(nav["invested"].iloc[-1] - nav["invested"].iloc[-2])
     with ui.grid().classes("w-full gap-3 grid-cols-2 md:grid-cols-6"):
         metric_tile(t("pp.value"), num(value, 0))
-        ret = value / cash0 - 1
-        metric_tile(t("pp.total_return"), pct(ret))
+        if dca:                                       # 定投：相对累计投入
+            metric_tile(t("pp.total_return"), pct(value / float(nav["invested"].iloc[-1]) - 1),
+                        help_text=t("help.dca_return"))
+        else:
+            metric_tile(t("pp.total_return"), pct(value / cash0 - 1))
         metric_tile(t("pp.day_pnl"), num(day_pnl, 0))
         metric_tile(t("pp.n_positions"), str(len(st["positions"])))
         metric_tile(t("pp.data_through"), st["as_of"])
         metric_tile(t("pp.execute_on"), st["execute_on"], help_text=t("pp.execute_on_help"))
     cash_div = acc.broker.get("dividend") == "cash" or acc.spec.get("dividend") == "cash"
+    b = acc.broker
+    contrib = t("bt.chip_contribution", v=f"{b['contribution']:,.0f}",
+                freq=t("bt.contrib_weekly") if b.get("contribution_freq") == "weekly" else t("bt.contrib_monthly"))         if b.get("contribution") else ""
     ui.label(t("pp.meta", start=acc.start, created=acc.created, last_run=acc.last_run or "—")
              + (" · " + t("bt.chip_cash_div") if cash_div else "")
+             + (" · " + contrib if contrib else "")
              + ("" if st.get("started") else " · " + t("pp.not_started"))).classes("sq-muted text-xs")
-    m = st.get("metrics") or {}
+    if contrib and _contribution_due(st, b.get("contribution_freq")):
+        notice(t("pp.contribution_due", date=st["execute_on"], v=f"{b['contribution']:,.0f}"),
+               "savings", "info").mark("pp_contribution_due")
     if "dividend_cash" in m:
         ui.label(t("pp.dividends", cash=num(m["dividend_cash"], 0), tax=num(m["dividend_tax"], 0)))             .classes("sq-muted text-xs").mark("pp_dividends")
     notes = runner.dividend_notes(acc)
@@ -334,7 +349,8 @@ def _account_view(PP, run_accounts, redraw):
         with ui.tab_panel(tab_nav).classes("px-0"):
             if len(nav) >= 2:
                 eq = nav.copy()
-                eq["drawdown"] = eq["value"] / eq["value"].cummax() - 1
+                unit = nav_of(eq)                     # 定投：回撤按扣除追加资金后的净值
+                eq["drawdown"] = unit / unit.cummax() - 1
                 bench = None
                 if acc.kind == "selection":
                     bench = bench_label(acc.universe, U.total_return(acc.universe, eq.index[1:]) is not None)
@@ -353,6 +369,14 @@ def _account_view(PP, run_accounts, redraw):
                 f = f.rename(columns={c: t(f"col.{c}") for c in f.columns})
                 df_table(fmt_table(f, {t("col.price"): "{:.3f}", t("col.value"): "{:,.0f}",
                                        t("col.commission"): "{:.2f}"}), rows_per_page=30)
+
+
+def _contribution_due(st: dict, freq: str | None) -> bool:
+    """下一个交易日是不是新一期的第一个交易日（追加资金在那天开盘前到账）"""
+    if not st.get("started"):
+        return False
+    code = "W" if freq == "weekly" else "M"
+    return pd.Timestamp(st["execute_on"]).to_period(code) != pd.Timestamp(st["as_of"]).to_period(code)
 
 
 def _lots(size: float, lot: int) -> int:

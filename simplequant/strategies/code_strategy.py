@@ -24,8 +24,9 @@ import pandas as pd
 
 from ..engine.base_strategy import BaseStrategy
 from ..i18n import L, pick
-from .factors import KDJ, OBV
-from .templates import _PerAsset
+from ..rules.schema import BARS_PER_YEAR
+from .factors import KDJ, OBV, Percentile
+from .templates import _PerAsset, Dca
 
 FILENAME = "<strategy-code>"    # 每段代码编译时用 FILENAME 加代码哈希作文件名（_filename），出错信息按它找源码行
 BASE_PARAMS = set(BaseStrategy.params._getkeys())        # 引擎内部参数，不给用户调
@@ -51,7 +52,8 @@ def _where(line: int | None, lang: str) -> str:
 def namespace() -> dict:
     """代码里可以直接用的名字"""
     return {"bt": bt, "np": np, "pd": pd, "math": math, "BaseStrategy": BaseStrategy,
-            "PerAsset": _PerAsset, "_PerAsset": _PerAsset, "KDJ": KDJ, "OBV": OBV}
+            "PerAsset": _PerAsset, "_PerAsset": _PerAsset, "KDJ": KDJ, "OBV": OBV,
+            "Dca": Dca, "Percentile": Percentile, "BARS_PER_YEAR": BARS_PER_YEAR}
 
 
 # ---------------- 编译 ----------------

@@ -15,13 +15,11 @@
 import json
 import logging
 import datetime as dt
-from concurrent.futures import ProcessPoolExecutor, as_completed
-from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 
 import pandas as pd
 
-from ..i18n import L
+from ..i18n import L, pick
 from ..paths import CACHE_DIR
 
 log = logging.getLogger(__name__)
@@ -33,6 +31,8 @@ UNIVERSES = {
     "hs300": {"label": L("沪深300", "CSI 300"), "index": "sh.000300", "tr": "H00300", "query": "query_hs300_stocks"},
     "zz500": {"label": L("中证500", "CSI 500"), "index": "sh.000905", "tr": "H00905", "query": "query_zz500_stocks"},
     "sz50": {"label": L("上证50", "SSE 50"), "index": "sh.000016", "tr": "H00016", "query": "query_sz50_stocks"},
+    # 全 A：成员按 basics 的上市 / 退市日期生成（含已退市，避免幸存者偏差）；交易日历用上证指数，基准用中证全指全收益
+    "all": {"label": L("全 A 股", "All A-shares"), "index": "sh.000001", "tr": "H00985"},
     # 可转债：数据在 simplequant/bonds（东方财富 / 新浪），基准为中证转债指数；统一入口见 universe.py
     "cb": {"label": L("可转债（全市场）", "Convertible bonds (all)"), "index": "000832", "kind": "cb"},
 }
@@ -73,12 +73,80 @@ def process_daily(k: pd.DataFrame, adj: pd.DataFrame) -> pd.DataFrame:
     return df.drop(columns=[c for c in ("code",) if c in df.columns])
 
 
-# ---------------- 下载（每个工作进程登录一次 BaoStock） ----------------
+# ---------------- 下载（BaoStock） ----------------
+# BaoStock 的规则（www.baostock.com/blacklist，10-21 查）：每天 API 请求不能超过 5 万次，且不能并发连接；
+# 超过后 IP 进黑名单，当年第 1 次封 6 小时，之后每次 = 当年累计次数 × 6 小时。
+# 所以个股下载一律单线程，并按天记请求次数，到 DAILY_LIMIT 就停（已下载的保存，明天从断点继续）。
+DAILY_LIMIT = 45_000          # 留出余量：同一 IP 上还有模拟盘、择时数据等其他请求
+BLACKLISTED = "10001011"
+USAGE_FILE = CACHE_DIR / "baostock_usage.json"
+
+
+class BaoStockStopped(ConnectionError):
+    """今天的请求次数用完，或 IP 已被列入黑名单：整批下载停下，不再逐只重试"""
+
+
+class _Usage:
+    """当天的请求计数（存文件：界面、模拟盘等不同进程共用一天的额度）"""
+
+    def __init__(self, path: Path = USAGE_FILE, limit: int = DAILY_LIMIT):
+        self.path, self.limit = Path(path), limit
+        self.day, self.count, self.unsaved = "", 0, 0
+
+    def _sync(self):
+        day = dt.date.today().isoformat()
+        if self.day != day:
+            self.day, self.count, self.unsaved = day, 0, 0
+            try:
+                saved = json.loads(self.path.read_text(encoding="utf-8"))
+                if saved.get("date") == day:
+                    self.count = int(saved.get("count", 0))
+            except (OSError, ValueError):
+                pass
+
+    def take(self):
+        self._sync()
+        if self.count >= self.limit:
+            self.save()
+            raise BaoStockStopped(pick(L(
+                f"今天向 BaoStock 的请求已达 {self.count} 次（BaoStock 规定每天不超过 5 万次，超过后 IP 会被暂停访问 6 小时以上）。"
+                "已下载的数据已保存，明天再下载会从断点继续",
+                f"{self.count} BaoStock requests today (BaoStock allows 50,000 a day and suspends the IP for 6+ hours "
+                "beyond that). Downloaded data is saved; download again tomorrow to continue")))
+        self.count += 1
+        self.unsaved += 1
+        if self.unsaved >= 100:
+            self.save()
+
+    def save(self):
+        if self.unsaved or not self.path.exists():
+            try:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                self.path.write_text(json.dumps({"date": self.day, "count": self.count}), encoding="utf-8")
+            except OSError:
+                pass
+            self.unsaved = 0
+
+
+USAGE = _Usage()
+
+
+def _blacklisted(msg: str) -> BaoStockStopped:
+    return BaoStockStopped(pick(L(
+        f"BaoStock 暂停了本机 IP 的访问（{msg}）。原因通常是一天内请求超过 5 万次或多个连接同时访问；"
+        "当年第一次暂停 6 小时后自动解除，再次暂停的时长按次数累加。可在 www.baostock.com/blacklist 查看解除时间",
+        f"BaoStock has suspended this IP ({msg}), usually after more than 50,000 requests in a day or concurrent "
+        "connections. The first suspension in a year lifts after 6 hours; later ones last longer. "
+        "See www.baostock.com/blacklist for the release time")))
+
+
 def _rows(rs) -> pd.DataFrame:
     out = []
     while rs.error_code == "0" and rs.next():
         out.append(rs.get_row_data())
     if rs.error_code != "0":
+        if rs.error_code == BLACKLISTED:
+            raise _blacklisted(rs.error_msg)
         raise ConnectionError(f"BaoStock: {rs.error_msg}")
     return pd.DataFrame(out, columns=rs.fields)
 
@@ -86,32 +154,36 @@ def _rows(rs) -> pd.DataFrame:
 def _login():
     import baostock as bs
     lg = bs.login()
+    if lg.error_code == BLACKLISTED:
+        raise _blacklisted(lg.error_msg)
     if lg.error_code != "0":
         raise ConnectionError(f"BaoStock login failed / 登录失败: {lg.error_msg}")
 
 
 def _login_quietly():
-    """进程池的初始化函数：登录失败也不能抛异常（否则整个进程池崩溃），留给查询时重试"""
+    """登录失败时不抛异常，留给查询时重试（黑名单除外）"""
     try:
         _login()
+    except BaoStockStopped:
+        raise
     except Exception:  # noqa: BLE001
         pass
 
 
 def _query(fn, *args, retries: int = 4, **kw) -> pd.DataFrame:
-    """查询失败时等待、重新登录后重试（服务器在高并发下会断开连接）"""
+    """查询失败时等待、重新登录后重试（服务器有时断开连接）；额度用完或进了黑名单时立即停止"""
     import time
     for attempt in range(retries):
+        USAGE.take()
         try:
             return _rows(fn(*args, **kw))
+        except BaoStockStopped:
+            raise
         except Exception:  # noqa: BLE001 - BaoStock 断线时可能抛出各种套接字异常
             if attempt == retries - 1:
                 raise
             time.sleep(1.5 * (attempt + 1))
-            try:
-                _login()
-            except Exception:  # noqa: BLE001
-                pass
+            _login_quietly()
 
 
 def _fetch_one(code: str, start: str, end: str) -> tuple[str, pd.DataFrame | None, str]:
@@ -123,6 +195,8 @@ def _fetch_one(code: str, start: str, end: str) -> tuple[str, pd.DataFrame | Non
             return code, None, ""
         adj = _query(bs.query_adjust_factor, code=code, start_date="1990-01-01", end_date=end)
         return code, process_daily(k, adj), ""
+    except BaoStockStopped:
+        raise
     except Exception as e:  # noqa: BLE001 - 单只失败不影响整体
         return code, None, f"{type(e).__name__}: {e}"
 
@@ -130,6 +204,15 @@ def _fetch_one(code: str, start: str, end: str) -> tuple[str, pd.DataFrame | Non
 def _fetch_tr(code: str, start: str, end: str) -> pd.DataFrame:
     from ..data.akshare_src import csindex
     return csindex(code, start, end)
+
+
+def listed_snapshots(basics: pd.DataFrame, dates) -> pd.DataFrame:
+    """全 A 成员快照：每个日期当天已上市、还没退市的股票（退市日当天不再算）"""
+    parts = []
+    for d in pd.DatetimeIndex(dates):
+        on = basics[(basics["ipo_date"] <= d) & (basics["out_date"].isna() | (basics["out_date"] > d))]
+        parts.append(pd.DataFrame({"date": d, "code": on["code"].values, "name": on["name"].values}))
+    return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame(columns=["date", "code", "name"])
 
 
 def tr_code(index_code: str) -> str | None:
@@ -181,10 +264,11 @@ class StockStore:
 
     def _run_jobs(self, jobs: dict, fetch, on_ok, workers: int, progress=None, checkpoint=None) -> dict[str, str]:
         """
-        通用的并行下载执行器；返回仍然失败的 {代码: 错误信息}
+        通用的下载执行器；返回仍然失败的 {代码: 错误信息}
         - fetch(code, *args) -> (code, 数据, 错误信息)；成功时调用 on_ok(code, 数据)
         - 每完成 10 只调用一次 checkpoint() 保存进度，中途中断后可从断点继续
-        - 进程池崩溃时用更少的进程继续；最后把失败的单线程再试一次
+        - 一律单线程：BaoStock 不允许并发连接（会被列入黑名单）。workers 参数保留只为兼容旧调用，不再使用
+        - 失败的最后再试一次；额度用完或进了黑名单（BaoStockStopped）时保存进度后整批停止
         """
         errors, finished, n = {}, set(), len(jobs)
 
@@ -203,30 +287,23 @@ class StockStore:
         def sequential(todo):
             try:
                 self.login()
+            except BaoStockStopped:
+                raise
             except Exception:  # noqa: BLE001 - 查询时还会重试登录
                 pass
             for code in todo:
                 handle(*fetch(code, *jobs[code]))
 
-        pending = list(jobs)
-        while pending and workers > 1:
-            try:
-                with ProcessPoolExecutor(max_workers=workers, initializer=self.worker_init) as ex:
-                    futures = [ex.submit(fetch, code, *jobs[code]) for code in pending]
-                    for f in as_completed(futures):
-                        handle(*f.result())
-                pending = []
-            except BrokenProcessPool:
-                pending = [c for c in pending if c not in finished]
-                workers //= 2
-        if pending:
-            sequential(pending)
-        if errors:                     # 失败的单线程再试一次
-            retry = list(errors)
-            finished -= set(retry)
-            sequential(retry)
-        if checkpoint:
-            checkpoint()
+        try:
+            sequential(list(jobs))
+            if errors:                     # 失败的再试一次
+                retry = list(errors)
+                finished -= set(retry)
+                sequential(retry)
+        finally:
+            USAGE.save()
+            if checkpoint:
+                checkpoint()
         return errors
 
     def update(self, codes: list[str], start: str, end: str, workers: int = 4, progress=None) -> dict[str, str]:
@@ -504,12 +581,14 @@ class StockStore:
     # ---------- 历史成分股 ----------
     def update_universe(self, name: str, start: str, end: str, progress=None) -> pd.DataFrame:
         """在区间内每月月末查询一次成分股快照（指数一般半年调整一次，按月查足够）"""
-        import baostock as bs
-        fn = getattr(bs, UNIVERSES[name]["query"])
         path = self.root / "universe" / f"{name}.parquet"
         old = pd.read_parquet(path) if path.exists() else pd.DataFrame(columns=["date", "code", "name"])
         done = set(pd.to_datetime(old["date"]).dt.strftime("%Y-%m-%d")) if len(old) else set()
         dates = [start] + [d.strftime("%Y-%m-%d") for d in pd.date_range(start, end, freq="ME")] + [end]
+        if "query" not in UNIVERSES[name]:
+            return self._update_listed(path, old, dates)
+        import baostock as bs
+        fn = getattr(bs, UNIVERSES[name]["query"])
         todo = [d for d in dict.fromkeys(dates) if d not in done]
         self.login()
         parts = [old]
@@ -521,6 +600,15 @@ class StockStore:
         uni = pd.concat(parts, ignore_index=True)
         uni["date"] = pd.to_datetime(uni["date"])
         uni = uni.drop_duplicates(["date", "code"]).sort_values(["date", "code"]).reset_index(drop=True)
+        uni.to_parquet(path)
+        return uni
+
+    def _update_listed(self, path: Path, old: pd.DataFrame, dates: list[str]) -> pd.DataFrame:
+        """全 A：先刷新上市 / 退市日期，再把已有的和新的快照日期全部按最新的 basics 重新生成"""
+        basics = self.update_basics()
+        all_dates = sorted(set(pd.to_datetime(old["date"])) | set(pd.to_datetime(dates))) if len(old) \
+            else pd.to_datetime(dates)
+        uni = listed_snapshots(basics, all_dates).sort_values(["date", "code"]).reset_index(drop=True)
         uni.to_parquet(path)
         return uni
 

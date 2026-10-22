@@ -5,6 +5,8 @@
 - T+1：当天买入的持仓当天不能卖出；t0_names 里的标的（债券 ETF、可转债等，见 market.py）不受限制
 - 订单、成交、平仓交易和日志都记录下来，供结果页展示
 - 现金分红模式（行情带 div_* 列，见 data/cash_dividend.py）：除息日开盘前缩减持仓、现金到账，卖出时扣红利税
+- 定投（contributions，见 runner.contribution_flows）：到账日开盘前追加现金，当天收盘起可用；
+  new_cash 是当天到账的金额，策略据此决定买多少（如 order_value）
 
 记录用语言无关的键；日志存成 (时间, 文本键, 参数)，由界面按当前语言翻译（见 simplequant/i18n.py）。
 下单理由 reason 同样是 (文本键, 参数) 元组。
@@ -24,6 +26,7 @@ class BaseStrategy(bt.Strategy):
         ("cash_buffer", 0.01),   # 买入时预留 1% 资金，覆盖滑点、手续费和开盘跳空
         ("trade_start", None),   # 这天之前只计算指标、不下单（模拟盘/回测的预热期）
         ("dividends", None),     # 现金分红模式：{标的名: {日期: (持仓保留比例, 每股现金, 每股应税所得)}}
+        ("contributions", None), # 定投：{日期: 追加金额}
     )
 
     def __init__(self):
@@ -39,6 +42,9 @@ class BaseStrategy(bt.Strategy):
         self._hold_since = {}      # data -> 本轮持仓的建仓日期（红利税的持股期限）
         self._div_taxable = {}     # data -> 持有期间累计的应税分红所得
         self.div_cash = self.div_tax = 0.0
+        self._flows = dict(self.p.contributions or {})
+        self.contributed = 0.0     # 累计追加的资金
+        self.new_cash = 0.0        # 当天到账的追加资金（没有为 0）
 
     # ---------- 工具 ----------
     def log(self, key: str, data=None, **kw):
@@ -127,17 +133,57 @@ class BaseStrategy(bt.Strategy):
         self.log("log.buy", data, name=data._name, size=size, reason=reason)
         return self._track(data, self.buy(data=data, size=size / f))
 
+    def order_value(self, data, amount: float, reason: tuple = ("", {})):
+        """买入约 amount 元，数量按真实股数整手向下取整、不超过可用资金（定投每期买入用）"""
+        if self.has_pending(data):
+            return None
+        if self.p.trade_start is not None and data.datetime.date(0) < self.p.trade_start:
+            return None
+        price = data.close[0]
+        if price <= 0 or amount <= 0:
+            return None
+        f = self.real_factor(data)
+        real = price / f
+        lot = self.p.lot_size
+        amount = min(amount, self.broker.getcash())
+        size = int(amount / (real * (1 + self.p.cash_buffer)) / lot) * lot
+        if size < lot:
+            if data not in self._lot_warned:
+                self._lot_warned.add(data)
+                self.lot_too_big.add(data._name)
+                self.log("log.lot_too_big", data, name=data._name, cost=real * lot)
+            return None
+        self.log("log.buy", data, name=data._name, size=size, reason=reason)
+        return self._track(data, self.buy(data=data, size=size / f))
+
     def _track(self, data, order):
         if order is not None:
             self._pending[data] = order
         return order
 
-    # ---------- 现金分红 ----------
+    # ---------- 定投、现金分红（开盘前） ----------
     def prenext_open(self):
+        self._contribute()
         self._pay_dividends()
 
     def next_open(self):
+        self._contribute()
         self._pay_dividends()
+
+    def _contribute(self):
+        """到账日开盘前追加现金（Backtrader 在这根 K 线撮合完才计入，收盘时策略可用）；分钟线只在当天第一根"""
+        self.new_cash = 0.0
+        if not self._flows:
+            return
+        # 开盘前策略自己的时钟还没前进（runonce），取已有 K 线的标的里最新的日期
+        day = max((d.datetime.date(0) for d in self.datas if len(d)), default=None)
+        due = [k for k in self._flows if day is not None and k <= day]
+        amount = sum(self._flows.pop(k) for k in due)
+        if amount:
+            self.broker.add_cash(amount)
+            self.contributed += amount
+            self.new_cash = amount
+            self.log("log.contribution", cash=f"{amount:,.2f}")
 
     def _pay_dividends(self):
         """

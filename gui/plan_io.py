@@ -164,7 +164,8 @@ def restore_broker(key: str, plan: dict, default: dict):
                    and abs(c["stamp_duty"] - b.get("stamp_duty", -1)) < 1e-12), saved.get("preset", default["preset"]))
     full = asdict(P.broker_of(plan))
     saved.update(cash=full["cash"], preset=preset, t1=full["t_plus_1"], slippage=round(full["slippage"] * 1e4, 4),
-                 dividend=full["dividend"], limit=full["price_limit"])
+                 dividend=full["dividend"], limit=full["price_limit"], contribution=full["contribution"],
+                 contribution_freq=full["contribution_freq"])
     saved["custom"][preset] = {"commission": round(full["commission"] * 1e4, 4),
                                "min_commission": full["min_commission"],
                                "stamp_duty": round(full["stamp_duty"] * 1e4, 4)}

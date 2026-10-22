@@ -47,11 +47,13 @@ def process_profit(raw: pd.DataFrame) -> pd.DataFrame:
 def fetch_profit(code: str, qs: list[tuple[int, int]]) -> tuple[str, pd.DataFrame | None, str]:
     """下载一只股票若干季度；任一季度出错则整只返回错误（之后重试），空结果视为该季度尚未披露"""
     import baostock as bs
-    from .store import _query
+    from .store import BaoStockStopped, _query
     try:
         parts = [_query(bs.query_profit_data, code=code, year=y, quarter=q) for y, q in qs]
         raw = pd.concat([p for p in parts if len(p)], ignore_index=True) if any(len(p) for p in parts) else pd.DataFrame()
         return code, process_profit(raw), ""
+    except BaoStockStopped:
+        raise
     except Exception as e:  # noqa: BLE001
         return code, None, f"{type(e).__name__}: {e}"
 

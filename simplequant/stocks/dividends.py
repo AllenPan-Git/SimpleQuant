@@ -55,12 +55,14 @@ def process_dividends(raw: pd.DataFrame) -> pd.DataFrame:
 def fetch_dividends(code: str, years: list[int]) -> tuple[str, pd.DataFrame | None, str]:
     """下载一只股票若干年（按除权除息日所在年份查询）；任一年出错则整只返回错误（之后重试）"""
     import baostock as bs
-    from .store import _query
+    from .store import BaoStockStopped, _query
     try:
         parts = [_query(bs.query_dividend_data, code=code, year=str(y), yearType="operate") for y in years]
         parts = [p for p in parts if len(p)]
         raw = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
         return code, process_dividends(raw), ""
+    except BaoStockStopped:
+        raise
     except Exception as e:  # noqa: BLE001
         return code, None, f"{type(e).__name__}: {e}"
 

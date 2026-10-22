@@ -115,17 +115,25 @@ def num(v, digits=2) -> str:
     return "—" if v is None or (isinstance(v, float) and math.isnan(v)) else f"{v:,.{digits}f}"
 
 
-PCT_METRICS = {"total_return", "cagr", "volatility", "max_drawdown", "win_rate", "benchmark_return", "excess_return"}
+PCT_METRICS = {"total_return", "cagr", "volatility", "max_drawdown", "win_rate", "benchmark_return", "excess_return",
+               "xirr", "benchmark_xirr", "twr"}
+WHOLE_METRICS = {"final_value", "initial_cash", "trades", "invested", "profit", "contributions"}
 
 
 def fmt_metric(key: str, v) -> str:
-    return pct(v) if key in PCT_METRICS else num(v, 0 if key in ("final_value", "initial_cash", "trades") else 2)
+    return pct(v) if key in PCT_METRICS else num(v, 0 if key in WHOLE_METRICS else 2)
 
 
 # 结果页的指标卡片：两行，各 5 个
 TILE_ROWS = [["total_return", "cagr", "max_drawdown", "sharpe", "final_value"],
              ["benchmark_return", "volatility", "trades", "win_rate", "profit_factor"]]
 TILE_HELP = {"benchmark_return": "help.benchmark", "trades": "help.trades", "profit_factor": "help.profit_factor"}
+# 定投（有追加资金）：收益按累计投入算，另看 XIRR；交易笔数、胜率对定投意义不大
+DCA_TILE_ROWS = [["total_return", "xirr", "max_drawdown", "invested", "final_value"],
+                 ["benchmark_return", "benchmark_xirr", "twr", "sharpe", "profit"]]
+DCA_TILE_HELP = {"total_return": "help.dca_return", "xirr": "help.xirr", "benchmark_return": "help.dca_benchmark",
+                 "benchmark_xirr": "help.dca_benchmark", "twr": "help.twr", "max_drawdown": "help.dca_drawdown",
+                 "invested": "help.invested"}
 
 
 # ---------------- 表格 ----------------

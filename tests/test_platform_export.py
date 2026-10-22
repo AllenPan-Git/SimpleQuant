@@ -331,8 +331,18 @@ def export_and_compare(platform, spec, prices):
     return code
 
 
+DCA = ("dca", "value_dca")         # 定投：平台账户的追加资金要自己转入，不导出
+
+
+def test_dca_not_exportable():
+    from simplequant.export.platforms import check_exportable
+    for key in DCA:
+        with pytest.raises(ValueError, match="定投"):
+            check_exportable({"kind": "template", "template": key})
+
+
 @pytest.mark.parametrize("platform", list(RUNNERS))
-@pytest.mark.parametrize("key", list(TEMPLATES))
+@pytest.mark.parametrize("key", [k for k in TEMPLATES if k not in DCA])
 def test_templates(platform, key):
     prices = {"A": make_prices(seed=1, n=300), "B": make_prices(seed=2, n=300, drift=0.0006)}
     export_and_compare(platform, {"kind": "template", "template": key, "params": {}}, prices)

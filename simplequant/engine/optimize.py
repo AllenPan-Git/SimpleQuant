@@ -16,6 +16,7 @@ import pandas as pd
 
 from ..strategies import resolve, set_path, is_valid_combo
 from ..strategies.code_strategy import explain_error
+from .results import nav_of
 from .runner import run_backtest, BrokerConfig
 
 MAX_COMBOS = 500
@@ -82,7 +83,10 @@ def _init(prices, broker, trade_start=None):
 
 
 def yearly_returns(value: pd.Series, initial_cash: float) -> dict:
-    """各自然年的收益：年末资产 / 上年末资产 − 1（第一年相对初始资金）。返回 {"year:2021": 0.12, ...}"""
+    """
+    各自然年的收益：年末资产 / 上年末资产 − 1（第一年相对初始资金）。返回 {"year:2021": 0.12, ...}
+    定投时传单位净值（nav_of），否则追加的资金会算成收益
+    """
     if value.empty:
         return {}
     ends = value.groupby(value.index.year).last()
@@ -94,7 +98,7 @@ def _run(spec):
     try:
         cls, params = resolve(spec)
         res = run_backtest(_G["prices"], cls, params, _G["broker"], trade_start=_G.get("trade_start"))
-        return {**res.metrics, **yearly_returns(res.equity["value"], _G["broker"].cash)}
+        return {**res.metrics, **yearly_returns(nav_of(res.equity), _G["broker"].cash)}
     except Exception as e:  # noqa: BLE001 - 单个组合失败不影响整体
         return {"error": explain_error(e)}
 

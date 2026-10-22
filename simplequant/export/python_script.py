@@ -26,6 +26,7 @@ from ..rules import INDICATORS, default_line
 from ..rules.schema import BARS_PER_YEAR
 from ..strategies import templates as tpl_module
 from ..strategies.factors import KDJ, OBV, Percentile
+from ..engine.results import xirr
 from ..strategies.registry import TEMPLATES
 from ..stocks.dividends import tax_rate
 from ..system import venv_python
@@ -220,6 +221,9 @@ def _indent(text: str, n: int) -> str:
 def _template_code(key: str, params: dict) -> str:
     tpl = TEMPLATES[key]
     src = inspect.getsource(tpl.cls)
+    if issubclass(tpl.cls, tpl_module.Dca) and tpl.cls is not tpl_module.Dca:      # 估值定投：带上父类与百分位指标
+        src = "\n\n".join([f"BARS_PER_YEAR = {BARS_PER_YEAR}\n", inspect.getsource(Percentile),
+                           inspect.getsource(tpl_module.Dca), src])
     return (src + f"\n\nStrategy = {tpl.cls.__name__}\nSTRATEGY_PARAMS = {params!r}\n")
 
 
@@ -379,12 +383,27 @@ class Equity(bt.Analyzer):
         self.rows = []
 
     def next(self):
-        self.rows.append((self.strategy.datetime.datetime(0), self.strategy.broker.getvalue()))
+        s = self.strategy
+        self.rows.append((s.datetime.datetime(0), s.broker.getvalue(), s.contributed))
+
+
+def contribution_flows(prices: dict) -> dict:
+    """定投追加资金：所有标的交易日里每月 / 每周的第一个交易日（第一期由初始资金投入）。{日期: 金额}"""
+    amount = BROKER.get("contribution") or 0
+    if amount <= 0:
+        return {}
+    days = pd.DatetimeIndex(sorted(set().union(*(df.index.normalize() for df in prices.values()))))
+    period = days.to_period("W" if BROKER.get("contribution_freq") == "weekly" else "M")
+    first = pd.Series(days, index=days).groupby(period).first()
+    return {pd.Timestamp(d).date(): float(amount) for d in first.values[1:]}
 
 
 def run(prices: dict):
     """prices: {名称: DataFrame(open, high, low, close, volume, ...)}；返回 Backtrader 策略实例"""
-    cerebro = bt.Cerebro(stdstats=False)
+    flows = contribution_flows(prices)
+    # 定投到账（以及估值定投的储备计息）在开盘前处理；broker_coo=False：委托的撮合方式与平时一样
+    coo = bool(flows) or getattr(Strategy, "needs_open", False)
+    cerebro = bt.Cerebro(stdstats=False, **({"cheat_on_open": True, "broker_coo": False} if coo else {}))
     cerebro.broker.setcash(BROKER["cash"])
     cerebro.broker.addcommissioninfo(AShareCommission(commission=BROKER["commission"],
                                                       min_commission=BROKER["min_commission"],
@@ -399,22 +418,34 @@ def run(prices: dict):
         extras = {c: c for c in EXTRA + RAW if c in df.columns}
         cerebro.adddata(Feed(dataname=df, name=name, datetime=None, openinterest=-1, **extras), name=name)
     t0 = tuple(n for n in T0_NAMES if n in prices) if BROKER["t_plus_1"] else ()
-    cerebro.addstrategy(Strategy, t_plus_1=BROKER["t_plus_1"], **({"t0_names": t0} if t0 else {}), **STRATEGY_PARAMS)
+    cerebro.addstrategy(Strategy, t_plus_1=BROKER["t_plus_1"], **({"t0_names": t0} if t0 else {}),
+                        **({"contributions": flows} if flows else {}), **STRATEGY_PARAMS)
     cerebro.addanalyzer(Equity, _name="equity")
     return cerebro.run()[0]
 
 
 def report(strat):
-    eq = pd.Series(dict(strat.analyzers.equity.rows))
-    daily = eq.resample("D").last().dropna()
+    rows = pd.DataFrame(strat.analyzers.equity.rows, columns=["time", "value", "contributed"]).set_index("time")
+    eq, added = rows["value"], rows["contributed"].diff().fillna(0.0)
+    # 单位净值：扣除当天到账的追加资金（没有定投时就是资产曲线），年化、回撤、夏普都按它算
+    nav = (1 + ((eq - added) / eq.shift(1) - 1).fillna(0.0)).cumprod() * eq.iloc[0]
+    daily = nav.resample("D").last().dropna()
     rets = daily.pct_change().dropna()
     years = max((eq.index[-1] - eq.index[0]).days / 365.25, 1e-9)
-    total = eq.iloc[-1] / BROKER["cash"] - 1
+    invested = BROKER["cash"] + rows["contributed"].iloc[-1]
+    total = eq.iloc[-1] / invested - 1
     print(f"区间 / Period        {eq.index[0]:%Y-%m-%d} ~ {eq.index[-1]:%Y-%m-%d}")
     print(f"最终资产 / Final     {eq.iloc[-1]:,.2f}")
-    print(f"总收益 / Return      {total:.2%}")
-    print(f"年化 / CAGR          {(1 + total) ** (1 / years) - 1:.2%}")
-    print(f"最大回撤 / Max DD    {(eq / eq.cummax() - 1).min():.2%}")
+    if invested > BROKER["cash"]:
+        paid = added[added > 0]
+        print(f"累计投入 / Invested  {invested:,.2f}（追加 {len(paid)} 次 / {len(paid)} contributions）")
+        print(f"总收益 / Return      {total:.2%}（相对累计投入 / on total invested）")
+        r = xirr([eq.index[0], *paid.index, eq.index[-1]], [-BROKER["cash"], *(-paid.values), eq.iloc[-1]])
+        print(f"XIRR                 {r:.2%}")
+    else:
+        print(f"总收益 / Return      {total:.2%}")
+    print(f"年化 / CAGR          {(nav.iloc[-1] / nav.iloc[0]) ** (1 / years) - 1:.2%}")
+    print(f"最大回撤 / Max DD    {(nav / nav.cummax() - 1).min():.2%}")
     if len(rets) > 1 and rets.std() > 0:
         print(f"夏普 / Sharpe        {(rets - 0.02 / 252).mean() / rets.std() * 252 ** 0.5:.2f}")
     print(f"完整交易 / Trades    {len(strat.trade_records)}")
@@ -502,10 +533,14 @@ def single_asset_script(spec: dict, data: list[dict], broker: dict, title: str =
                      + rule_strategy_code(rule, lang)
                      + f"\n\nSTRATEGY_PARAMS = {{}}\n")
     else:
+        if spec.get("template") == "value_dca" and any(d.get("source") == "akshare" for d in data):
+            raise ValueError("index valuation (Legulegu) is not included in the exported script yet / "
+                             "ETF / 指数附带的指数估值暂不支持导出为独立脚本")
         cls, params = strategies.resolve(spec)
         params = {k: v for k, v in params.items() if k != "t_plus_1"}
         parts.append("\n\n# ============================== 策略 ==============================\n"
                      + _template_code(spec["template"], params))
+    parts.append("\n\n" + inspect.getsource(xirr))             # 定投的资金加权年化
     parts.append(RUN_CODE)
     return "\n".join(parts)
 
@@ -556,7 +591,7 @@ BROKER = BrokerConfig(**{broker!r})
 START = "{start}"
 NEEDS_FIN = {needs_fin!r}
 NEEDS_DIV = {needs_div!r}
-WARMUP_DAYS = {panel_warmup_days(spec)!r}       # 机器学习合成因子要容下训练窗口，其余为 400
+WARMUP_DAYS = {panel_warmup_days(spec)!r}       # 机器学习的训练窗口、超过 252 天的 IC 回看期要多取，其余为 400
 OUT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 

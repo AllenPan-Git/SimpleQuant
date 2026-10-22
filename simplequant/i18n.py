@@ -49,6 +49,12 @@ TEXT = {
     "m.profit_factor": L("盈亏比", "Profit factor"),
     "m.benchmark_return": L("基准收益率", "Benchmark return"),
     "m.excess_return": L("超额收益", "Excess return"),
+    "m.invested": L("累计投入", "Total invested"),
+    "m.contributions": L("追加投入次数", "Contributions"),
+    "m.profit": L("累计盈亏", "Profit"),
+    "m.xirr": L("年化收益率（XIRR）", "Annualized return (XIRR)"),
+    "m.benchmark_xirr": L("基准年化收益率（XIRR）", "Benchmark annualized return (XIRR)"),
+    "m.twr": L("时间加权收益率", "Time-weighted return"),
 
     # ---- 成交 / 交易记录列名 ----
     "col.time": L("时间", "Time"),
@@ -81,6 +87,9 @@ TEXT = {
     "limit.suspended": L("停牌", "suspended"),
     "log.order_failed": L("订单未成交（{status}）：{name}", "Order not filled ({status}): {name}"),
     "log.dividend": L("{name} 除权除息：现金分红 {cash} 元（税前）到账", "{name} ex-dividend: cash dividend {cash} (pre-tax) received"),
+    "log.no_pe_pct": L("{name} 暂无市盈率百分位（没有估值数据或历史不足一年），本期按 1 倍投入",
+                       "{name} has no P/E percentile yet (no valuation data or under a year of history); investing 1x"),
+    "log.contribution": L("定投资金 {cash} 元到账", "Contribution of {cash} received"),
     "log.dividend_tax": L("{name} 卖出，持股 {days} 天，补扣红利税 {tax} 元",
                           "{name} sold after {days} days; dividend tax {tax} deducted"),
     "status.Canceled": L("已撤销", "canceled"),
@@ -90,6 +99,8 @@ TEXT = {
 
     # ---- 下单理由 ----
     "reason.hold": L("建仓并持有", "open and hold"),
+    "reason.dca": L("定投", "regular contribution"),
+    "reason.value_dca": L("估值定投：市盈率百分位 {v:.0f}%，投入 {m:g} 倍", "valuation DCA: P/E percentile {v:.0f}%, {m:g}x"),
     "reason.ma_up": L("MA{fast} 上穿 MA{slow}", "MA{fast} crossed above MA{slow}"),
     "reason.ma_down": L("MA{fast} 下穿 MA{slow}", "MA{fast} crossed below MA{slow}"),
     "reason.rsi_low": L("RSI={v:.1f} 超卖", "RSI={v:.1f} oversold"),
@@ -123,6 +134,10 @@ TEXT = {
     "sel.reason_dropped": L("落选", "dropped from selection"),
     "sel.reason_exit": L("强赎公告或即将退市，必须卖出", "called for redemption or about to delist; must sell"),
     "sel.exit_sell": L("{name} 已公告强赎或即将退市，开盘卖出", "{name} is called for redemption or about to delist; sold at the open"),
+    "sel.delist_zero": L("{name} 已退市且此前未能卖出（退市前为 ST 或股价低于 1 元），持仓按 0 计价",
+                         "{name} delisted before it could be sold (ST or below 1 yuan); position written off"),
+    "sel.delist_cash": L("{name} 已退市且此前未能卖出（吸收合并或主动退市），持仓按最后价格 {price} 折为现金",
+                         "{name} delisted before it could be sold (merger or voluntary); settled in cash at the last price {price}"),
     "sel.reason_retry": L("此前因停牌或跌停未能卖出，重新尝试", "retry: could not sell earlier (suspended or limit-down)"),
     "sel.buy_blocked": L("{name} 停牌或开盘涨停，无法买入，本期跳过", "{name} suspended or limit-up at open; skipped this period"),
     "sel.sell_blocked": L("{name} 停牌或开盘跌停，无法卖出，此后每个交易日开盘重试",

@@ -214,6 +214,27 @@ def test_warmup_history_is_used_but_not_traded(panel):
     assert rep.ic.index.min() >= start
 
 
+def test_ic_lookback_longer_than_warmup_takes_more_history():
+    """IC 回看期 ≤ 252 时预热仍是 400 天（原有结果不变），更长的补上超出的部分；数据不够时数出受影响的调仓日"""
+    from simplequant.stocks.selection import panel_warmup_days, ic_history_short, WARMUP_DAYS
+    base = {**SPEC, "weighting": "ic"}
+    assert panel_warmup_days(base) == panel_warmup_days({**base, "ic_lookback": 120}) == WARMUP_DAYS
+    assert panel_warmup_days({**base, "ic_lookback": 504}) == WARMUP_DAYS + int(252 * 365 / 240)
+    assert panel_warmup_days({**base, "weighting": "icir", "ic_lookback": 756}) == WARMUP_DAYS + int(504 * 365 / 240)
+    assert panel_warmup_days({**SPEC, "ic_lookback": 756}) == WARMUP_DAYS     # 手动权重用不到回看期
+
+    cal = pd.bdate_range("2020-01-02", "2023-12-29")
+    spec = {**base, "ic_lookback": 504}
+    dates = rebalance_dates(cal[cal >= "2021-01-01"], "monthly")
+    n, known = ic_history_short(cal, spec, dates)
+    # 已知 IC = 调仓日之前的交易日数 − 21，不到 504 × 0.9 的算短：2021 年 1～9 月（10 月底已有 455 个）
+    assert n == 9 and known == cal.searchsorted(dates[0]) - 21
+    assert ic_history_short(cal, spec, dates[dates >= "2021-10-01"]) == (0, 0)
+    assert ic_history_short(cal, {**spec, "weighting": "manual"}, dates) == (0, 0)
+    # 默认 252 配 400 天预热（约 265 个交易日）不提示
+    assert ic_history_short(cal, base, rebalance_dates(cal[cal >= "2021-02-05"], "monthly")) == (0, 0)
+
+
 def test_limit_up_blocks_buy_and_suspension_delays_sell():
     p = make_panel()
     sched = build_schedule(p, SPEC)

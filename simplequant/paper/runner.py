@@ -23,7 +23,7 @@ from .account import PaperAccount, NAV_COLUMNS, new_id
 from .calendar import load_calendar, next_trading_day, next_trading_days, latest_expected_day
 
 HISTORY_DAYS = 800        # 单标的：开始日之前取多少天历史用于预热指标
-PANEL_WARMUP_DAYS = 400   # 选股：同上（机器学习合成因子要更长，见 stocks.selection.panel_warmup_days）
+PANEL_WARMUP_DAYS = 400   # 选股：同上（机器学习、IC 回看期超过 252 天时更长，见 stocks.selection.panel_warmup_days）
 
 
 # ---------------- 开户 ----------------
@@ -206,7 +206,10 @@ def run_account(acc: PaperAccount, calendar: pd.DatetimeIndex | None = None, pri
 
     # 2. 资产曲线：只追加新日期
     nav = acc.nav()
-    eq = res.equity[NAV_COLUMNS]
+    dca = bool(acc.broker.get("contribution"))
+    eq = res.equity[NAV_COLUMNS + (["invested"] if "invested" in res.equity else [])]
+    if dca and "invested" not in eq:            # 定投账户还没到第一次追加：累计投入 = 初始资金
+        eq = eq.assign(invested=float(acc.broker["cash"]))
     new_nav = eq[eq.index > through] if through is not None else eq
     nav = pd.concat([nav, new_nav]) if len(nav) else new_nav.copy()
     nav = nav[~nav.index.duplicated(keep="first")].sort_index()

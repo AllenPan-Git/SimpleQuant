@@ -16,7 +16,7 @@ from .base_strategy import ORDER_COLUMNS, TRADE_COLUMNS
 from .commission import AShareCommission
 from .limits import LimitFiller
 from .market import t0_names
-from .results import EquityRecorder, BacktestResult, compute_metrics, build_benchmark
+from .results import EquityRecorder, BacktestResult, compute_metrics, build_benchmark, unit_value, flows_on_bars
 
 
 @dataclass
@@ -30,6 +30,8 @@ class BrokerConfig:
     risk_free: float = 0.02
     dividend: str = "reinvest"     # reinvest 分红再投资（后复权）/ cash 现金分红（行情由 data/cash_dividend.prepare 换好）
     price_limit: bool = True       # 日线按涨跌停与停牌限制成交（见 limits.py）
+    contribution: float = 0.0      # 定投：每期追加的资金（0 = 不追加）；初始资金算第一期，从第二期起追加
+    contribution_freq: str = "monthly"   # monthly / weekly：每月 / 每周第一个交易日开盘前到账
 
 
 FEED_COLUMNS = EXTRA_COLUMNS + MACRO_COLUMNS + [RAW_CLOSE]
@@ -55,6 +57,23 @@ def _feed(df: pd.DataFrame, name: str) -> bt.feeds.PandasData:
                             datetime=None, openinterest=-1, **extras)
 
 
+def contribution_flows(prices: dict[str, pd.DataFrame], broker: BrokerConfig, trade_start=None) -> pd.Series:
+    """
+    定投追加资金的日期与金额：所有标的交易日的并集里，每月 / 每周的第一个交易日（交易起点所在的那一期除外，
+    由初始资金投入）。没有设定时为空
+    """
+    if not broker.contribution or broker.contribution <= 0 or not prices:
+        return pd.Series(dtype=float)
+    days = pd.DatetimeIndex(sorted(set().union(*(df.index.normalize() for df in prices.values()))))
+    if trade_start is not None:
+        days = days[days >= pd.Timestamp(trade_start)]
+    if not len(days):
+        return pd.Series(dtype=float)
+    period = days.to_period("W" if broker.contribution_freq == "weekly" else "M")
+    first = pd.Series(days, index=days).groupby(period).first()
+    return pd.Series(float(broker.contribution), index=pd.DatetimeIndex(first.values[1:]))
+
+
 def build_cerebro(prices: dict[str, pd.DataFrame], strategy_cls, strategy_params: dict | None = None,
                   broker: BrokerConfig | None = None, trade_start=None) -> bt.Cerebro:
     """回测与原生绘图共用：资金、A 股成本、滑点、数据、策略参数都在这里设置"""
@@ -68,11 +87,16 @@ def build_cerebro(prices: dict[str, pd.DataFrame], strategy_cls, strategy_params
         params["t0_names"] = t0
     if trade_start is not None:
         params["trade_start"] = pd.Timestamp(trade_start).date()
+    flows = contribution_flows(prices, broker, trade_start)
+    if len(flows):
+        params["contributions"] = {d.date(): float(a) for d, a in flows.items()}
 
     dividends = {name: events_of(df) for name, df in prices.items() if has_columns(df)}
     if dividends:
-        # 用开盘前的回调处理除权除息；broker_coo=False：委托的撮合方式与平时完全一样
         params["dividends"] = dividends
+    if dividends or len(flows) or getattr(strategy_cls, "needs_open", False):
+        # 用开盘前的回调处理除权除息、定投到账（策略自己要用开盘前回调的设 needs_open，如估值定投的储备计息）；
+        # broker_coo=False：委托的撮合方式与平时完全一样
         cerebro = bt.Cerebro(stdstats=False, cheat_on_open=True, broker_coo=False)
     else:
         cerebro = bt.Cerebro(stdstats=False)
@@ -109,13 +133,19 @@ def run_backtest(prices: dict[str, pd.DataFrame], strategy_cls, strategy_params:
         equity = equity.loc[pd.Timestamp(trade_start):].copy()
     if equity.empty:
         raise ValueError("The backtest produced no data; check the date range / 回测没有产生任何数据，请检查数据区间")
+    flows = contribution_flows(prices, broker, trade_start)
     equity["benchmark"] = build_benchmark({k: v.loc[equity.index[0]:] for k, v in prices.items()},
-                                          equity.index, broker.cash)
-    equity["drawdown"] = equity["value"] / equity["value"].cummax() - 1
+                                          equity.index, broker.cash, flows)
+    if len(flows):        # 定投：累计投入；回撤按扣除追加资金后的单位净值算
+        equity["invested"] = broker.cash + flows_on_bars(equity.index, flows).cumsum()
+        nav = unit_value(equity["value"], flows)
+        equity["drawdown"] = nav / nav.cummax() - 1
+    else:
+        equity["drawdown"] = equity["value"] / equity["value"].cummax() - 1
 
     orders = pd.DataFrame(strat.order_records, columns=ORDER_COLUMNS)
     trades = pd.DataFrame(strat.trade_records, columns=TRADE_COLUMNS)
-    metrics = compute_metrics(equity["value"], equity["benchmark"], trades, broker.cash, broker.risk_free)
+    metrics = compute_metrics(equity["value"], equity["benchmark"], trades, broker.cash, broker.risk_free, flows)
     metrics["limit_blocked"] = blocked
     if strat.p.dividends:
         metrics["dividend_cash"], metrics["dividend_tax"] = strat.div_cash, strat.div_tax

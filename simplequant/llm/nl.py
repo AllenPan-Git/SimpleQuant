@@ -543,7 +543,21 @@ def propose_factors(provider: Provider, message: str, lang: str = "zh", kind: st
     return {"factors": items, "notes": (out.get("notes") or "").strip()}
 
 
-def explain_system_prompt(lang: str = "zh") -> str:
+DCA_EXPLAIN = """
+
+This is a periodic-investment (dollar-cost averaging) backtest: the user started with initial_cash and added money on a schedule (contributions = number of additions, invested = total paid in, profit = final_value − invested).
+- total_return = final_value / invested − 1, not relative to the initial cash; benchmark_return is the same for buying and holding the benchmark with the same amounts on the same dates. Trade-detail ratios are also relative to invested.
+- Judge the annualized return by xirr (money-weighted: it accounts for when each amount was paid in) against benchmark_xirr and the ~2% risk-free rate; this replaces cagr in the yardsticks above.
+- cagr, volatility, sharpe, calmar, max_drawdown and twr are computed on a unit value that strips out the contributions (time-weighted), so they describe the path of the invested money, not the growth of the account. Do not compare cagr with xirr as if one of them were wrong.
+- Cash waiting to be invested (for example a reserve held back while valuations are high) lowers the drawdown and volatility; a smaller drawdown partly reflects idle cash, so mention that when relevant. If the strategy parameters include reserve_rate, the reserve earns that annual rate.
+- Steady investing into the same index will track the benchmark closely; call a gap meaningful only if xirr differs from benchmark_xirr by more than a few tenths of a percentage point."""
+
+
+def explain_system_prompt(lang: str = "zh", dca: bool = False) -> str:
+    return _explain_prompt(lang) + (DCA_EXPLAIN if dca else "")
+
+
+def _explain_prompt(lang: str) -> str:
     return f"""You are a careful, candid quantitative analyst explaining a backtest to a non-programmer, who may act on what you say. Write in {LANG_NAMES.get(lang, 'English')}, 4-7 short bullet points: the overall verdict, absolute and relative return, risk, trading behaviour (including open positions at the end when they matter), one or two concrete ideas to try next, and a reminder about overfitting if relevant. Do not invent numbers that are not given.
 
 Judge it by these yardsticks, and say plainly when it is weak:
@@ -570,11 +584,11 @@ def trade_details(result, names: dict | None = None, extremes: int = 3) -> dict:
     """
     给 AI 解读用的交易摘要（汇总指标看不到的部分）：
     已平仓交易的分布与最好 / 最差几笔、收益集中度与重抽样区间（与可信度检查同一算法）、期末未平仓持仓的浮动盈亏。
-    金额都换算成占初始资金的比例
+    金额都换算成占初始资金的比例（定投时占累计投入的比例）
     """
     from ..engine.credibility import trade_stats
     names = names or {}
-    cash = float(result.metrics.get("initial_cash") or 0) or 1.0
+    cash = float(result.metrics.get("invested") or result.metrics.get("initial_cash") or 0) or 1.0
     total = float(result.metrics.get("total_return") or 0)
 
     def label(sym):
@@ -629,7 +643,7 @@ def trade_details(result, names: dict | None = None, extremes: int = 3) -> dict:
 def explain_result(provider: Provider, spec_text: str, metrics: dict, lang: str = "zh",
                    details: dict | None = None) -> str:
     """用大白话解读回测结果；details = trade_details(...)：交易明细摘要与期末未平仓"""
-    system = explain_system_prompt(lang)
+    system = explain_system_prompt(lang, dca="invested" in metrics)
     user = f"Strategy:\n{spec_text}\n\nMetrics (ratios, not percents):\n" + json.dumps(
         {k: (round(v, 4) if isinstance(v, float) else v) for k, v in metrics.items()}, ensure_ascii=False)
     if details:

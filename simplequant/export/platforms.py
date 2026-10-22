@@ -65,6 +65,10 @@ def check_exportable(spec: dict, lang: str = "zh") -> None:
         raise ValueError(pick(L("自定义代码策略无法自动转换为平台代码，请使用「导出 Python 脚本」",
                                 "Custom-code strategies cannot be translated for platforms; use \"Export Python script\" instead"),
                               lang))
+    if spec.get("kind") == "template" and spec.get("template") in ("dca", "value_dca"):
+        raise ValueError(pick(L("定投策略暂不支持导出到平台（平台账户的追加资金需自行转入）",
+                                "DCA strategies cannot be exported to platforms (contributions to a platform account are made by hand)"),
+                              lang))
     if spec.get("kind") == "rule" and required_columns(spec["rule"]):
         cols = ", ".join(sorted(required_columns(spec["rule"])))
         raise ValueError(pick(L(f"规则用到了估值、换手或利率数据（{cols}），各平台取法不同，暂不支持导出到平台",

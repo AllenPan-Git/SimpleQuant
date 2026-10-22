@@ -218,6 +218,18 @@ def test_pacing_rule_plan_version():
     assert P.PACING_VERSION <= P.VERSION
 
 
+def test_dca_plan_version_and_contribution_kept():
+    """定投：追加资金或定投模板都写新版本号（旧版软件会丢掉追加资金、按一次性投入回测）；导入后追加金额还原"""
+    tpl = {"kind": "template", "template": "sma_cross"}
+    mk = lambda spec, b: P.make_plan("x", spec, [meta()], "2020-01-02", "2021-01-04", b)
+    assert mk(tpl, BrokerConfig())["version"] == P.TIMING_VERSION
+    plan = mk(tpl, BrokerConfig(contribution=2000, contribution_freq="weekly"))
+    assert plan["version"] == P.DCA_VERSION <= P.VERSION
+    assert mk({"kind": "template", "template": "dca"}, BrokerConfig())["version"] == P.DCA_VERSION
+    b = P.broker_of(P.loads(P.dumps(plan)))
+    assert (b.contribution, b.contribution_freq) == (2000, "weekly")
+
+
 def test_selection_version_for_call_days():
     """可转债用了强赎触发天数：写 CALL_VERSION，旧版软件提示更新而不是忽略这个条件"""
     base = {"universe": "cb", "factors": [{"key": "cb_double_low", "weight": 1, "direction": -1}], "filters": {}}

@@ -22,7 +22,7 @@ from simplequant.stocks import (StockStore, UNIVERSES, FACTORS, GROUPS, REBALANC
 from simplequant.stocks import custom_factors, panel_cache, universe as U, factors_for
 from simplequant.stocks import ml as ML
 from simplequant.stocks import mining as MN
-from simplequant.stocks.selection import panel_warmup_days
+from simplequant.stocks.selection import panel_warmup_days, ic_history_short
 from simplequant.bonds.panel import CB_FILTERS, CB_DEFAULT_FILTERS
 from simplequant.system import open_folder
 from simplequant.stocks.walkforward import (walk_forward_selection, selection_tunables, selection_grid,
@@ -125,9 +125,9 @@ def data_version(st: StockStore, universe: str) -> str:
 def spec_panel_start(SP, ctx, spec: dict) -> str:
     """
     回测这个策略用的面板起始日：一般就是 ctx.panel_start；
-    机器学习要容下训练窗口，往前取得更多（有数据的话），导入的方案按方案记录的预热起始日
+    机器学习要容下训练窗口、IC 加权的回看期超过 252 天时，往前取得更多（有数据的话），导入的方案按方案记录的预热起始日
     """
-    if spec.get("weighting") != "ml":
+    if panel_warmup_days(spec) == WARMUP_DAYS:
         return ctx.panel_start
     pw = SP.get("plan_warm")
     if pw and pw[0] == SP["universe"] and pw[1] == ctx.start:
@@ -379,8 +379,6 @@ def _data_tab(SP, ctx, reload_all):
                 .tooltip(t("sp.dl_start_help"))
             d_end = ui.input(t("data.end"), value=str(dt.date.today())).props("outlined dense type=date") \
                 .classes("w-44")
-            workers = ui.number(t("sp.workers"), value=D["workers"], min=1, max=8, precision=0) \
-                .props("outlined dense").classes("w-32").tooltip(t("sp.workers_help"))
             with_fin = ui.switch(t("sp.with_fin"), value=D["with_fin"]).tooltip(t("sp.fin_help"))
             with_div = ui.switch(t("sp.with_div"), value=D.get("with_div", True)).tooltip(t("sp.div_help"))
         ui.label(t("sp.download_note")).classes("sq-muted text-sm")
@@ -388,10 +386,8 @@ def _data_tab(SP, ctx, reload_all):
         out = ui.column().classes("w-full")
 
         async def download():
-            D.update(start=d_start.value, workers=int(workers.value or 4), with_fin=with_fin.value,
-                     with_div=with_div.value)
+            D.update(start=d_start.value, with_fin=with_fin.value, with_div=with_div.value)
             s, e = d_start.value, min(d_end.value, today())
-            w = int(workers.value or 4)
             btn.disable()
             out.clear()
             prog.start()
@@ -409,15 +405,15 @@ def _data_tab(SP, ctx, reload_all):
                 st.update_index(UNIVERSES[universe]["index"], s, e)
                 st.update_basics()
                 codes = sorted(u["code"].unique())
-                errs = st.update(codes, s, e, workers=w, progress=step(t("sp.step_stocks", n=len(codes)), time.time()))
+                errs = st.update(codes, s, e, progress=step(t("sp.step_stocks", n=len(codes)), time.time()))
                 if fin:
                     prog.set(0, t("sp.step_fin", n=len(codes)))
                     st.update_industry()
-                    errs.update(st.update_fundamentals(codes, int(s[:4]) - 1, workers=w,
+                    errs.update(st.update_fundamentals(codes, int(s[:4]) - 1,
                                                        progress=step(t("sp.step_fin", n=len(codes)), time.time())))
                 if div:
                     prog.set(0, t("sp.step_div", n=len(codes)))
-                    errs.update(st.update_dividends(codes, int(s[:4]) - 1, workers=w,
+                    errs.update(st.update_dividends(codes, int(s[:4]) - 1,
                                                     progress=step(t("sp.step_div", n=len(codes)), time.time())))
                 return codes, errs
             try:
@@ -1676,7 +1672,13 @@ def _selection_results(SP, ctx):
     _explain(SP, rspec, res)
     if ml_info:
         _ml_results(ml_info, rspec)
-    tr = (SP.get("result_panel") or panel).bench_total_return
+    run_panel = SP.get("result_panel") or panel
+    if res.schedule:
+        n, known = ic_history_short(run_panel.calendar, rspec, list(res.schedule.picks) + res.schedule.skipped)
+        if n:
+            notice(t("sp.ic_short", n=n, lookback=int(rspec.get("ic_lookback", 252)), known=known,
+                     lo=run_panel.calendar[0].date()), "info", "warning")
+    tr = run_panel.bench_total_return
     if U.kind(rspec["universe"]) == "stock" and not tr:
         notice(t("sp.bench_price_note"), "info", "warning")
     with ui.card().classes("w-full p-2"):

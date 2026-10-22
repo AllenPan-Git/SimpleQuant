@@ -44,8 +44,83 @@ class BacktestResult:
     warm_prices: dict = field(default_factory=dict)   # 有预热段时：含预热段的完整行情（原生图重新运行用）
 
 
+def flows_on_bars(index: pd.DatetimeIndex, flows: pd.Series) -> pd.Series:
+    """追加资金按日期落到当天（或之后）的第一根 K 线上；区间外的不算"""
+    out = pd.Series(0.0, index=index)
+    flows = flows[(flows.index >= index[0].normalize()) & (flows.index <= index[-1])]
+    for day, amount in flows.items():
+        pos = index.searchsorted(day)
+        if pos < len(index):
+            out.iloc[pos] += amount
+    return out
+
+
+def unit_value(equity: pd.Series, flows: pd.Series | None) -> pd.Series:
+    """
+    扣除追加资金后的单位净值（第一根 K 线 = 1，即时间加权收益）：追加的钱在开盘前到账、计入当天的总资产，
+    所以当天收益 = (总资产 − 当天追加) / 前一天总资产 − 1。没有追加资金时就是 equity / equity[0]
+    """
+    if flows is None or not len(flows):
+        return equity / equity.iloc[0]
+    f = flows_on_bars(equity.index, flows)
+    rets = (equity - f) / equity.shift(1) - 1
+    return (1 + rets.fillna(0.0)).cumprod()
+
+
+def nav_of(equity: pd.DataFrame) -> pd.Series:
+    """回测资产曲线的单位净值，乘第一天的总资产（与 value 同量级）：定投时扣除追加资金（按 invested 列），否则就是 value"""
+    if "invested" not in equity:
+        return equity["value"]
+    f = equity["invested"].diff().fillna(0.0)
+    return unit_value(equity["value"], f[f != 0]) * equity["value"].iloc[0]
+
+
+def apply_flows(nav: pd.Series, flows: pd.Series, initial: float) -> pd.Series:
+    """unit_value 的逆运算：按单位净值的每日收益和同样的追加资金还原总资产（滚动优化拼接样本外曲线用）"""
+    f = flows_on_bars(nav.index, flows).to_numpy()
+    rets = nav.pct_change().fillna(0.0).to_numpy()
+    out, v = np.empty(len(nav)), float(initial)
+    for i in range(len(nav)):
+        v = v * (1 + rets[i]) + f[i]
+        out[i] = v
+    return pd.Series(out, index=nav.index)
+
+
+def xirr(dates, amounts) -> float:
+    """
+    资金加权年化收益率：使 Σ 现金流 / (1 + r)^(距第一笔的年数) = 0 的 r（投入为负、期末市值为正）。
+    二分法求解；无解（如全部同号）时返回 NaN
+    """
+    t = np.array([(pd.Timestamp(d) - pd.Timestamp(dates[0])).days / 365.25 for d in dates])
+    a = np.asarray(amounts, dtype=float)
+    if not (a < 0).any() or not (a > 0).any() or t[-1] <= 0:
+        return np.nan
+    npv = lambda r: float((a / (1 + r) ** t).sum())
+    lo, hi = -0.9999, 1.0
+    while npv(hi) > 0 and hi < 1e6:        # 投入在前、市值在后：npv 随 r 递减
+        hi *= 2
+    if npv(lo) * npv(hi) > 0:
+        return np.nan
+    for _ in range(200):
+        mid = (lo + hi) / 2
+        if npv(mid) > 0:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2
+
+
 def compute_metrics(equity: pd.Series, benchmark: pd.Series, trades: pd.DataFrame,
-                    initial_cash: float, risk_free: float = 0.02) -> dict:
+                    initial_cash: float, risk_free: float = 0.02, flows: pd.Series | None = None) -> dict:
+    """
+    flows：定投追加的资金（日期 -> 金额，不含初始资金）。有追加时：
+    - 总收益 = 期末市值 / 累计投入 − 1，基准同口径（同样的现金流买入持有）；另给资金加权年化 xirr
+    - 年化、波动、夏普、回撤按扣除追加资金后的单位净值算（否则追加的钱会被当成收益、掩盖回撤）
+    """
+    if flows is not None and len(flows):
+        flows = flows[(flows.index >= equity.index[0].normalize()) & (flows.index <= equity.index[-1])]
+    if flows is not None and len(flows):
+        return _metrics_with_flows(equity, benchmark, trades, initial_cash, risk_free, flows)
     final = float(equity.iloc[-1])
     total_ret = final / initial_cash - 1
     days = max((equity.index[-1] - equity.index[0]).days, 1)
@@ -84,11 +159,43 @@ def compute_metrics(equity: pd.Series, benchmark: pd.Series, trades: pd.DataFram
     }
 
 
-def build_benchmark(prices: dict[str, pd.DataFrame], index: pd.DatetimeIndex, initial_cash: float) -> pd.Series:
-    """等权买入并持有所有标的，作为基准（现金分红模式下分红以现金留在账上，不再买回）"""
+def _metrics_with_flows(equity, benchmark, trades, initial_cash, risk_free, flows) -> dict:
+    nav = unit_value(equity, flows) * initial_cash          # 按单位净值算年化、波动、夏普、回撤
+    m = compute_metrics(nav, benchmark, trades, initial_cash, risk_free)
+    invested = initial_cash + float(flows.sum())
+    final, bench_final = float(equity.iloc[-1]), float(benchmark.iloc[-1])
+    dates = [equity.index[0], *flows.index, equity.index[-1]]
+    paid = [-initial_cash, *(-flows.values)]
+    total, bench_ret = final / invested - 1, bench_final / invested - 1
+    m.update({
+        "final_value": final,
+        "total_return": total,
+        "benchmark_return": bench_ret,
+        "excess_return": total - bench_ret,
+        "invested": invested,                  # 累计投入（含初始资金）
+        "contributions": len(flows),           # 追加了几次
+        "profit": final - invested,
+        "xirr": xirr(dates, paid + [final]),
+        "benchmark_xirr": xirr(dates, paid + [bench_final]),
+        "twr": float(nav.iloc[-1] / initial_cash - 1),    # 时间加权收益（不受投入节奏影响）
+    })
+    return m
+
+
+def build_benchmark(prices: dict[str, pd.DataFrame], index: pd.DatetimeIndex, initial_cash: float,
+                    flows: pd.Series | None = None) -> pd.Series:
+    """
+    等权买入并持有所有标的，作为基准（现金分红模式下分红以现金留在账上，不再买回）。
+    flows：定投追加的资金，每笔在到账那根 K 线按收盘价买入同样的组合（与策略同样的现金流）
+    """
     normed = [_hold_value(df) for df in prices.values()]
     avg = pd.concat(normed, axis=1).ffill().mean(axis=1)
-    return (avg.reindex(index, method="ffill").bfill() * initial_cash).rename("benchmark")
+    curve = avg.reindex(index, method="ffill").bfill()
+    if flows is None or not len(flows):
+        return (curve * initial_cash).rename("benchmark")
+    units = flows_on_bars(index, flows) / curve
+    units.iloc[0] += initial_cash               # 初始资金的份数与无追加时一致（curve × initial_cash）
+    return (units.cumsum() * curve).rename("benchmark")
 
 
 def _hold_value(df: pd.DataFrame) -> pd.Series:

@@ -23,7 +23,8 @@
    - 先卖出不在新名单里的持仓，再用释放的资金等额买入新名单里没持有的股票；继续入选的持仓不动（减少换手）
    - 停牌或开盘跌停 → 卖不出，之后每天开盘重试；停牌或开盘涨停 → 买不进，本期放弃
    - 数量按不复权价取整手（股票 100 股、可转债 10 张）；手续费、印花税沿用 A 股成本模型
-   - 可转债强赎公告后、退市前（面板的 exit）：不论是否调仓日，持有的都在开盘卖出
+   - 可转债强赎公告后、退市前，股票退市前最后一个交易日（面板的 exit）：不论是否调仓日，持有的都在开盘卖出
+   - 股票退市时仍未卖出的（面板的 delist）：退市日开盘按 0 或最后价格结算，规则见 panel.py
    - 分红：默认后复权（分红全额再投资、不扣税）；"dividend": "cash" 时现金到账并在卖出时扣红利税，
      规则见 dividends.py
 """
@@ -66,15 +67,41 @@ def rebalance_horizon(rule) -> int:
 
 
 WARMUP_DAYS = 400          # 面板在回测开始前多取的自然日数：预热因子（最长回看 120 个交易日）与 IC 加权的回看期
+IC_LOOKBACK_COVERED = 252  # WARMUP_DAYS 容得下的 IC 回看期（交易日），更长的另外加
 
 
 def panel_warmup_days(spec: dict) -> int:
-    """面板要在回测开始前多取多少个自然日；机器学习还要容下训练窗口和目标的 h+1 天延迟（约 240 个交易日 / 年）"""
-    if spec.get("weighting") != "ml":
+    """
+    面板要在回测开始前多取多少个自然日（约 240 个交易日 / 年）：
+    机器学习还要容下训练窗口和目标的 h+1 天延迟；IC / ICIR 加权的回看期超过 252 时补上超出的部分
+    （≤ 252 时仍为 400，原有结果不变）
+    """
+    weighting = spec.get("weighting")
+    if weighting in ("ic", "icir"):
+        extra = int(spec.get("ic_lookback", 252)) - IC_LOOKBACK_COVERED
+        return WARMUP_DAYS + max(0, int(extra * 365 / 240))
+    if weighting != "ml":
         return WARMUP_DAYS
     from .ml import config
     h = rebalance_horizon(spec.get("rebalance", "monthly"))
     return WARMUP_DAYS + int((config(spec)["window"] + h + 1) * 365 / 240)
+
+
+def ic_history_short(calendar: pd.DatetimeIndex, spec: dict, dates) -> tuple[int, int]:
+    """
+    IC / ICIR 加权：面板开头的数据不够时，有几个调仓日的回看历史比设定短，
+    以及其中最短的一个用到几个已知 IC（IC[d] 要到 d+1+h 日才知道）。不受影响时返回 (0, 0)
+    已知 IC 达到回看期的 90% 就不算短（panel_warmup_days 按自然日折算，本来就差几天）
+    """
+    if spec.get("weighting") not in ("ic", "icir") or not len(calendar):
+        return 0, 0
+    lookback = int(spec.get("ic_lookback", 252))
+    h = rebalance_horizon(spec.get("rebalance", "monthly"))
+    known = calendar.searchsorted(pd.DatetimeIndex(dates)) - h - 1
+    known = known[known < 0.9 * lookback]
+    if not len(known):
+        return 0, 0
+    return len(known), max(0, int(known.min()))
 
 
 WEIGHTING = {"manual": L("手动权重", "Manual weights"), "ic": L("按 IC 加权", "IC-weighted"),
@@ -153,8 +180,10 @@ def build_schedule(panel, spec: dict, start=None, next_days=None, cache: dict | 
 
 # ---------------- Backtrader ----------------
 class SelectionFeed(bt.feeds.PandasData):
-    lines = ("can_buy", "can_sell", "ratio", "exit")  # ratio = 不复权价 / 后复权价；exit = 当天开盘必须卖出
+    # ratio = 不复权价 / 后复权价；exit = 当天开盘必须卖出；delist = 退市结算（0 无，1 按 0 计价，2 按最后价格折现）
+    lines = ("can_buy", "can_sell", "ratio", "exit", "delist")
     params = (("can_buy", "can_buy"), ("can_sell", "can_sell"), ("ratio", "ratio"), ("exit", "exit"),
+              ("delist", "delist"),
               ("openinterest", -1), ("datetime", None), ("dtnums", None))
 
     def preload(self):
@@ -239,9 +268,39 @@ class SelectionStrategy(bt.Strategy):
             self.raw_shares[d] = shares + added
             self.log("sel.dividend", name=d._name, shares=shares, cash=f"{amount:,.2f}", added=added)
 
+    def _settle_delisted(self):
+        """退市日仍未卖出的持仓：不经过券商撮合，直接清掉持仓、按 0 或最后价格计入现金（不收手续费）"""
+        from .panel import DELIST_ZERO
+        for d in sorted(self._held(), key=lambda x: x._name):
+            if d.delist[0] <= 0:
+                continue
+            pos = self.getposition(d)
+            size, cost = pos.size, pos.price * pos.size
+            zero = d.delist[0] == DELIST_ZERO
+            value = 0.0 if zero else size * d.close[0]
+            shares = self.raw_shares.pop(d, round(size / d.ratio[0]))
+            raw_price = 0.0 if zero else d.close[0] * d.ratio[0]
+            pos.set(0, 0.0)
+            self.broker.add_cash(value)
+            self.retry_sell.discard(d)
+            self._dividend_tax(d)
+            now = d.datetime.datetime(0)
+            trade = next((t for t in reversed(self._trades[d][0]) if t.isopen), None)
+            opened = bt.num2date(trade.dtopen) if trade else now
+            bars = len(d) - trade.baropen if trade else 0
+            comm = trade.commission if trade else 0.0
+            self.order_records.append(dict(zip(ORDER_COLUMNS, (now, d._name, "sell", shares, raw_price, value, 0.0))))
+            self.trade_records.append(dict(zip(TRADE_COLUMNS, (d._name, opened, now, bars, value - cost,
+                                                               value - cost - comm))))
+            if zero:
+                self.log("sel.delist_zero", name=d._name)
+            else:
+                self.log("sel.delist_cash", name=d._name, price=f"{raw_price:.2f}")
+
     def next_open(self):
         if self.div_events:
             self._dividends()
+        self._settle_delisted()
         closing = set()
         # 0. 必须卖出的（可转债强赎公告后、退市前）：卖不出的之后每天重试
         for d in sorted(self._held() - self.retry_sell, key=lambda x: x._name):
@@ -364,6 +423,10 @@ def _feed_frame(panel, code: str, cash_dividend: bool = False) -> pd.DataFrame:
     df["can_sell"] = panel.can_sell[code].astype(float)
     exit_ = getattr(panel, "exit", None)
     df["exit"] = exit_[code].astype(float) if exit_ is not None else 0.0
+    df["delist"] = 0.0
+    settle = (getattr(panel, "delist", None) or {}).get(code)
+    if settle:
+        df.loc[df.index >= settle[0], "delist"] = float(settle[1])
     # 上市前没有价格：用第一个有效值占位（此时 can_buy=0，不会被交易）
     df = df.bfill().ffill()
     df["volume"] = df["volume"].fillna(0)

@@ -17,7 +17,7 @@ from pathlib import Path
 from .. import __version__
 
 MAX_FILES = 3
-FORMAT = 2               # 面板字段变了就加 1（同一软件版本开发期间也会重建）
+FORMAT = 3               # 面板字段变了就加 1（同一软件版本开发期间也会重建）
 MAGIC = b"SQP1"          # 文件头：标记 + 8 字节原始长度，之后是 zstd 压缩的 pickle
 
 

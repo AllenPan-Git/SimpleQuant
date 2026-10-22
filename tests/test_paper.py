@@ -121,6 +121,28 @@ def test_single_asset_daily_progression_equals_full_backtest():
     np.testing.assert_allclose(acc.nav()["value"].values, full.equity["value"].values, rtol=1e-9)
 
 
+
+def test_dca_account_daily_progression_equals_full_backtest():
+    """定投账户：每月追加资金、估值定投的储备利息，逐日推进与一次性回测一致；净值记录带累计投入"""
+    df = make_prices(n=400)
+    df["pe"] = np.linspace(10, 20, 400) + np.sin(np.arange(400) / 20) * 3
+    prices = {"510300": df}
+    cal = df.index.append(pd.bdate_range(df.index[-1] + pd.Timedelta(days=1), periods=40))
+    spec = {"kind": "template", "template": "value_dca", "params": {"years": 1}}
+    broker = BrokerConfig(cash=20_000, contribution=3_000)
+    start = df.index[260].date().isoformat()
+    full = run_backtest(prices, *strategies.resolve(spec), broker, trade_start=start)
+    acc = create_account("定投测试", spec, broker, start,
+                         assets=[{"source": "akshare", "symbol": "510300", "asset": "etf", "name": "510300"}])
+    for i in list(range(260, 400, 7)) + [399]:
+        s = run_account(acc, cal, prices={"510300": df.iloc[:i + 1]})
+        assert not s["divergence"]
+    nav = acc.nav()
+    assert keys(acc.fills()) == keys(full.orders) and len(full.orders) > 4
+    np.testing.assert_allclose(nav["value"].values, full.equity["value"].values, rtol=1e-9)
+    np.testing.assert_allclose(nav["invested"].values, full.equity["invested"].values)
+    assert s["metrics"]["invested"] == pytest.approx(nav["invested"].iloc[-1])
+
 def test_single_asset_signal_and_divergence_detection():
     df = make_prices(n=300)
     cal = df.index.append(pd.bdate_range(df.index[-1] + pd.Timedelta(days=1), periods=40))

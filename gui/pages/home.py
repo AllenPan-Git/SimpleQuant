@@ -206,7 +206,9 @@ def _paper_panel():
         _paper_warnings()
         st, nav = acc.state(), acc.nav()
         if st and "value" in st:
-            ret = st["value"] / acc.broker["cash"] - 1
+            # 定投账户按累计投入算收益
+            base = float(nav["invested"].iloc[-1]) if "invested" in nav and len(nav) else acc.broker["cash"]
+            ret = st["value"] / base - 1
             with ui.row().classes("items-baseline gap-2 no-wrap"):
                 ui.label(num(st["value"], 0)).classes("sq-fig").style("font-size: 32px")
                 ui.label(("+" if ret >= 0 else "") + pct(ret)).classes("sq-fig " + ("sq-up" if ret >= 0 else "sq-down"))

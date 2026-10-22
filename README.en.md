@@ -35,13 +35,15 @@ Download into a local library with one click: AKShare daily bars (Eastmoney, wit
 
 ### 02 · Strategy
 Four ways to build a strategy:
-- **Templates**: buy & hold, moving-average cross, RSI, Bollinger bands, momentum rotation (e.g. stocks vs. bonds), fixed-weight rebalancing (e.g. 60/40) and more — just tune the parameters.
+- **Templates**: buy & hold, moving-average cross, RSI, Bollinger bands, momentum rotation (e.g. stocks vs. bonds), fixed-weight rebalancing (e.g. 60/40), dollar-cost averaging, valuation-based DCA and more — just tune the parameters.
 - **Rule builder**: combine indicators such as MA, EMA, MACD, RSI, KDJ, Bollinger bands, ATR, volume ratio, valuation and valuation percentiles, rates and credit spreads, and position return with crosses above/below and comparisons; stop-losses supported. **Trade pacing**: require a condition to hold for N bars in a row (filters out one- or two-day false breakouts), block new buys for N bars after a sell, or scale in (split the position into parts and add one after a set rise / fall or when the buy conditions are met again).
 - **Describe it in words (AI)**: e.g. "buy when MACD crosses up and RSI is below 70; sell on a cross down or an 8% loss". A large language model turns this into rules (rules only, never code) and lists anything it cannot express. A condition breakdown marks each condition as a "state" (> / <, checked on every bar) or an "event" (crosses above / below, true only on the day of the cross), and warns when the wording and the rule disagree or when the same description produces a different rule than last time.
 - **Write Python**: write a strategy class; board lots, T+1 and trading costs still apply, and its parameters can be optimized.
 
 ### 03 · Backtest
 Multiple assets (capital split equally), custom date range and costs, and a choice of dividend handling (reinvest, or cash dividends with dividend tax). The report opens with a plain-language summary, followed by return, CAGR, Sharpe, drawdown, win rate and profit factor, plus the equity curve, trades on the price chart, P&L per trade and the full fill list; the native Backtrader chart is also available. The report also includes a **credibility assessment**: whether there are enough trades, whether returns are concentrated in a few trades, a bootstrap range of returns, what share of random trades with the same count and holding periods the strategy beats (timing skill versus simply riding the market), and whether positions still open at the end carry a large unrealized loss. With a language model configured, AI can explain the results: it compares the annualized return with the risk-free rate, rates Sharpe and Calmar against common yardsticks, and points out how much excess return comes from a falling benchmark; it also looks at the trades, noting when returns rest on a few of them or when positions still open at the end carry a large unrealized loss.
+
+You can add **periodic contributions** (monthly / weekly, i.e. dollar-cost averaging): returns are measured against the total invested with a money-weighted annual return (XIRR), the benchmark buys and holds with the same amounts on the same dates, and drawdown uses the unit value with contributions removed (see "Dollar-cost averaging" below).
 
 A-share rules: 100-share board lots (sized at the real share price, since adjusted data carries the unadjusted price; the fill list shows real share counts and prices), T+1 by product type (stocks and domestic equity ETFs are T+1; bond, money-market, gold, commodity and cross-border ETFs and convertibles are T+0, detected from the code and name), stamp duty on sells, minimum commission and slippage. Signals form at a bar's close and fill at the next bar's open.
 
@@ -178,6 +180,16 @@ PyInstaller cannot cross-compile, so each system's version is built on that syst
 
 - **Interactive strategy chart**: mirrors the native Backtrader chart but supports zoom, pan and linked hover: P&L per trade, price (with indicators and trades), volume and indicator panels share one time axis; quick ranges 1M/3M/6M/1Y/All; non-trading days removed. Rule strategies plot the indicator lines actually used by the rules, plus threshold reference lines.
 - **Native Backtrader chart**: Backtrader's own matplotlib chart, with a selectable range and PNG download; it shares the backtest's setup, and tests ensure its fills match the backtest exactly.
+</details>
+
+<details>
+<summary><b>Dollar-cost averaging</b></summary>
+
+- **Contributions**: added before the open on the first trading day of each month / week; the initial capital counts as the first period. Supported in backtests, parameter optimization, walk-forward (with "Keep positions"), single-asset paper accounts and exported Python scripts; paper trading reminds you to transfer the money the day before.
+- **Dollar-cost averaging**: buys whole lots at the close on the day each contribution arrives, filled at the next open; split equally across assets, with amounts too small for a lot rolled over.
+- **Valuation-based DCA**: scales each contribution by the P/E percentile over the past N years (default 5): 2x below 30%, 0.5x above 70% (0 pauses when expensive), 1x otherwise. Money held back is kept as a reserve and spent first when cheap; the reserve earns the set annual rate (default 2%, like a money market fund). Needs data with P/E: stock daily data, or ETFs / indexes downloaded with index valuation (updated monthly).
+- **Metrics**: total return = final value ÷ total invested − 1; XIRR is the money-weighted annual return, accounting for when each amount was invested; time-weighted return, CAGR, Sharpe and max drawdown use the unit value with contributions removed, so new money does not hide losses.
+- Not yet supported: contributions in selection backtests and selection / portfolio paper accounts, and export to JoinQuant / MyQuant / QMT.
 </details>
 
 <details>

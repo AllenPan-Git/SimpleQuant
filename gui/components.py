@@ -17,7 +17,7 @@ from gui import state
 from gui.common import t, p, lang
 from gui.widgets import section, notice
 from ui import shared
-from ui.shared import TILE_ROWS, TILE_HELP, fmt_metric, dataset_label
+from ui.shared import TILE_ROWS, TILE_HELP, DCA_TILE_ROWS, DCA_TILE_HELP, fmt_metric, dataset_label
 
 DENSE = "outlined dense options-dense"
 
@@ -144,7 +144,10 @@ def load_prices(by_id: dict, pick: DataPick, warm: bool = False) -> dict:
 
 
 def _pct_uses(spec: dict | None) -> list:
-    """规则里用到估值历史百分位（pe_pct / pb_pct）的条件两侧"""
+    """规则里用到估值历史百分位（pe_pct / pb_pct）的条件两侧；估值定投模板按同样的格式给出"""
+    if spec and spec.get("kind") == "template" and spec.get("template") == "value_dca":
+        years = (spec.get("params") or {}).get("years", 5)
+        return [{"ind": "pe_pct", "params": {"years": years}}]
     if not spec or spec.get("kind") != "rule":
         return []
     return [s for side in ("buy", "sell") for c in (spec["rule"].get(side) or {}).get("conditions", [])
@@ -248,21 +251,32 @@ def strategy_selector(key: str, on_change) -> dict:
 
 # ---------------- 资金与费率 ----------------
 def broker_settings(key: str, default_preset: str = "etf", default_cash: int = 100_000, show_t1: bool = True,
-                    show_dividend: bool = False):
-    """返回一个函数，调用时按当前控件值生成 BrokerConfig"""
+                    show_dividend: bool = False, show_contribution: bool = False):
+    """返回一个函数，调用时按当前控件值生成 BrokerConfig；show_contribution：显示定投的每期追加资金"""
     saved = state.STATE.setdefault(f"{key}_broker", {"cash": default_cash, "preset": default_preset, "t1": True,
                                                     "slippage": 5.0, "custom": {}})
     saved.setdefault("dividend", "reinvest")
     saved.setdefault("limit", True)
+    saved.setdefault("contribution", 0)
+    saved.setdefault("contribution_freq", "monthly")
     presets = list(COST_PRESETS)
     with section(t("bt.costs"), "account_balance"):
         with ui.row().classes("w-full items-center gap-3"):
-            cash = ui.number(t("bt.cash"), value=saved["cash"], min=10_000, max=100_000_000, step=10_000,
+            # 下限 1000 元：定投常见的小额起步（如初始 2000、每月 2000）
+            cash = ui.number(t("bt.cash"), value=saved["cash"], min=1_000, max=100_000_000, step=1_000,
                              precision=0, format="%.0f").props("outlined dense").classes("w-48")
             preset = ui.select({k: p(COST_PRESETS[k]["label"]) for k in presets}, label=t("bt.cost_preset"),
                                value=saved["preset"]).props(DENSE).classes("w-48")
             t1 = ui.switch(t("bt.t1"), value=saved["t1"]).tooltip(t("bt.t1_help")) if show_t1 else None
             limit = ui.switch(t("bt.limit"), value=saved["limit"]).tooltip(t("bt.limit_help")).mark(f"{key}_limit") if show_t1 else None
+        add = freq = None
+        if show_contribution:
+            with ui.row().classes("w-full items-center gap-3"):
+                add = ui.number(t("bt.contribution"), value=saved["contribution"], min=0, max=10_000_000, step=500,
+                                precision=0, format="%.0f").props("outlined dense").classes("w-48")                     .mark(f"{key}_contribution")
+                freq = ui.select({"monthly": t("bt.contrib_monthly"), "weekly": t("bt.contrib_weekly")},
+                                 label=t("bt.contrib_freq"), value=saved["contribution_freq"])                     .props(DENSE).classes("w-36")
+                ui.icon("help_outline").classes("sq-muted").tooltip(t("bt.contribution_help"))                     .props("max-width=420px")
         div = None
         if show_dividend:
             with ui.row().classes("w-full items-center gap-3"):
@@ -289,19 +303,23 @@ def broker_settings(key: str, default_preset: str = "etf", default_cash: int = 1
         saved.update(cash=cash.value or default_cash, preset=preset.value, slippage=slip.value or 0,
                      t1=t1.value if t1 else True, dividend=div.value if div else "reinvest",
                      limit=limit.value if limit else True)
+        if add:
+            saved.update(contribution=add.value or 0, contribution_freq=freq.value)
         saved["custom"][preset.value] = {"commission": comm.value or 0, "min_commission": minc.value or 0,
                                          "stamp_duty": stamp.value or 0}
 
     fill_costs()
     preset.on_value_change(lambda e: (fill_costs(), remember()))
-    for el in (cash, comm, minc, stamp, slip) + ((t1, limit) if t1 else ()) + ((div,) if div else ()):
+    for el in (cash, comm, minc, stamp, slip) + ((t1, limit) if t1 else ()) + ((div,) if div else ())             + ((add, freq) if add else ()):
         el.on_value_change(remember)
 
     def make() -> BrokerConfig:
         return BrokerConfig(cash=float(cash.value or default_cash), commission=(comm.value or 0) / 1e4,
                             min_commission=float(minc.value or 0), stamp_duty=(stamp.value or 0) / 1e4,
                             slippage=(slip.value or 0) / 1e4, t_plus_1=t1.value if t1 else True,
-                            dividend=div.value if div else "reinvest", price_limit=limit.value if limit else True)
+                            dividend=div.value if div else "reinvest", price_limit=limit.value if limit else True,
+                            contribution=float(add.value or 0) if add else 0.0,
+                            contribution_freq=freq.value if freq else "monthly")
     return make
 
 
@@ -388,13 +406,13 @@ def metric_tile(label: str, value: str, delta: str | None = None, help_text: str
     return card
 
 
-def _fig_cell(k: str, m: dict):
+def _fig_cell(k: str, m: dict, helps: dict):
     delta = cls = None
     if k == "total_return":
         ex = m.get("excess_return")
         delta = t("bt.excess", v=fmt_metric("excess_return", ex))
     v = m.get(k)
-    if k in ("total_return", "cagr", "excess_return") and v == v and v is not None:
+    if k in ("total_return", "cagr", "excess_return", "xirr", "profit") and v == v and v is not None:
         cls = "sq-up" if v >= 0 else "sq-down"
     elif k == "max_drawdown":
         cls = "sq-down"
@@ -403,16 +421,18 @@ def _fig_cell(k: str, m: dict):
         ui.label(fmt_metric(k, v)).classes("v " + (cls or ""))
         if delta:
             ui.label(delta).classes("d")
-    if k in TILE_HELP:
-        cell.tooltip(t(TILE_HELP[k]))
+    if k in helps:
+        cell.tooltip(t(helps[k]))
 
 
 def metric_tiles(m: dict):
-    """结果指标：两行细线分栏，第一行大号数字"""
-    for i, row in enumerate(TILE_ROWS):
+    """结果指标：两行细线分栏，第一行大号数字；定投（有追加资金）换成按累计投入与 XIRR 的一组"""
+    dca = "invested" in m
+    rows, helps = (DCA_TILE_ROWS, {**TILE_HELP, **DCA_TILE_HELP}) if dca else (TILE_ROWS, TILE_HELP)
+    for i, row in enumerate(rows):
         with ui.element("div").classes("sq-figs" + (" sq-figs-sub" if i else ""))                 .style(f"grid-template-columns: repeat({len(row)}, minmax(0, 1fr))"):
             for k in row:
-                _fig_cell(k, m)
+                _fig_cell(k, m, helps)
 
 
 CRED_STYLE = {"warn": ("warning", "warning"), "note": ("info", "info"), "ok": ("check_circle", "info")}
@@ -451,7 +471,10 @@ def walkforward_results(res, labels: dict, metric: str, stitch_label: str, note:
     with ui.grid().classes("w-full gap-3 grid-cols-2 md:grid-cols-5"):
         metric_tile(t("wf.oos_return"), fmt_metric("total_return", m["total_return"]),
                     t("wf.vs_base", v=fmt_metric("total_return", diff)), None, diff >= 0)
-        metric_tile(t("m.cagr"), fmt_metric("cagr", m["cagr"]))
+        if "xirr" in m:                          # 定投：看资金加权的年化
+            metric_tile(t("m.xirr"), fmt_metric("xirr", m["xirr"]))
+        else:
+            metric_tile(t("m.cagr"), fmt_metric("cagr", m["cagr"]))
         metric_tile(t("m.sharpe"), fmt_metric("sharpe", m["sharpe"]))
         metric_tile(t("m.max_drawdown"), fmt_metric("max_drawdown", m["max_drawdown"]))
         metric_tile(t("wf.wfe"), "—" if res.wfe != res.wfe else f"{res.wfe:.0%}", None, t("wf.wfe_help"))

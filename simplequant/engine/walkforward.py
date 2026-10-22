@@ -13,6 +13,9 @@
   每日收益逐段相乘。相当于"新参数一直在运行"，持仓状态自然延续；换参数时的调仓成本略有少算。
 - restart 每段重新开始：每个测试期从空仓开始、用上一段结束时的资金接力；每段结束时按全部卖出
   扣除佣金、印花税和滑点。更保守，但趋势策略会错过测试期开始时已在进行的行情。
+
+定投（有追加资金）时，每段只取扣除追加资金后的单位净值收益（时间加权）拼接，再按同样的追加资金还原总资产，
+样本外指标、参照的原参数和买入持有都按这同一串现金流计算（总收益相对累计投入、XIRR）。
 """
 
 STITCH_MODES = ("continuous", "restart")
@@ -24,8 +27,8 @@ import pandas as pd
 
 from ..strategies import resolve
 from .optimize import optimize, best_row, apply_combo, build_grid
-from .results import compute_metrics, build_benchmark
-from .runner import run_backtest, BrokerConfig
+from .results import compute_metrics, build_benchmark, nav_of, apply_flows, flows_on_bars
+from .runner import run_backtest, BrokerConfig, contribution_flows
 
 MAX_BACKTESTS = 5000
 
@@ -93,6 +96,10 @@ def walk_forward(prices: dict[str, pd.DataFrame], spec: dict, axes: dict[str, li
     """
     if stitch not in STITCH_MODES:
         raise ValueError(f"unknown stitch mode {stitch}")
+    if stitch == "restart" and broker.contribution:
+        # 每段结束全部卖出、下一段从空仓开始，等于定投每段清仓一次（高估停投时整段拿着现金），不是定投的做法
+        raise ValueError("Periodic contributions need the 'Keep positions' stitch mode / "
+                         "定投（每期追加资金）请用「延续持仓」拼接：每段重新开始会在每段结束时把攒下的持仓全部卖出")
     capital = broker.cash
     common = sorted(set.intersection(*[set(df.index) for df in prices.values()]))
     warm = trade_start is not None
@@ -125,7 +132,7 @@ def walk_forward(prices: dict[str, pd.DataFrame], spec: dict, axes: dict[str, li
             # 用选出的参数从训练期开头跑到测试期结束，只取测试期（含测试期前一天作为收益起点）
             run = run_backtest(_slice(prices, lead(w), w.test_end), *resolve(chosen), broker,
                                trade_start=w.train_start if warm else None)
-            test_eq = run.equity["value"].loc[w.train_end:w.test_end]
+            test_eq = nav_of(run.equity).loc[w.train_end:w.test_end]
             seg = test_eq.pct_change().dropna()
         else:
             # 测试期从空仓开始（之前的数据只预热指标），资金接力；结束时按全部卖出扣成本
@@ -133,7 +140,7 @@ def walk_forward(prices: dict[str, pd.DataFrame], spec: dict, axes: dict[str, li
             run = run_backtest(_slice(prices, lead(w), w.test_end), *resolve(chosen), seg_broker,
                                trade_start=w.test_start)
             eq = run.equity
-            values = pd.concat([pd.Series([capital], index=[w.train_end]), eq["value"]])
+            values = pd.concat([pd.Series([capital], index=[w.train_end]), nav_of(eq)])
             seg = values.pct_change().dropna()
             # 每段（包括最后一段）结束都按全部卖出扣成本，保证结果与之后是否还有数据无关
             held = float(eq["value"].iloc[-1] - eq["cash"].iloc[-1])
@@ -162,19 +169,27 @@ def walk_forward(prices: dict[str, pd.DataFrame], spec: dict, axes: dict[str, li
 
     # 参照 1：原参数从数据开头一直运行，取样本外区间的收益（与"延续持仓"口径一致）
     base = run_backtest(_slice(prices, None, windows[-1].test_end), *resolve(spec), broker, trade_start=trade_start)
-    base_ret = base.equity["value"].pct_change().reindex(value.index).fillna(0)
+    base_ret = nav_of(base.equity).pct_change().reindex(value.index).fillna(0)
     base_ret.iloc[0] = 0.0
     baseline = broker.cash * (1 + base_ret).cumprod()
+    # 定投：样本外从第一个测试期开始，按同样的追加资金还原总资产
+    oos_prices = _slice(prices, windows[0].train_end, windows[-1].test_end)
+    flows = contribution_flows(oos_prices, broker)
+    nav = value                          # 回撤按单位净值算（定投时不受追加资金影响）
+    if len(flows):
+        value, baseline = apply_flows(value, flows, broker.cash), apply_flows(baseline, flows, broker.cash)
     # 参照 2：买入持有
-    bench = build_benchmark(_slice(prices, windows[0].train_end, windows[-1].test_end), value.index, broker.cash)
+    bench = build_benchmark(oos_prices, value.index, broker.cash, flows)
 
     equity = pd.DataFrame({"value": value, "baseline": baseline, "benchmark": bench})
-    equity["drawdown"] = equity["value"] / equity["value"].cummax() - 1
+    equity["drawdown"] = nav / nav.cummax() - 1
+    if len(flows):
+        equity["invested"] = broker.cash + flows_on_bars(value.index, flows).cumsum()
     trades_all = pd.concat(test_trades) if test_trades else pd.DataFrame(columns=base.trades.columns)
-    metrics = compute_metrics(equity["value"], equity["benchmark"], trades_all, broker.cash, broker.risk_free)
+    metrics = compute_metrics(equity["value"], equity["benchmark"], trades_all, broker.cash, broker.risk_free, flows)
     base_metrics = compute_metrics(equity["baseline"], equity["benchmark"],
                                    base.trades[pd.to_datetime(base.trades["close_time"]) >= oos_start]
-                                   if len(base.trades) else base.trades, broker.cash, broker.risk_free)
+                                   if len(base.trades) else base.trades, broker.cash, broker.risk_free, flows)
     table = pd.DataFrame(rows)
     is_cagr = table["train_cagr"].mean()
     wfe = metrics["cagr"] / is_cagr if is_cagr and is_cagr > 0 else np.nan

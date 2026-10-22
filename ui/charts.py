@@ -65,6 +65,10 @@ def equity_chart(equity: pd.DataFrame, lang: str = "zh", benchmark_label: str | 
     fig.add_trace(go.Scatter(x=x, y=equity["benchmark"], name=benchmark_label or tr("chart.benchmark", lang),
                              line=dict(color=BENCHMARK, width=1.5, dash="dot"), hovertemplate="%{y:,.0f}"),
                   row=1, col=1)
+    if "invested" in equity:          # 定投：累计投入（阶梯线）
+        fig.add_trace(go.Scatter(x=x, y=equity["invested"], name=tr("chart.invested", lang), line_shape="hv",
+                                 line=dict(color=BENCHMARK, width=1), opacity=0.6, hovertemplate="%{y:,.0f}"),
+                      row=1, col=1)
     fig.add_trace(go.Scatter(x=x, y=equity["drawdown"], name=tr("chart.drawdown", lang), fill="tozeroy",
                              line=dict(color=DRAWDOWN, width=1), fillcolor="rgba(30,122,76,0.14)",
                              hovertemplate="%{y:.2%}", showlegend=False), row=2, col=1)

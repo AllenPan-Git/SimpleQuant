@@ -6,6 +6,8 @@
 import backtrader as bt
 
 from ..engine.base_strategy import BaseStrategy
+from ..rules.schema import BARS_PER_YEAR
+from .factors import Percentile
 from ..i18n import L
 from .registry import Param, Template, register
 
@@ -174,6 +176,94 @@ class FixedWeight(BaseStrategy):
                 self.order_target_pct(d, targets[d], ("reason.fw_buy", {"w": targets[d] * 100}))
 
 
+class Dca(BaseStrategy):
+    """
+    定投：开始那天投入初始资金，之后每笔追加资金（BrokerConfig.contribution）到账当天买入，多个标的平分。
+    凑不满一手的零头留在账上、下一期一起买。multiplier 为 1 即定期定额；估值定投见 ValueDca
+    """
+
+    def __init__(self):
+        super().__init__()
+        self._first = True
+        self.reserve = 0.0          # 估值偏高时少投、留作储备的资金（估值偏低时多投先用它）
+
+    def multiplier(self, d) -> tuple[float, tuple]:
+        """本期对 d 的投入倍数与下单理由"""
+        return 1.0, ("reason.dca", {})
+
+    def next(self):
+        day = self.datas[0].datetime.date(0)
+        if self.p.trade_start is not None and day < self.p.trade_start:
+            return
+        base = self.broker.getcash() if self._first else self.new_cash
+        self._first = False
+        if base <= 0 or any(self.has_pending(d) for d in self.datas):
+            return
+        share = base / len(self.datas)
+        plan = [(d, *self.multiplier(d)) for d in self.datas]
+        cash = self.broker.getcash()
+        # 少投的部分记入储备，多投的部分从储备里出（储备不够就只投手上有的）
+        self.reserve = min(max(self.reserve + sum(share * (1 - m) for _, m, _ in plan), 0.0), cash)
+        wants = [share * m for _, m, _ in plan]
+        if sum(wants) <= 0:
+            return
+        spend = cash - self.reserve            # 含之前凑不满一手的零头
+        for (d, _, reason), w in zip(plan, wants):
+            if w > 0:
+                self.order_value(d, spend * w / sum(wants), reason)
+
+
+class ValueDca(Dca):
+    """
+    估值定投：按市盈率在过去 years 年里的百分位调整每期投入——低于 low 投 cheap_mult 倍，高于 high 投 dear_mult 倍，
+    其余 1 倍。百分位算不出（没有估值数据或历史不足一年）时按 1 倍。
+    储备按 reserve_rate（年化 %，按自然日复利）计息，相当于放在货币基金里；利息算收益、不算投入
+    """
+    params = (("years", 5), ("low", 30), ("high", 70), ("cheap_mult", 2.0), ("dear_mult", 0.5),
+              ("reserve_rate", 2.0))
+    needs_open = True               # 开盘前给储备计息（runner 据此开 cheat_on_open）
+
+    def __init__(self):
+        super().__init__()
+        self.pct = {d: Percentile(d.pe, window=int(self.p.years) * BARS_PER_YEAR, min_count=BARS_PER_YEAR).pct
+                    for d in self.datas}
+        self._no_pct = set()
+        self._accrued = None        # 储备利息算到哪一天
+        self.interest = 0.0         # 储备累计利息
+
+    def next_open(self):
+        super().next_open()
+        self._accrue()
+
+    def _accrue(self):
+        """开盘前给储备计上次以来的利息（和追加资金一样，开盘前 add_cash 收盘时才可用，next 里的储备不会被现金截掉）"""
+        day = max((d.datetime.date(0) for d in self.datas if len(d)), default=None)
+        if day is None:
+            return
+        if self._accrued is not None and self.reserve > 0 and self.p.reserve_rate:
+            amount = self.reserve * ((1 + self.p.reserve_rate / 100) ** ((day - self._accrued).days / 365) - 1)
+            if amount > 0:
+                self.broker.add_cash(amount)
+                self.reserve += amount
+                self.interest += amount
+        self._accrued = day
+
+    def multiplier(self, d):
+        v = self.pct[d][0]
+        if v != v:
+            if d not in self._no_pct:
+                self._no_pct.add(d)
+                self.log("log.no_pe_pct", d, name=d._name)
+            return 1.0, ("reason.dca", {})
+        if v < self.p.low:
+            m = float(self.p.cheap_mult)
+        elif v > self.p.high:
+            m = float(self.p.dear_mult)
+        else:
+            m = 1.0
+        return m, ("reason.value_dca", {"v": v, "m": m})
+
+
 register(Template(
     "buy_hold", L("买入持有", "Buy & hold"),
     L("第一根 K 线建仓后一直持有，一般用作对比基准。", "Buys on the first bar and holds. Mostly used as a baseline."),
@@ -230,3 +320,29 @@ register(Template(
                 "Rebalance when any weight is off target by more than this; 0 rebalances at every check")),
         PCT,
     ], min_assets=2))
+register(Template(
+    "dca", L("定期定额定投", "Dollar-cost averaging"),
+    L("开始时投入初始资金，之后每期追加的资金到账就买入，多个标的平分。需要在资金设置里填写每期追加金额；"
+      "零头凑不满一手的留到下一期。",
+      "Invests the starting cash, then buys with each periodic contribution as it arrives, split equally across "
+      "assets. Set the contribution amount in the capital settings; amounts too small for a lot roll over."),
+    Dca, []))
+register(Template(
+    "value_dca", L("估值定投", "Valuation-based DCA"),
+    L("在定期定额的基础上按市盈率历史百分位调整每期投入：估值低时多投、高时少投，少投的钱留作储备，低估时再用。"
+      "需要带市盈率的数据（股票日线，或下载时含指数估值的 ETF）和每期追加金额。储备按设定的年化收益计息（相当于放在货币基金里）。",
+      "Like dollar-cost averaging, but scales each contribution by the P/E percentile: more when cheap, less when "
+      "expensive. Money held back is kept as a reserve for cheap periods, earning the set annual rate (like a money "
+      "market fund). Needs data with "
+      "P/E (stock daily data, or ETFs downloaded with index valuation) and a contribution amount."),
+    ValueDca, [
+        Param("years", L("百分位回看年数", "Percentile lookback (years)"), 5, 1, 20, 1),
+        Param("low", L("低估线（百分位低于）", "Cheap below (percentile)"), 30, 0, 50, 5),
+        Param("high", L("高估线（百分位高于）", "Expensive above (percentile)"), 70, 50, 100, 5),
+        Param("cheap_mult", L("低估时投入倍数", "Multiplier when cheap"), 2.0, 1.0, 5.0, 0.5),
+        Param("dear_mult", L("高估时投入倍数", "Multiplier when expensive"), 0.5, 0.0, 1.0, 0.1,
+              L("0 表示高估时暂停投入", "0 pauses contributions when expensive")),
+        Param("reserve_rate", L("储备年化收益（%）", "Reserve annual yield (%)"), 2.0, 0.0, 10.0, 0.5,
+              L("少投留下的钱按这个收益率计息，相当于放在货币基金里；0 表示不计息",
+                "Interest on money held back, like a money market fund; 0 means none")),
+    ], constraint=lambda p: p["low"] < p["high"]))

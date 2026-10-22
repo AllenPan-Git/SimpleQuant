@@ -25,7 +25,7 @@ def test_every_template_runs(key):
     assert res.metrics["final_value"] > 0
     if key == "fixed_weight":              # 再平衡只减仓、不清仓：没有完整交易，但有卖出
         assert (res.orders["side"] == "sell").any()
-    elif key != "buy_hold":
+    elif key not in ("buy_hold", "dca", "value_dca"):     # 没设追加金额时定投 = 买入持有
         assert res.metrics["trades"] > 0, key
     assert (res.orders["size"] % 100 == 0).all() or key == "momentum_rotation"
 

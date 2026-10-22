@@ -649,6 +649,29 @@ async def test_backtest_cash_dividend(user: User, lib_dir, monkeypatch):
     await user.should_see("无法使用现金分红")
 
 
+async def test_backtest_dca(user: User, lib_dir):
+    """定投：没填追加金额时提示等同于买入持有；填了以后显示累计投入、XIRR，资金曲线带累计投入"""
+    _save_prices()
+    await user.open("/backtest")
+    user.find(marker="bt_strategy").elements.pop().set_value("tpl:dca")
+    user.find(marker="run").click()
+    assert await _wait(lambda: state.STATE.get("bt", {}).get("result") is not None)
+    await user.should_see("等同于买入持有")
+
+    state.STATE.pop("bt", None)
+    await user.open("/backtest")
+    user.find(marker="bt_contribution").elements.pop().set_value(2000)
+    await settle()
+    assert state.STATE["bt_broker"]["contribution"] == 2000
+    user.find(marker="run").click()
+    assert await _wait(lambda: state.STATE.get("bt", {}).get("result") is not None)
+    res = state.STATE["bt"]["result"]
+    assert res.metrics["contributions"] > 0 and "invested" in res.equity
+    await user.should_see("累计投入")
+    await user.should_see("资金加权年化")
+    await user.should_see("每月追加 2,000 元")
+
+
 async def test_optimize_cash_dividend(user: User, lib_dir, monkeypatch):
     from simplequant.data import cash_dividend
     monkeypatch.setattr(cash_dividend, "fund_dividends", lambda s: cash_dividend.EMPTY)

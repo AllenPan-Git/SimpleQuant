@@ -60,7 +60,7 @@ def page():
                         .props("inline dense").mark("bt_mode")
                     ui.icon("help_outline").classes("sq-muted").tooltip(t("bt.mode_help"))
                 strat = strategy_selector("bt", lambda: check())
-                make_broker = broker_settings("bt", show_dividend=True)
+                make_broker = broker_settings("bt", show_dividend=True, show_contribution=True)
         setup.on_value_change(lambda _: draw_chips())
         warnings = ui.column().classes("w-full gap-2")
         running = ui.row().classes("items-center gap-2")
@@ -88,7 +88,11 @@ def page():
                 ("range", f"{pick.start} ~ {pick.end}" if pick.date_range else "—"),
                 ("broker", t("bt.cash_wan", v=f"{(b.get('cash') or 0) / 1e4:g}")
                  + (" · " + p(preset["label"]) if preset else "") + (" · T+1" if b.get("t1", True) else "")
-                 + (" · " + t("bt.chip_cash_div") if b.get("dividend") == "cash" else "")),
+                 + (" · " + t("bt.chip_cash_div") if b.get("dividend") == "cash" else "")
+                 + (" · " + t("bt.chip_contribution", v=f"{b['contribution']:,.0f}",
+                              freq=t("bt.contrib_weekly") if b.get("contribution_freq") == "weekly"
+                              else t("bt.contrib_monthly"))
+                    if b.get("contribution") else "")),
             ]
             with chips:
                 for k, v in items:
@@ -412,6 +416,8 @@ def _span(index) -> str:
 def lede(res) -> str:
     """结论段落：先讲结果，再和买入持有比较（数字全部来自本次回测）"""
     m, eq = res.metrics, res.equity
+    if "invested" in m:
+        return _lede_dca(m, eq)
     bench_dd = float((eq["benchmark"] / eq["benchmark"].cummax() - 1).min())
     text = t("bt.lede", span=_span(eq.index), ret=pct(m["total_return"]), cagr=pct(m["cagr"]),
              bench=pct(m["benchmark_return"]), dd=pct(m["max_drawdown"]), bdd=pct(bench_dd), n=m["trades"])
@@ -422,6 +428,16 @@ def lede(res) -> str:
     elif m["max_drawdown"] < bench_dd - 0.005:
         parts.append(t("bt.lede_rougher"))
     return ("" if lang() == "zh" else " ").join(parts)      # 英文句子之间要空格
+
+
+def _lede_dca(m: dict, eq) -> str:
+    """定投：按累计投入讲收益，年化用 XIRR；基准是同样的现金流买入持有"""
+    text = t("bt.lede_dca", span=_span(eq.index), n=m["contributions"], invested=f"{m['invested']:,.0f}",
+             final=f"{m['final_value']:,.0f}", ret=pct(m["total_return"]), xirr=pct(m["xirr"]),
+             bench=pct(m["benchmark_return"]), bxirr=pct(m["benchmark_xirr"]), dd=pct(m["max_drawdown"]))
+    diff = (m["total_return"] - m["benchmark_return"]) * 100
+    return ("" if lang() == "zh" else " ").join(
+        [text, t("bt.lede_dca_beat" if diff >= 0 else "bt.lede_dca_lag", v=f"{abs(diff):.1f}")])
 
 
 def _rule_title(text: str, top: bool = False):
@@ -472,6 +488,10 @@ def _results(BT: dict, exp_menu):
             if res.t0:
                 with ui.column().classes("w-full pt-4"):
                     notice(t("bt.t0_assets", names=", ".join(res.t0)), "swap_horiz")
+            spec = BT.get("spec") or {}
+            if spec.get("template") in ("dca", "value_dca") and "invested" not in res.metrics:
+                with ui.column().classes("w-full pt-4"):
+                    notice(t("bt.dca_no_contribution"), "info", "warning")
             if res.lot_too_big:
                 with ui.column().classes("w-full pt-4"):
                     notice(t("bt.lot_too_big", names=", ".join(res.lot_too_big)), "savings", "warning")
@@ -483,8 +503,9 @@ def _results(BT: dict, exp_menu):
             explain_out = ui.column().classes("w-full pt-4")
 
             with ui.column().classes("w-full gap-1 pt-6"):
-                plot(equity_chart(res.equity, lg))
-                ui.html(f"<b>{t('bt.fig1')}</b>{t('bt.fig1_caption')}").classes("sq-caption")
+                dca = "invested" in res.equity
+                plot(equity_chart(res.equity, lg, t("bt.bench_dca") if dca else None))
+                ui.html(f"<b>{t('bt.fig1')}</b>{t('bt.fig1_caption_dca' if dca else 'bt.fig1_caption')}")                     .classes("sq-caption")
 
             with ui.column().classes("w-full gap-1 pt-8"):
                 chart_box = ui.column().classes("w-full")

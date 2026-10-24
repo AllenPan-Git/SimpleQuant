@@ -5,7 +5,8 @@ import pandas as pd
 import pytest
 
 from simplequant.stocks import StockStore, build_panel, build_schedule, run_selection
-from simplequant.stocks.panel import DELIST_CASH, DELIST_ZERO, EXIT_GAP_DAYS, delisting, exit_frame
+from simplequant.stocks.panel import (DELIST_CASH, DELIST_ZERO, ENDGAME_DAYS, EXIT_GAP_DAYS, delisting,
+                                      delisting_period, exit_frame)
 from simplequant.stocks.store import listed_snapshots
 from test_stocks import SPEC, fake_fetcher, make_panel
 
@@ -40,6 +41,33 @@ def test_delisting_rules():
 
     ex = exit_frame(exit_dates, cal, codes)
     assert not ex.loc[:last - pd.Timedelta(days=1)].any().any() and ex.loc[last:, "sh.600001"].all()
+
+
+def test_delisting_period():
+    """整理期 = 最后一次 ST 的次日到最后交易日（中间停牌的日子不算起点）；没有 ST 记录的取最后 ENDGAME_DAYS 个交易日"""
+    cal = pd.bdate_range("2024-01-01", "2024-03-29")
+    codes = ["sh.600001", "sh.600002", "sh.600003"]
+    tradable = pd.DataFrame(True, index=cal, columns=codes)
+    is_st = pd.DataFrame(False, index=cal, columns=codes)
+    last = cal[50]
+    is_st.loc[:cal[30], "sh.600001"] = True
+    tradable.loc[cal[31]:cal[34], "sh.600001"] = False     # ST 摘帽前停牌几天，整理期从复牌那天算
+    tradable.loc[cal > last, codes] = False
+    assert delisting_period(tradable, is_st, {}) is None
+    per = delisting_period(tradable, is_st, {"sh.600001": last, "sh.600002": last})
+    assert per["sh.600001"][per["sh.600001"]].index.tolist() == list(cal[35:51])
+    assert per["sh.600002"].sum() == ENDGAME_DAYS and per.at[last, "sh.600002"]
+    assert not per["sh.600003"].any()
+
+
+def test_exclude_st_also_excludes_delisting_period():
+    p = make_panel()
+    code, d = p.codes[0], p.calendar[5]
+    assert p.eligible(True).at[d, code]
+    p.delisting_period = pd.DataFrame(False, index=p.calendar, columns=p.codes)
+    p.delisting_period.at[d, code] = True
+    assert not p.eligible(True).at[d, code]
+    assert p.eligible(False).at[d, code]             # 不排除 ST 时可以买
 
 
 def _delist_one(sellable: bool, mode: int):

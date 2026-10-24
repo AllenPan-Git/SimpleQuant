@@ -5,6 +5,14 @@
 
 Changes in each release. `tools/release.py` copies the matching section into the GitHub release notes.
 
+## 1.6.1（2026-10-25）
+
+### 更新内容
+- 修复：多因子选股勾选「排除 ST」时，仍可能选入退市整理期的股票。数据源 BaoStock 在退市整理期不再把股票标为 ST，按市值从小到大选股时这类股票常排在最前。现在退市整理期（困境退市的股票最后一次被标为 ST 的次日到最后交易日）与 ST 一并排除。只影响全 A 股票池，沪深300、中证500、上证50 的股票在退市前早已调出指数
+
+### Changes
+- Fix: with "Exclude ST" checked, stock selection could still pick stocks in the delisting arrangement period, because BaoStock no longer flags them as ST during that period; small-cap selections often ranked them first. The delisting period (from the day after a distressed stock was last flagged ST to its last trading day) is now excluded together with ST. Only the All A-shares universe is affected; CSI 300, CSI 500 and SSE 50 stocks leave the index long before delisting
+
 ## 1.6.0（2026-10-22）
 
 ### 更新内容

@@ -9,6 +9,9 @@
   卖不出、挂到退市日的，困境退市（ST、股价低于 1 元、简称带「退」——BaoStock 在退市整理期把 isST 标成 0）按 0 计价，
   吸收合并、主动退市按最后价格折为现金（delist）。
   2020–2026 实测：间隔 ≤ 15 天的 106 只困境退市股都叫「退市××」、105 只最后一天开盘能卖；> 15 天的 74 只只有 7 只能卖
+- 退市整理期（delisting_period）：困境退市股最后一次标 ST 的次日到最后交易日（2021 起 118 只「退」股里 115 只
+  ST 到整理期前一天，之后交易 15 天，改革前 30 天）；没有 ST 记录的取最后 ENDGAME_DAYS（30）个交易日。
+  还没摘牌、现在简称已带「退」的同样处理（当天的简称，不算前视）。排除 ST 时一并排除
 - 涨跌停（按不复权前收盘价）：沪深主板 10%、创业板（2020-08-24 起）和科创板 20%、北交所 30%、ST 5%
   开盘即涨停 → 买不进；开盘即跌停 → 卖不出；停牌 → 都不行
 """
@@ -26,6 +29,8 @@ OTHER_FIELDS = ["volume", "amount", "turnover", "pe", "pb", "ps", "pct_chg"]
 CHINEXT_20PCT_FROM = pd.Timestamp("2020-08-24")
 EXIT_GAP_DAYS = 15            # 最后交易日到退市日超过这么多自然日：停牌后才宣布退市，不在最后交易日强制卖出
 DELIST_ZERO, DELIST_CASH = 1, 2
+ENDGAME_DAYS = 30             # 没有 ST 记录、推不出整理期起点时：取最后这么多个交易日（整理期 2020 年改革前 30 天、之后 15 天；
+                              # 新规下多出的 15 天股票本是 *ST，排除不误伤。例：天翔退 2021 年整理期 30 天、BaoStock 无 ST 记录）
 
 
 @dataclass
@@ -50,6 +55,7 @@ class Panel:
     exit: pd.DataFrame | None = None     # 当天开盘必须卖出（可转债强赎公告后、退市前），bool
     exit_dates: dict = field(default_factory=dict)   # 代码 -> 必须卖出的第一天（模拟盘判断明天要不要卖）
     delist: dict = field(default_factory=dict)       # 代码 -> (结算日, DELIST_ZERO / DELIST_CASH)：退市时仍未卖出的持仓
+    delisting_period: pd.DataFrame | None = None      # 当天在退市整理期（bool）；BaoStock 这段 isST = 0，排除 ST 时一并排除
     extra_filters: dict = field(default_factory=dict)   # 选股条件名 -> fn(panel, 值) -> bool DataFrame
     bench_total_return: bool = False     # 股票池基准是全收益指数（False：价格指数，不含分红，超额收益偏高）
 
@@ -65,10 +71,12 @@ class Panel:
         return self.fields[name]
 
     def eligible(self, exclude_st: bool = True, min_list_days: int = 0) -> pd.DataFrame:
-        """可以参与选股的股票：当天是成分股、正常交易、（可选）非 ST、上市满 N 天"""
+        """可以参与选股的股票：当天是成分股、正常交易、（可选）非 ST 且不在退市整理期、上市满 N 天"""
         ok = self.member & self.tradable
         if exclude_st:
             ok &= ~self.is_st
+            if self.delisting_period is not None:
+                ok &= ~self.delisting_period
         if min_list_days:
             ok &= self.listed_days >= min_list_days
         return ok
@@ -135,6 +143,24 @@ def delisting(raw_close: pd.DataFrame, tradable: pd.DataFrame, is_st: pd.DataFra
     return exit_dates, delist
 
 
+def delisting_period(tradable: pd.DataFrame, is_st: pd.DataFrame, ends: dict) -> pd.DataFrame | None:
+    """代码 -> 最后交易日 → 每天是否在退市整理期：最后一次标 ST 的次日起；没有 ST 记录的取最后 ENDGAME_DAYS 个交易日"""
+    if not ends:
+        return None
+    out = pd.DataFrame(False, index=tradable.index, columns=tradable.columns)
+    for c, end in ends.items():
+        traded = tradable[c].loc[:end]
+        days = traded.index[traded.values]
+        if days.empty:
+            continue
+        st = is_st[c].loc[:end]
+        st_days = st.index[st.values]
+        start = days[days > st_days[-1]][:1] if len(st_days) else days[-ENDGAME_DAYS:][:1]
+        if len(start):
+            out.loc[start[0]:end, c] = True
+    return out
+
+
 def exit_frame(exit_dates: dict, calendar: pd.DatetimeIndex, codes: list[str]) -> pd.DataFrame:
     out = pd.DataFrame(False, index=calendar, columns=codes)
     for c, d in exit_dates.items():
@@ -185,6 +211,10 @@ def build_panel(store: StockStore, universe: str, start: str, end: str) -> Panel
     can_buy, can_sell = trading_constraints(frames["raw_open"], frames["raw_preclose"], tradable, is_st)
     exit_dates, delist = delisting(frames["raw_close"], tradable, is_st, out_date, delist_names)
     exit_df = exit_frame(exit_dates, calendar, codes)
+    ends = {c: d for c, d in exit_dates.items() if delist.get(c, (None, 0))[1] == DELIST_ZERO}
+    for c, name in delist_names.items():         # 还没摘牌、已经进入整理期的
+        if "退" in str(name) and c not in delist and tradable[c].any():
+            ends[c] = tradable.index[tradable[c].values][-1]
     can_buy &= ~exit_df
     has_fin = add_fundamentals(frames, store, codes, calendar)
     div_codes, div_patched = add_dividends(frames, store, codes, calendar, is_st)
@@ -193,7 +223,8 @@ def build_panel(store: StockStore, universe: str, start: str, end: str) -> Panel
                  benchmark=bench.loc[calendar, "close"] if tr is None else tr, names=names,
                  industry=store.load_industry().reindex(codes), has_fin=has_fin, div_codes=div_codes,
                  div_patched=div_patched, bench_total_return=tr is not None,
-                 exit=exit_df if exit_dates else None, exit_dates=exit_dates, delist=delist)
+                 exit=exit_df if exit_dates else None, exit_dates=exit_dates, delist=delist,
+                 delisting_period=delisting_period(tradable, is_st, ends))
 
 
 def add_dividends(frames: dict, store: StockStore, codes: list[str], calendar: pd.DatetimeIndex,

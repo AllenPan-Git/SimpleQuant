@@ -27,6 +27,10 @@ VALUATION_SOURCES = L("BaoStock 股票日线逐日提供；AKShare 下载常见�
                       "daily in BaoStock stock data; AKShare adds index valuation (updated monthly) to common broad-index ETFs / indices")
 PCT_DESC = L("当前估值在过去 N 年里的位置：0 = 最低，100 = 最高。不足 N 年时用已有数据（至少 1 年）",
              "where the current valuation sits within the past N years: 0 = lowest, 100 = highest. Uses the data available if shorter (at least 1 year)")
+ERP_DESC = L("100 / 市盈率 − 10 年期国债收益率，单位 %；越高表示股票相对债券越便宜。市盈率为负时为空。"
+             "需要数据里有市盈率（同「市盈率」），并先在「数据」页下载利率数据",
+             "100 / P/E − 10Y government yield, in %; higher means stocks are cheaper relative to bonds. Empty when P/E is negative. "
+             "Needs P/E in the data (as for P/E) and rates downloaded on the Data page")
 
 GROUPS = {
     "price": L("价格", "Price"),
@@ -35,7 +39,7 @@ GROUPS = {
     "volume": L("量能", "Volume"),
     "volatility": L("波动", "Volatility"),
     "valuation": L("估值/换手", "Valuation / turnover"),
-    "macro": L("利率/信用利差", "Rates / credit spread"),
+    "macro": L("利率/利差", "Rates / spreads"),
     "position": L("持仓", "Position"),
 }
 
@@ -125,6 +129,14 @@ INDICATORS = {
                       "params": [], "requires": "credit_spread", "macro": True,
                       "desc": L("3 年期中短期票据（AAA）减 3 年期国债收益率，单位 BP；走阔通常表示风险偏好下降",
                                 "3Y AAA medium-term notes minus 3Y government yield in bp; widening usually means risk aversion")},
+    # 股债利差：本标的的盈利收益率减 10 年期国债收益率；既要估值列，又要利率数据
+    "erp": {"label": L("股债利差 1/PE−10年国债(%)", "Equity risk premium 1/PE − 10Y yield (%)"), "group": "macro",
+            "params": [], "requires": ("pe", "cgb10y"), "desc": ERP_DESC},
+    "erp_pct": {"label": L("股债利差历史百分位(%)", "Equity risk premium percentile (%)"), "group": "macro",
+                "params": [YEARS], "requires": ("pe", "cgb10y"),
+                "desc": L("当前股债利差在过去 N 年里的位置：100 = 股票相对债券最便宜。不足 N 年时用已有数据（至少 1 年）",
+                          "where the current premium sits within the past N years: 100 = stocks cheapest relative to bonds. "
+                          "Uses the data available if shorter (at least 1 year)")},
     # ---- 持仓 ----
     "pnl_pct": {"label": L("持仓收益率(%)", "Position P&L (%)"), "group": "position", "params": [], "position": True,
                 "desc": L("用于止损/止盈，例如 < -8", "for stop loss / take profit, e.g. < -8")},
@@ -142,10 +154,14 @@ def required_columns(rule: dict) -> set[str]:
     for side in ("buy", "sell"):
         for c in (rule.get(side) or {}).get("conditions", []):
             for s in (c.get("left") or {}, c.get("right") or {}):
-                req = INDICATORS.get(s.get("ind"), {}).get("requires")
-                if req:
-                    cols.add(req)
+                cols.update(requires_of(s.get("ind")))
     return cols
+
+
+def requires_of(ind: str | None) -> tuple[str, ...]:
+    """指标需要的列；requires 可以是一个列名，也可以是几个（股债利差要市盈率和国债收益率）"""
+    req = INDICATORS.get(ind, {}).get("requires")
+    return (req,) if isinstance(req, str) else tuple(req or ())
 
 OPS = {
     "cross_above": L("上穿", "crosses above"),

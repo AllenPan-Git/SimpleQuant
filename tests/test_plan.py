@@ -132,7 +132,7 @@ def test_selection_round_trip_with_custom_factor(factor_dir):
     assert back["custom_factors"] == {key: {"name": "简单股息率", "code": DY, "direction": 1, "desc": "过去一年"}}
     assert back["warmup_start"] == "2019-12-01" and back["range"] == ["2021-01-04", "2026-09-29"]
     assert P.broker_of(back) == broker and back["result"] == {"total_return": 0.5477, "trades": 120}
-    assert P.needs(back) == {"fin": False, "div": True, "industry": False}     # 自定义因子用了分红字段
+    assert P.needs(back) == {"fin": False, "div": True, "industry": False, "risk": False}     # 自定义因子用了分红字段
 
     factor_dir.delete_factor(key)
     with pytest.raises(P.PlanError) as e:                                   # 因子已删除：不能导出
@@ -160,10 +160,10 @@ def test_selection_plan_refused(change, key):
 def test_selection_needs():
     plan = P.make_selection_plan("x", {**SEL, "dividend": "cash", "neutralize": {"industry": True, "size": True}},
                                  "2021-01-04", "2022-01-04", "2020-01-02", BrokerConfig())
-    assert P.needs(plan) == {"fin": True, "div": True, "industry": True}
+    assert P.needs(plan) == {"fin": True, "div": True, "industry": True, "risk": False}
     plan = P.make_selection_plan("x", {**SEL, "factors": [{"key": "roe", "weight": 1, "direction": 1}]},
                                  "2021-01-04", "2022-01-04", "2020-01-02", BrokerConfig())
-    assert P.needs(plan) == {"fin": True, "div": False, "industry": False}
+    assert P.needs(plan) == {"fin": True, "div": False, "industry": False, "risk": False}
 
 
 def test_selection_missing(tmp_path):

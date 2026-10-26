@@ -78,12 +78,12 @@ def test_rich_rule_exports_identically():
 
 
 def test_every_indicator_can_be_exported():
-    from simplequant.rules import INDICATORS
+    from simplequant.rules import INDICATORS, requires_of
     from simplequant.export.python_script import _line_expr
     for key, meta in INDICATORS.items():
         if meta.get("position"):
             continue
-        if meta.get("macro"):                     # 利率条件不支持导出（见 test_rates.py）
+        if any(INDICATORS[c].get("macro") for c in requires_of(key)):     # 利率条件不支持导出（见 test_rates.py）
             with pytest.raises(ValueError):
                 _line_expr(make_ind(key))
             continue

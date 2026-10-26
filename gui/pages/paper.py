@@ -20,6 +20,7 @@ from simplequant.strategies.code_strategy import explain_error
 from gui import state
 from gui.common import t, p, lang
 from gui.components import broker_settings, metric_tile, dividend_notices, bench_label
+from gui.plan_io import restore_broker
 from gui.layout import frame, page_title
 from gui.widgets import df_table, fmt_table, plot, notice, download_btn, LogBox
 from ui.charts import equity_chart
@@ -73,7 +74,7 @@ def page():
 
 def _new_account_form(PP, run_accounts, redraw):
     lg = lang()
-    saved = strategies.list_strategies()
+    saved, brokers = strategies.list_strategies(), strategies.strategy_brokers()
     form = ui.column().classes("w-full gap-3")
     info = {}
 
@@ -150,9 +151,15 @@ def _new_account_form(PP, run_accounts, redraw):
                 past.set_enabled(PP["mode"] == "past")
             single = PP["kind"] == "single"
             cb = not single and U.kind(universe) == "cb"
-            make_broker = broker_settings("pp_" + PP["kind"] + ("_cb" if cb else ""),
-                                          default_preset="etf" if single else "bond" if cb else "stock",
-                                          default_cash=100_000 if single else 1_000_000, show_t1=single,
+            bkey = "pp_" + PP["kind"] + ("_cb" if cb else "")
+            preset0, cash0 = ("etf" if single else "bond" if cb else "stock"), (100_000 if single else 1_000_000)
+            # 换到一个记有资金与费率的已保存策略时，先填上它的；之后手动改的保留到再换策略
+            chosen = PP["strategy"][6:] if single and PP["strategy"].startswith("saved:") else                 None if single else PP["sel"]
+            if chosen and PP.get(f"{bkey}_from") != chosen and chosen in brokers:
+                restore_broker(bkey, {"broker": brokers[chosen]},
+                               {"cash": cash0, "preset": preset0, "t1": True, "slippage": 5.0, "custom": {}})
+            PP[f"{bkey}_from"] = chosen
+            make_broker = broker_settings(bkey, default_preset=preset0, default_cash=cash0, show_t1=single,
                                           show_dividend=single,   # 选股账户的分红处理跟随选股策略
                                           show_contribution=single)
             with ui.row().classes("w-full items-end gap-3"):

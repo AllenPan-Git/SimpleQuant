@@ -3,7 +3,7 @@
 
 - 键 = 股票池、起止日、数据版本（数据文件的修改时间）、软件版本：数据更新或换了版本（建面板的规则可能变了）就重建
 - 最多留 MAX_FILES 个文件，按最近使用保留；读不出来的文件删掉重建
-- 可转债面板的选股条件是 lambda，不能 pickle：存之前去掉、读出来按 CB_FILTERS 补上
+- 可转债面板的选股条件是 lambda，不能 pickle：存之前去掉、读出来按 CB_FILTERS 补上（股票的排雷条件同样按 RISK_FILTERS）
 - pickle 后用 zstd 压缩（pyarrow 自带）：沪深300 约 120 MB → 40 MB，可转债约 490 MB → 75 MB，读写各不到半秒
 """
 
@@ -17,7 +17,7 @@ from pathlib import Path
 from .. import __version__
 
 MAX_FILES = 3
-FORMAT = 4               # 面板字段变了就加 1（同一软件版本开发期间也会重建）
+FORMAT = 5               # 面板字段变了就加 1（同一软件版本开发期间也会重建）
 MAGIC = b"SQP1"          # 文件头：标记 + 8 字节原始长度，之后是 zstd 压缩的 pickle
 
 
@@ -35,6 +35,9 @@ def _restore(panel):
     if panel.kind == "cb":
         from ..bonds.panel import CB_FILTERS
         panel.extra_filters = {k: m["fn"] for k, m in CB_FILTERS.items()}
+    elif getattr(panel, "has_risk", False):
+        from .panel import RISK_FILTERS
+        panel.extra_filters = {k: m["fn"] for k, m in RISK_FILTERS.items()}
     return panel
 
 

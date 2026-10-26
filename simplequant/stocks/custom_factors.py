@@ -25,7 +25,7 @@ import pandas as pd
 from ..i18n import L, pick
 from ..paths import FACTOR_DIR
 from .factors import FACTORS, GROUPS
-from .fundamentals import FIELDS as FIN_FIELDS
+from .fundamentals import FIELDS as FIN_FIELDS, RISK_FIELDS
 
 KEY_PREFIX = "u_"
 FILENAME = "<factor-code>"    # 每段代码编译时用 FILENAME 加代码哈希作文件名（_filename），出错信息按它找源码行
@@ -33,7 +33,8 @@ GROUPS.setdefault("custom", L("自定义", "Custom"))
 # 用到这些字段就需要财务数据
 FIN_WORDS = set(FIN_FIELDS) | {"mcap"}
 DIV_WORDS = {"div_cash", "div_bonus", "div_reserve"}    # 用到这些字段就需要分红数据
-STOCK_WORDS = {"pe", "pb", "ps", "turnover"} | DIV_WORDS    # 只有股票有
+RISK_WORDS = set(RISK_FIELDS)                           # 用到这些字段就需要排雷数据
+STOCK_WORDS = {"pe", "pb", "ps", "turnover"} | DIV_WORDS | RISK_WORDS    # 只有股票有
 CB_WORDS = {"premium", "bond_premium", "double_low", "conv_value", "bond_value", "conv_price", "stock_close",
             "remain_years", "issue_size", "remain_size", "rating_score", "call_days"}     # 只有可转债有
 
@@ -104,6 +105,11 @@ def uses_div(code: str) -> bool:
     return _uses(code, DIV_WORDS)
 
 
+def uses_risk(code: str) -> bool:
+    """代码里用到了排雷字段（p["debt_ratio"] 等）"""
+    return _uses(code, RISK_WORDS)
+
+
 def assets_of(code: str) -> tuple:
     """适用的品种：用到财务 / 估值字段的只适用于股票，用到转债字段的只适用于可转债，其余两者都可以"""
     if _uses(code, FIN_WORDS | STOCK_WORDS):
@@ -115,7 +121,7 @@ def assets_of(code: str) -> tuple:
 
 def known_fields() -> set:
     from .panel import PRICE_FIELDS, OTHER_FIELDS
-    return set(PRICE_FIELDS) | set(OTHER_FIELDS) | FIN_WORDS | {"total_share", "raw_high", "raw_low"} | DIV_WORDS | CB_WORDS
+    return set(PRICE_FIELDS) | set(OTHER_FIELDS) | FIN_WORDS | {"total_share", "raw_high", "raw_low"} | DIV_WORDS | RISK_WORDS | CB_WORDS
 
 
 LOOKAHEAD_CALLS = {"shift", "pct_change", "diff"}      # 参数为负数时用到未来数据
@@ -245,7 +251,7 @@ def _entry(d: dict) -> dict:
     code = d["code"]
     return {"label": L(d["name"], d["name"]), "group": "custom", "direction": 1 if d.get("direction", 1) > 0 else -1,
             "fn": lambda p, code=code: evaluate(code, p), "desc": L(d.get("desc", ""), d.get("desc", "")),
-            "requires_fin": uses_fin(code), "requires_div": uses_div(code), "custom": True, "code": code, "name": d["name"],
+            "requires_fin": uses_fin(code), "requires_div": uses_div(code), "requires_risk": uses_risk(code), "custom": True, "code": code, "name": d["name"],
             "assets": assets_of(code)}
 
 
@@ -305,6 +311,7 @@ SKELETON = {
     #          下载财务数据后还有：roe gross_margin net_margin np_yoy rev_yoy mcap
     #          下载分红数据后还有：div_cash（每股现金分红，税前）div_bonus（每股送股）div_reserve（每股转增），
     #          只在除权除息日有值，其余为 0
+    #          下载排雷数据后还有：debt_ratio（资产负债率 %）current_ratio（流动比率）cfo_np（经营现金流 / 净利润）
     # T 日的值只能用 T 日及以前的数据：可以 shift(5)（往回看），不要 shift(-5)（偷看未来）
     close = p["close"]
     ma = close.rolling(20, min_periods=15).mean()
@@ -317,6 +324,7 @@ SKELETON = {
     #         with financial data downloaded also: roe gross_margin net_margin np_yoy rev_yoy mcap
     #         with dividend data downloaded also: div_cash (cash per share, pre-tax) div_bonus (bonus shares
     #         per share) div_reserve (capitalization shares per share), non-zero only on ex-dates
+    #         with risk data downloaded also: debt_ratio (%) current_ratio cfo_np (operating cash flow / net profit)
     # Day T may only use data up to day T: shift(5) looks back, never shift(-5) (peeks into the future)
     close = p["close"]
     ma = close.rolling(20, min_periods=15).mean()

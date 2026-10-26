@@ -207,3 +207,91 @@ def test_align_all_matches_row_by_row_version():
         got = align_all(fin, cal, FIELDS)
         for j, f in enumerate(FIELDS):
             np.testing.assert_array_equal(got[:, j], _align_reference(fin, cal, f).values)
+
+
+# ---------------- 排雷数据（资产负债表 + 现金流量表） ----------------
+def risk_raw(rows):
+    """rows: (报告期, 公告日, 资产负债率, 流动比率, 现金流/净利润, 现金流/营收)；权益乘数按负债率推出，
+    liabilityToAsset 故意写成被多除了 100 的值（BaoStock 有一段是这样），不应被用到"""
+    bal = pd.DataFrame([[r[0], r[1], float(r[2]) / 100, 1 / (1 - float(r[2])), r[3]] for r in rows],
+                       columns=["statDate", "pubDate", "liabilityToAsset", "assetToEquity", "currentRatio"]).astype(str)
+    cash = pd.DataFrame([[r[0], r[1], r[4], r[5]] for r in rows],
+                        columns=["statDate", "pubDate", "CFOToNP", "CFOToOR"]).astype(str)
+    return bal, cash
+
+
+def test_risk_fields_and_loss_makers():
+    from simplequant.stocks.fundamentals import process_risk, derive_risk
+    bal, cash = risk_raw([
+        ["2023-12-31", "2024-03-29", "0.55", "1.8", "1.2", "0.15"],
+        ["2023-09-30", "2023-10-28", "1.25", "0.4", "0.5", "0.1"],    # 资不抵债：权益乘数为负，负债率 125%
+        ["2024-03-31", "2024-04-26", "0.60", "", "-0.8", "0.10"],     # 现金流为正、比值为负：净利润为负 → 空
+        ["2024-06-30", "2024-08-28", "0.62", "1.5", "2.0", "-0.05"],  # 都为负（亏损且现金流为负）：比值为正但也是空
+        ["2024-09-30", "2024-10-30", "0.58", "1.6", "-0.5", "-0.02"], # 盈利、现金流为负：保留负值
+    ])
+    cash.loc[0, "pubDate"] = "2024-03-30"                              # 两张表公告日不同：取较晚的
+    d = derive_risk(process_risk(bal, cash))
+    d = d.iloc[1:]                                                     # 按报告期排序后第一行是资不抵债那期
+    assert derive_risk(process_risk(bal, cash))["debt_ratio"].iloc[0] == pytest.approx(125)
+    assert d["pub_date"].iloc[0] == pd.Timestamp("2024-03-30")
+    assert d["debt_ratio"].tolist() == pytest.approx([55, 60, 62, 58])
+    assert np.isnan(d["current_ratio"].iloc[1])
+    assert d["cfo_np"].iloc[0] == pytest.approx(1.2) and d["cfo_np"].iloc[3] == pytest.approx(-0.5)
+    assert d["cfo_np"].iloc[1:3].isna().all()
+
+
+def test_risk_store_panel_and_filters(tmp_path):
+    """排雷数据单独存、按公告日对齐进面板；排雷条件只在有数据时生效，没下载就报错（不能悄悄当成不限）"""
+    from simplequant.stocks.fundamentals import process_risk
+    from simplequant.stocks.panel import add_risk, RISK_FILTERS
+    from simplequant.stocks.selection import eligible_mask, needs_risk
+    calls = []
+
+    def fake(code, qs):
+        calls.append((code, len(qs)))
+        ends = [pd.Timestamp(y, q * 3, 1) + pd.offsets.MonthEnd(0) for y, q in qs]
+        debt = "0.3" if code == "sh.600000" else "0.9"
+        bal, cash = risk_raw([[e.strftime("%Y-%m-%d"), (e + pd.Timedelta(days=25)).strftime("%Y-%m-%d"),
+                               debt, "2", "1", "0.1"] for e in ends])
+        return code, process_risk(bal, cash), ""
+
+    st = StockStore(tmp_path, login=lambda: None, worker_init=lambda: None)
+    codes = ["sh.600000", "sz.000001"]
+    assert st.risk_requests(codes, 2024) == 2 * 2 * len(quarters(2024))     # 每只每季度 2 次
+    assert not st.update_risk(codes, 2024, fetch=fake)
+    assert st.has_risk("sh.600000") and not st.has_fin("sh.600000")          # 与财务数据分开存
+    assert st.plan_risk(codes, 2024) == {} and st.risk_requests(codes, 2024) == 0
+
+    p = make_panel(n=2)
+    p.fields = {k: v.set_axis(codes, axis=1) for k, v in p.fields.items()}
+    for name in ("member", "tradable", "is_st", "listed_days", "can_buy", "can_sell"):
+        setattr(p, name, getattr(p, name).set_axis(codes, axis=1))
+    flt = {"exclude_st": True, "min_list_days": 0, "max_debt_ratio": 50}
+    spec = {"factors": [{"key": "ep"}], "filters": flt}
+    assert needs_risk(spec) and needs_risk({"factors": [{"key": "cfo_np"}]}) and not needs_risk(SPEC)
+    with pytest.raises(ValueError, match="排雷数据"):
+        eligible_mask(p, flt)
+    cal = p["close"].index
+    p.has_risk = add_risk(p.fields, st, codes, cal)
+    p.extra_filters = {k: m["fn"] for k, m in RISK_FILTERS.items()}
+    assert p.has_risk and p["debt_ratio"]["sz.000001"].dropna().eq(90).all()
+    m = eligible_mask(p, flt)
+    has = p["debt_ratio"]["sh.600000"].notna()
+    assert m.loc[has, "sh.600000"].all() and not m["sz.000001"].any()      # 负债率 90% 的排除
+    assert not m.loc[~has, "sh.600000"].any()                                # 还没有公告数据的也不选
+    assert eligible_mask(p, {**flt, "max_debt_ratio": None})["sz.000001"].all()   # 留空 = 不限
+    assert F.compute(p, "debt_ratio")["sh.600000"].dropna().eq(30).all()
+
+
+def test_risk_plan_version_and_platform_export():
+    from simplequant import plan as P
+    from simplequant.export.selection_platforms import check_selection_exportable
+    base = {"kind": "selection", "universe": "hs300", "factors": [{"key": "ep", "weight": 1, "direction": 1}],
+            "top_n": 10, "rebalance": "monthly", "filters": {"exclude_st": True, "min_list_days": 250}}
+    assert P.selection_version(base) == P.SELECTION_VERSION
+    risky = {**base, "filters": {**base["filters"], "min_cfo_np": 0.8}}
+    assert P.selection_version(risky) == P.RISK_VERSION == P.VERSION
+    assert P.needs({"strategy": risky})["risk"] and not P.needs({"strategy": base})["risk"]
+    for spec in (risky, {**base, "factors": [{"key": "debt_ratio", "weight": 1, "direction": -1}]}):
+        with pytest.raises(ValueError, match="排雷"):
+            check_selection_exportable(spec, "joinquant")

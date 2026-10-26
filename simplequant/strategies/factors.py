@@ -46,6 +46,15 @@ class OBV(bt.Indicator):
         self.lines.obv[0] = self.lines.obv[-1] + step
 
 
+class EquityRiskPremium(bt.Indicator):
+    """股债利差（%）= 100 / 市盈率 − 10 年期国债收益率；市盈率不为正或任一项为空时为空"""
+    lines = ("erp",)
+
+    def next(self):
+        pe, rate = self.data0[0], self.data1[0]
+        self.lines.erp[0] = 100 / pe - rate if pe > 0 and rate == rate else float("nan")
+
+
 class Percentile(bt.Indicator):
     """
     历史百分位（0~100）：当前值在过去 window 根 K 线（含当前）里排在什么位置，

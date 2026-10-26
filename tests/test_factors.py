@@ -104,7 +104,7 @@ def test_valuation_columns_pass_through(prices):
 def test_every_indicator_runs_in_a_rule(ind, prices):
     """每个因子都能放进规则：左边 = 因子，右边 = 它自己的中位数，应该产生交易"""
     spec = make_ind(ind)
-    if ind in ("pe_pct", "pb_pct"):                  # 估值百分位至少要一年的数据
+    if ind in ("pe_pct", "pb_pct", "erp_pct"):       # 历史百分位至少要一年的数据
         prices = with_factor_columns(make_prices(n=600))
         spec = make_ind(ind, years=1)
     values = line_values(prices, spec).dropna()

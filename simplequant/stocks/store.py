@@ -337,16 +337,19 @@ class StockStore:
 
     def plan_fundamentals(self, codes: list[str], start_year: int, today: dt.date | None = None) -> dict:
         """新股票下全部季度；已有的重下最近两个季度（有公司延迟披露）及之后的季度；今天已检查过的跳过"""
+        return self._plan_quarterly(codes, start_year, self.has_fin, self.load_fin, self._fin_manifest(), today)
+
+    @staticmethod
+    def _plan_quarterly(codes, start_year, has, load, manifest, today=None) -> dict:
         from .fundamentals import quarters
         today = today or dt.date.today()
         qs = quarters(start_year, today)
-        manifest = self._fin_manifest()
         jobs = {}
         for code in codes:
-            if not self.has_fin(code):
+            if not has(code):
                 jobs[code] = (qs,)
             elif manifest.get(code) != today.isoformat():
-                have = self.load_fin(code)
+                have = load(code)
                 last = have["stat_date"].max() if len(have) else pd.Timestamp(f"{start_year}-01-01")
                 cut = (last - pd.DateOffset(months=3))
                 jobs[code] = ([(y, q) for y, q in qs if pd.Timestamp(y, q * 3, 1) >= cut.replace(day=1)] or qs[-2:],)
@@ -377,6 +380,50 @@ class StockStore:
             (self.root / "fin_manifest.json").write_text(json.dumps(manifest, indent=0), encoding="utf-8")
 
         return self._run_jobs(jobs, fetch or fetch_profit, on_ok, workers, progress, save)
+
+    # ---------- 排雷数据（资产负债表 + 现金流量表，见 fundamentals.fetch_risk） ----------
+    def _risk_path(self, code: str) -> Path:
+        return self.root / "risk" / f"{code}.parquet"
+
+    def has_risk(self, code: str) -> bool:
+        return self._risk_path(code).exists()
+
+    def load_risk(self, code: str) -> pd.DataFrame:
+        return pd.read_parquet(self._risk_path(code))
+
+    def _risk_manifest(self) -> dict:
+        p = self.root / "risk_manifest.json"
+        return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+
+    def plan_risk(self, codes: list[str], start_year: int, today: dt.date | None = None) -> dict:
+        return self._plan_quarterly(codes, start_year, self.has_risk, self.load_risk, self._risk_manifest(), today)
+
+    def risk_requests(self, codes: list[str], start_year: int) -> int:
+        """还要多少次请求（界面据此估计要下载几天）"""
+        from .fundamentals import RISK_REQUESTS_PER_QUARTER
+        return sum(len(j[0]) for j in self.plan_risk(codes, start_year).values()) * RISK_REQUESTS_PER_QUARTER
+
+    def update_risk(self, codes: list[str], start_year: int = 2018, workers: int = 4, progress=None,
+                    fetch=None) -> dict[str, str]:
+        from .fundamentals import fetch_risk
+        (self.root / "risk").mkdir(exist_ok=True)
+        jobs = self.plan_risk(codes, start_year)
+        if not jobs:
+            return {}
+        manifest, today_s = self._risk_manifest(), dt.date.today().isoformat()
+
+        def on_ok(code, df):
+            if self.has_risk(code) and df is not None:
+                old = self.load_risk(code)
+                df = pd.concat([old[~old["stat_date"].isin(df["stat_date"])], df]).sort_values("stat_date")
+            if df is not None:
+                df.reset_index(drop=True).to_parquet(self._risk_path(code), compression="zstd")
+            manifest[code] = today_s
+
+        def save():
+            (self.root / "risk_manifest.json").write_text(json.dumps(manifest, indent=0), encoding="utf-8")
+
+        return self._run_jobs(jobs, fetch or fetch_risk, on_ok, workers, progress, save)
 
     # ---------- 分红送转 ----------
     def _div_path(self, code: str) -> Path:
@@ -491,10 +538,10 @@ class StockStore:
         只接受本数据目录结构内的文件，拒绝绝对路径和 ".." 等越界路径。
         """
         import zipfile
-        allowed_dirs = {"daily", "index", "universe", "fin", "div"}
+        allowed_dirs = {"daily", "index", "universe", "fin", "div", "risk"}
         allowed_files = {"basics.parquet", "manifest.json", "industry.parquet", "fin_manifest.json",
-                         "div_manifest.json"}
-        extra_manifests = ("fin_manifest.json", "div_manifest.json")
+                         "div_manifest.json", "risk_manifest.json"}
+        extra_manifests = ("fin_manifest.json", "div_manifest.json", "risk_manifest.json")
         with zipfile.ZipFile(fileobj) as z:
             names = [n for n in z.namelist() if not n.endswith("/")]
             for n in names:

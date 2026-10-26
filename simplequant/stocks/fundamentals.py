@@ -78,6 +78,72 @@ def derive(fin: pd.DataFrame) -> pd.DataFrame:
 FIELDS = ["roe", "gross_margin", "net_margin", "np_yoy", "rev_yoy", "total_share"]
 
 
+# ---------------- 排雷数据（资产负债表 + 现金流量表，单独下载） ----------------
+# 每个季度两次请求（query_balance_data、query_cash_flow_data），全 A 2018 年起约 33 万次，按每天 4.5 万次约 8 天，
+# 所以和盈利数据分开存（data_cache/stocks/risk/<code>.parquet），用到时才下载。
+# 商誉、应收账款 BaoStock 没有。比例都是年初至报告期的累计值（一季度的现金流波动大）。
+# 资产负债率不用 liabilityToAsset：10-26 实测它有一段被多除了 100（茅台 2025Q3 为 0.00128，2026-04 以后的公告又是 0.164），
+# 改用权益乘数 assetToEquity 换算（1 − 1 / 权益乘数），各期都与正确的负债率一致
+BALANCE_COLUMNS = {"statDate": "stat_date", "pubDate": "pub_date", "liabilityToAsset": "liability_to_asset",
+                   "assetToEquity": "asset_to_equity", "currentRatio": "current_ratio"}
+CASH_COLUMNS = {"statDate": "stat_date", "pubDate": "pub_date", "CFOToNP": "cfo_to_np", "CFOToOR": "cfo_to_or"}
+RISK_RAW = ["liability_to_asset", "asset_to_equity", "current_ratio", "cfo_to_np", "cfo_to_or"]
+RISK_FIELDS = ["debt_ratio", "current_ratio", "cfo_np"]
+RISK_REQUESTS_PER_QUARTER = 2
+
+
+def _tidy(raw: pd.DataFrame, columns: dict) -> pd.DataFrame:
+    if raw.empty:
+        return pd.DataFrame(columns=list(columns.values()))
+    df = raw.rename(columns=columns)[list(columns.values())].copy()
+    for c in ("stat_date", "pub_date"):
+        df[c] = pd.to_datetime(df[c], errors="coerce")
+    num = [c for c in df.columns if c not in ("stat_date", "pub_date")]
+    df[num] = df[num].apply(pd.to_numeric, errors="coerce")
+    return df.dropna(subset=["stat_date", "pub_date"]).drop_duplicates("stat_date", keep="last")
+
+
+def process_risk(balance: pd.DataFrame, cash: pd.DataFrame) -> pd.DataFrame:
+    """两张表按报告期合并；公告日取较晚的（一般相同）"""
+    b, c = _tidy(balance, BALANCE_COLUMNS), _tidy(cash, CASH_COLUMNS)
+    df = b.merge(c, on="stat_date", how="outer", suffixes=("", "_c"))
+    df["pub_date"] = df[["pub_date", "pub_date_c"]].max(axis=1)
+    df = df.drop(columns="pub_date_c").dropna(subset=["pub_date"])
+    return df[["stat_date", "pub_date"] + RISK_RAW].sort_values("stat_date").reset_index(drop=True)
+
+
+def fetch_risk(code: str, qs: list[tuple[int, int]]) -> tuple[str, pd.DataFrame | None, str]:
+    """同 fetch_profit：任一季度出错则整只返回错误"""
+    import baostock as bs
+    from .store import BaoStockStopped, _query
+    try:
+        parts = {"b": [], "c": []}
+        for y, q in qs:
+            parts["b"].append(_query(bs.query_balance_data, code=code, year=y, quarter=q))
+            parts["c"].append(_query(bs.query_cash_flow_data, code=code, year=y, quarter=q))
+        cat = {k: pd.concat([p for p in v if len(p)], ignore_index=True) if any(len(p) for p in v) else pd.DataFrame()
+               for k, v in parts.items()}
+        return code, process_risk(cat["b"], cat["c"]), ""
+    except BaoStockStopped:
+        raise
+    except Exception as e:  # noqa: BLE001
+        return code, None, f"{type(e).__name__}: {e}"
+
+
+def derive_risk(raw: pd.DataFrame) -> pd.DataFrame:
+    """
+    debt_ratio 资产负债率（%）/ current_ratio 流动比率 / cfo_np 经营现金流 ÷ 净利润。
+    净利润为负时 cfo_np 没有意义（现金流也为负时比值反而是正的），记为空：
+    经营现金流 ÷ 营收的符号就是现金流的符号，两个比值符号相反说明净利润为负
+    """
+    df = raw.sort_values("stat_date").copy()
+    ate = df["asset_to_equity"]
+    df["debt_ratio"] = ((1 - 1 / ate) * 100).where(ate.notna() & (ate != 0))   # 资不抵债时权益乘数为负，负债率 > 100%
+    loss = np.sign(df["cfo_to_np"]) * np.sign(df["cfo_to_or"]) < 0
+    df["cfo_np"] = df["cfo_to_np"].where(~loss)
+    return df
+
+
 def align(fin: pd.DataFrame, calendar: pd.DatetimeIndex, field: str) -> pd.Series:
     """把一只股票的某个字段按公告日对齐到交易日历"""
     return pd.Series(align_all(fin, calendar, [field])[:, 0], index=calendar)

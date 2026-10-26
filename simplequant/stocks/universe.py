@@ -67,11 +67,12 @@ def data_files(universe: str, store: StockStore | None = None) -> list:
             st.root / "index" / f"{UNIVERSES[universe]['index']}.parquet",
             st.root / "index" / f"{UNIVERSES[universe]['tr']}.parquet",
             st.root / "fin_manifest.json", st.root / "industry.parquet", st.root / "div_manifest.json",
+            st.root / "risk_manifest.json",
             st.root / "rights.parquet", st.root / "basics.parquet"]
 
 
 def update(universe: str, start: str, end: str, store: StockStore | None = None, workers: int = 4,
-           fin: bool = False, div: bool = False, industry: bool = False) -> dict[str, str]:
+           fin: bool = False, div: bool = False, industry: bool = False, risk: bool = False) -> dict[str, str]:
     """增量更新（模拟盘、导出脚本用）；返回失败的 {代码: 错误}"""
     if kind(universe) == "cb":
         st = _cb_store()
@@ -87,4 +88,6 @@ def update(universe: str, start: str, end: str, store: StockStore | None = None,
         st.update_industry()
     if div:
         errors.update(st.update_dividends(codes, int(start[:4]) - 1, workers=workers))
+    if risk:
+        errors.update(st.update_risk(codes, int(start[:4]) - 1, workers=workers))
     return errors

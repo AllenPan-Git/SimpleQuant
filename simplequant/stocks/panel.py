@@ -23,6 +23,7 @@ import pandas as pd
 
 from . import universe as universe_mod
 from .store import StockStore, UNIVERSES
+from ..i18n import L
 
 PRICE_FIELDS = ["open", "high", "low", "close", "raw_open", "raw_close", "raw_preclose", "adj_factor"]
 OTHER_FIELDS = ["volume", "amount", "turnover", "pe", "pb", "ps", "pct_chg"]
@@ -31,6 +32,28 @@ EXIT_GAP_DAYS = 15            # 最后交易日到退市日超过这么多自然
 DELIST_ZERO, DELIST_CASH = 1, 2
 ENDGAME_DAYS = 30             # 没有 ST 记录、推不出整理期起点时：取最后这么多个交易日（整理期 2020 年改革前 30 天、之后 15 天；
                               # 新规下多出的 15 天股票本是 *ST，排除不误伤。例：天翔退 2021 年整理期 30 天、BaoStock 无 ST 记录）
+
+
+# 排雷条件（选股条件里留空 = 不限；没有数据的股票一律不选）。见 selection.eligible_mask
+RISK_FILTERS = {
+    "max_debt_ratio": {"label": L("资产负债率上限（%）", "Max debt ratio (%)"),
+                       "help": L("最近一期财报的资产负债率高于该值的不选。银行、保险、券商普遍在 80% 以上，设置后基本都会被排除",
+                                 "Skips stocks whose latest debt-to-assets ratio exceeds this. Banks, insurers and "
+                                 "brokers are usually above 80% and will mostly be excluded"),
+                       "fn": lambda p, v: p["debt_ratio"] <= v},
+    "min_current_ratio": {"label": L("流动比率下限", "Min current ratio"),
+                          "help": L("流动资产 ÷ 流动负债，低于该值的不选（短期偿债压力大）。银行、保险没有流动比率，设置后会被排除",
+                                    "Current assets ÷ current liabilities; lower is skipped. Banks and insurers have "
+                                    "none and are excluded"),
+                          "fn": lambda p, v: p["current_ratio"] >= v},
+    "min_cfo_np": {"label": L("经营现金流 / 净利润下限", "Min operating cash flow / net profit"),
+                   "help": L("年初至最近一期的经营现金流 ÷ 净利润，低于该值的不选（利润没有变成现金）。"
+                             "净利润为负的比值没有意义，设置后一并排除；一季度的现金流季节性强，数值波动大",
+                             "Year-to-date operating cash flow ÷ net profit; lower is skipped (profits not turning "
+                             "into cash). Loss-makers are excluded as the ratio is meaningless; Q1 cash flow is "
+                             "seasonal and noisy"),
+                   "fn": lambda p, v: p["cfo_np"] >= v},
+}
 
 
 @dataclass
@@ -46,6 +69,7 @@ class Panel:
     names: dict = field(default_factory=dict)
     industry: pd.Series = field(default_factory=lambda: pd.Series(dtype=str))   # 代码 -> 行业（当前分类）
     has_fin: bool = False         # 是否已加载财务数据
+    has_risk: bool = False        # 是否已加载排雷数据（资产负债率等，字段见 fundamentals.RISK_FIELDS）
     div_codes: frozenset = frozenset()   # 有分红送转数据的股票（字段 div_cash / div_bonus / div_reserve）
     div_patched: pd.DataFrame | None = None   # 分红表漏记、按复权因子补上的除权除息（code + 分红表各列）
     # ---- 品种差异（可转债见 simplequant/bonds/panel.py） ----
@@ -217,12 +241,14 @@ def build_panel(store: StockStore, universe: str, start: str, end: str) -> Panel
             ends[c] = tradable.index[tradable[c].values][-1]
     can_buy &= ~exit_df
     has_fin = add_fundamentals(frames, store, codes, calendar)
+    has_risk = add_risk(frames, store, codes, calendar)
     div_codes, div_patched = add_dividends(frames, store, codes, calendar, is_st)
     return Panel(fields=frames, member=membership(uni, calendar, codes), tradable=tradable, is_st=is_st,
                  listed_days=listed_days, can_buy=can_buy, can_sell=can_sell,
                  benchmark=bench.loc[calendar, "close"] if tr is None else tr, names=names,
                  industry=store.load_industry().reindex(codes), has_fin=has_fin, div_codes=div_codes,
-                 div_patched=div_patched, bench_total_return=tr is not None,
+                 div_patched=div_patched, bench_total_return=tr is not None, has_risk=has_risk,
+                 extra_filters={k: m["fn"] for k, m in RISK_FILTERS.items()} if has_risk else {},
                  exit=exit_df if exit_dates else None, exit_dates=exit_dates, delist=delist,
                  delisting_period=delisting_period(tradable, is_st, ends))
 
@@ -252,6 +278,21 @@ def add_dividends(frames: dict, store: StockStore, codes: list[str], calendar: p
     for k, v in cols.items():
         frames[f"div_{k}"] = pd.DataFrame(v, index=calendar).reindex(columns=codes).fillna(0.0)
     return frozenset(have), (pd.concat(patched, ignore_index=True) if patched else None)
+
+
+def add_risk(frames: dict, store: StockStore, codes: list[str], calendar: pd.DatetimeIndex) -> bool:
+    """排雷字段（资产负债率、流动比率、经营现金流 / 净利润），同财务数据按公告日对齐"""
+    from .fundamentals import RISK_FIELDS, align_all, derive_risk
+    have = [c for c in codes if store.has_risk(c)]
+    if not have:
+        return False
+    vals = np.full((len(RISK_FIELDS), len(calendar), len(codes)), np.nan)
+    col = {c: i for i, c in enumerate(codes)}
+    for c in have:
+        vals[:, :, col[c]] = align_all(derive_risk(store.load_risk(c)), calendar, RISK_FIELDS).T
+    for k, f in enumerate(RISK_FIELDS):
+        frames[f] = pd.DataFrame(vals[k], index=calendar, columns=codes)
+    return True
 
 
 def add_fundamentals(frames: dict, store: StockStore, codes: list[str], calendar: pd.DatetimeIndex) -> bool:

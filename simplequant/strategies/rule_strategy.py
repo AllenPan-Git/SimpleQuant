@@ -9,7 +9,7 @@ import operator
 import backtrader as bt
 
 from ..rules.schema import BARS_PER_YEAR, CROSS_OPS, INDICATORS, default_line, validate
-from .factors import KDJ, OBV, Percentile
+from .factors import KDJ, OBV, EquityRiskPremium, Percentile
 from .templates import _PerAsset
 
 _CMP = {">": operator.gt, "<": operator.lt, ">=": operator.ge, "<=": operator.le}
@@ -83,6 +83,10 @@ def _build_line(d, spec: dict, bases: dict | None = None):
         return OBV(d).obv
     if ind == "volatility":
         return bt.ind.StdDev(bt.ind.PctChange(d.close, period=1), period=int(p["period"])) * 100
+    if ind in ("erp", "erp_pct"):                         # 股债利差，及它在过去 N 年里的百分位
+        erp = EquityRiskPremium(d.pe, d.cgb10y).erp
+        return erp if ind == "erp" else Percentile(erp, window=int(p["years"]) * BARS_PER_YEAR,
+                                                   min_count=BARS_PER_YEAR).pct
     if ind in ("pe_pct", "pb_pct"):                       # 估值在过去 N 年里的百分位
         return Percentile(getattr(d, INDICATORS[ind]["requires"]), window=int(p["years"]) * BARS_PER_YEAR,
                           min_count=BARS_PER_YEAR).pct

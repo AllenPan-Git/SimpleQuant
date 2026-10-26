@@ -258,6 +258,7 @@ def selection_system_prompt(lang: str = "zh") -> str:
         + (f"; {pick(m['desc'], 'en')}" if m.get("desc") else "")
         + ("; needs financial data" if m.get("requires_fin") else "")
         + ("; needs dividend data" if m.get("requires_div") else "")
+        + ("; needs risk data" if m.get("requires_risk") else "")
         + f"; for {for_text.get(tuple(factor_assets(k)), 'stocks only')}"
         for k, m in FACTORS.items())
     unis = ", ".join(f"{k} = {pick(u['label'], 'en')} / {pick(u['label'], 'zh')}" for k, u in UNIVERSES.items())
@@ -413,7 +414,8 @@ _STOCK_FIELDS = """- open, high, low, close: back-adjusted prices
 - volume (shares), amount (value traded, CNY), turnover (turnover rate, %), pct_chg (daily change, %)
 - pe (TTM), pb (MRQ), ps (TTM): valuation ratios; may be NaN or negative for loss-making companies
 - financial fields, only after the user downloads financial data, forward-filled from each announcement date: roe (annualized, %), gross_margin (%), net_margin (%), np_yoy (net profit YoY growth, %), rev_yoy (revenue YoY growth, %), total_share (total shares), mcap (total market value = raw_close * total_share)
-- dividend fields, only after the user downloads dividend data: div_cash (pre-tax cash dividend per share), div_bonus (bonus shares per share), div_reserve (capitalization shares per share); non-zero only on ex-dates, 0 on other days"""
+- dividend fields, only after the user downloads dividend data: div_cash (pre-tax cash dividend per share), div_bonus (bonus shares per share), div_reserve (capitalization shares per share); non-zero only on ex-dates, 0 on other days
+- risk fields, only after the user downloads risk data, forward-filled from each announcement date: debt_ratio (liabilities / assets, %), current_ratio (current assets / current liabilities), cfo_np (year-to-date operating cash flow / net profit; NaN for loss-makers)"""
 _CB_FIELDS = """- open, high, low, close: adjusted prices; raw_close: unadjusted bond price (CNY per 100 face value)
 - volume, amount, pct_chg (daily change, %); turnover is not available (all NaN)
 - premium (conversion premium, %), bond_premium (premium over bond floor, %), double_low (raw_close + premium)

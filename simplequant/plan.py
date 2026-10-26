@@ -20,7 +20,7 @@ from . import __version__
 from .engine.runner import BrokerConfig
 
 FORMAT = "simplequant-plan"
-VERSION = 7                     # 能读取的最高版本
+VERSION = 8                     # 能读取的最高版本
 TIMING_VERSION = 1              # 择时方案仍写 1，旧版软件也能导入
 SELECTION_VERSION = 2           # 选股方案：0.2.4 及以前的版本会提示「请先更新软件」
 ML_VERSION = 3                  # 用机器学习合成因子的选股方案：0.3.0 及以前的版本会提示「请先更新软件」
@@ -28,6 +28,7 @@ PACING_VERSION = 4              # 规则用了连续 N 根 K 线 / 冷却期 / �
 CALL_VERSION = 5                # 可转债用了强赎触发天数（因子或条件）：1.2.1 及以前的版本会提示「请先更新软件」
 DCA_VERSION = 6                 # 定投（每期追加资金或定投模板）：1.5.1 及以前的版本会提示「请先更新软件」
 SKIP_VERSION = 7                # 选股设了空仓月份：1.6.1 及以前的版本会提示「请先更新软件」
+RISK_VERSION = 8                # 选股用了排雷因子或排雷条件：1.6.2 及以前的版本会提示「请先更新软件」
 SUFFIX = ".sqplan"
 DOWNLOADABLE = ("akshare", "baostock")          # 导入时可以自动下载的数据源
 RESULT_KEYS = ("total_return", "benchmark_return", "max_drawdown", "trades")
@@ -84,6 +85,9 @@ def make_plan(name: str, spec: dict, metas: list, start, end, broker: BrokerConf
 
 def selection_version(spec: dict) -> int:
     """旧版软件会忽略不认识的条件（结果悄悄不同），所以用到新功能就写更高的版本号"""
+    from .stocks.selection import needs_risk
+    if spec.get("universe") != "cb" and needs_risk(spec):
+        return RISK_VERSION
     if spec.get("skip_months"):
         return SKIP_VERSION
     uses_call = any(f.get("key") == "cb_call_days" for f in spec.get("factors", []))
@@ -302,7 +306,8 @@ def needs(plan: dict) -> dict:
     from .stocks import FACTORS, custom_factors as cf, universe as U
     spec = plan["strategy"]
     if U.kind(spec["universe"]) == "cb":
-        return {"fin": False, "div": False, "industry": False}
+        return {"fin": False, "div": False, "industry": False, "risk": False}
+    from .stocks.selection import uses_risk_filters
     custom = plan.get("custom_factors") or {}
 
     def flag(f, name, uses):
@@ -311,7 +316,8 @@ def needs(plan: dict) -> dict:
     neutral = spec.get("neutralize") or {}
     return {"fin": any(flag(f, "requires_fin", cf.uses_fin) for f in spec["factors"]) or bool(neutral.get("size")),
             "div": spec.get("dividend") == "cash" or any(flag(f, "requires_div", cf.uses_div) for f in spec["factors"]),
-            "industry": bool(neutral.get("industry"))}
+            "industry": bool(neutral.get("industry")),
+            "risk": bool(uses_risk_filters(spec)) or any(flag(f, "requires_risk", cf.uses_risk) for f in spec["factors"])}
 
 
 def selection_missing(plan: dict, store=None) -> list[str]:
@@ -339,6 +345,8 @@ def selection_missing(plan: dict, store=None) -> list[str]:
             missing.append("div")
         if n["industry"] and not (st.root / "industry.parquet").exists():
             missing.append("industry")
+        if n["risk"] and not any(st.has_risk(c) for c in codes):
+            missing.append("risk")
     return missing
 
 
@@ -372,4 +380,6 @@ def download_selection(plan: dict, workers: int = 4, progress=None) -> dict[str,
         st.update_industry()
     if n["div"]:
         errors.update(st.update_dividends(codes, int(start[:4]) - 1, workers=workers, progress=step("div")))
+    if n["risk"]:
+        errors.update(st.update_risk(codes, int(start[:4]) - 1, workers=workers, progress=step("risk")))
     return errors

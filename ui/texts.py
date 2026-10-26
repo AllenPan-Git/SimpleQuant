@@ -108,10 +108,10 @@ TEXT.update({
     # ---- 利率与信用利差 ----
     "rates.title": L("利率与信用利差", "Rates and credit spreads"),
     "rates.note": L("来自中债收益率曲线（{year} 年起）：10 年期国债收益率、期限利差（10 年 − 1 年）、信用利差（3 年期 AAA 中短期票据 − 3 年期国债）。"
-                    "下载后可在策略的规则条件中使用（「利率/信用利差」分组），例如信用利差走阔时卖出。首次下载约 2–3 分钟，数据量很小。",
+                    "下载后可在策略的规则条件中使用（「利率/利差」分组），例如信用利差走阔时卖出；与市盈率合起来还能算股债利差。首次下载约 2–3 分钟，数据量很小。",
                     "From the ChinaBond yield curves (since {year}): 10-year government yield, term spread (10Y − 1Y) and credit "
                     "spread (3Y AAA medium-term notes − 3Y government). Once downloaded, they can be used in rule conditions "
-                    "(the \"Rates / credit spread\" group), e.g. sell when credit spreads widen. The first download takes 2–3 minutes and is small."),
+                    "(the \"Rates / spreads\" group), e.g. sell when credit spreads widen; together with P/E they also give the equity risk premium. The first download takes 2–3 minutes and is small."),
     "rates.status": L("已有 {start} ~ {end}；最新：10 年国债 {cgb}%，期限利差 {term} BP，信用利差 {credit} BP",
                       "Have {start} ~ {end}; latest: 10Y {cgb}%, term spread {term} bp, credit spread {credit} bp"),
     "rates.none": L("尚未下载", "Not downloaded yet"),
@@ -236,6 +236,11 @@ TEXT.update({
     "bt.opt_template": L("模板（默认参数）：{name}", "Template (defaults): {name}"),
     "bt.edit_strategy": L("编辑或新建策略", "Edit or create a strategy"),
     "bt.costs": L("资金与交易成本", "Capital & trading costs"),
+    "bt.save_name": L("策略名称", "Strategy name"),
+    "bt.save_strategy": L("保存策略", "Save strategy"),
+    "bt.save_strategy_help": L("连同上面的资金与交易成本一起保存；之后在回测页、参数优化页选它，或用它新建模拟账户时恢复",
+                               "Saves the capital and trading costs above with it; they are restored when you pick it on the "
+                               "Backtest or Optimize page, or open a paper account with it"),
     "bt.cash": L("初始资金（元）", "Initial capital (CNY)"),
     "bt.contribution": L("每期追加（元）", "Contribution per period (CNY)"),
     "bt.contrib_freq": L("追加频率", "Frequency"),
@@ -350,6 +355,7 @@ TEXT.update({
     "plan.sel_miss_fin": L("财务数据", "financial data"),
     "plan.sel_miss_div": L("分红数据", "dividend data"),
     "plan.sel_miss_industry": L("行业分类", "industry classification"),
+    "plan.sel_miss_risk": L("排雷数据", "risk data"),
     "plan.sel_warmup": L("因子自 {d} 起计算（回测开始前的数据仅用于预热因子）。",
                          "Factors are computed from {d} (data before the backtest start is used only to warm up the factors)."),
     "plan.sel_code_warning": L("该方案含有 {n} 个自定义因子的代码。导入后代码将在本机运行，权限与普通 Python 程序相同，可以读写文件、访问网络。请确认代码来源可信、内容无误后再继续。",
@@ -362,6 +368,7 @@ TEXT.update({
     "plan.sel_step_stocks": L("正在下载股票日线…", "Downloading daily bars…"),
     "plan.sel_step_fin": L("正在下载财务数据…", "Downloading financials…"),
     "plan.sel_step_div": L("正在下载分红送转数据…", "Downloading dividends…"),
+    "plan.sel_step_risk": L("正在下载排雷数据…", "Downloading risk data…"),
     "plan.err_universe": L("方案使用了当前版本不支持的股票池（{name}），请先更新软件。",
                            "The plan uses a universe ({name}) that this version does not support; please update first."),
     "plan.err_factor": L("方案使用了当前版本不存在的因子（{name}），请先更新软件。",
@@ -996,6 +1003,8 @@ p["roe"]  p["gross_margin"]  p["net_margin"]  p["np_yoy"]  p["rev_yoy"]  p["mcap
                                                      # 财务字段：需先在「数据」标签页下载财务数据
 p["div_cash"]  p["div_bonus"]  p["div_reserve"]      # 每股现金分红（税前）、送股、转增：只在除权除息日有值，其余为 0
                                                      # 需先在「数据」标签页下载分红数据
+p["debt_ratio"]  p["current_ratio"]  p["cfo_np"]     # 资产负债率(%)、流动比率、经营现金流 / 净利润（净利润为负时为空）
+                                                     # 需先在「数据」标签页下载排雷数据
 # 可转债（股票池选「可转债（全市场）」时）：
 p["raw_close"]  p["premium"]  p["bond_premium"]  p["double_low"]   # 不复权价、转股溢价率(%)、纯债溢价率(%)、双低
 p["conv_value"]  p["bond_value"]  p["conv_price"]  p["stock_close"]  # 转股价值、纯债价值、转股价、正股价
@@ -1015,6 +1024,8 @@ p["roe"]  p["gross_margin"]  p["net_margin"]  p["np_yoy"]  p["rev_yoy"]  p["mcap
                                                      # financial fields: download financial data on the Data tab first
 p["div_cash"]  p["div_bonus"]  p["div_reserve"]      # cash dividend (pre-tax), bonus and capitalization shares per share;
                                                      # non-zero only on ex-dates; download dividend data on the Data tab first
+p["debt_ratio"]  p["current_ratio"]  p["cfo_np"]     # debt ratio (%), current ratio, operating cash flow / net profit
+                                                     # (empty for loss-makers); download risk data on the Data tab first
 # Convertible bonds (universe "Convertible bonds (all)"):
 p["raw_close"]  p["premium"]  p["bond_premium"]  p["double_low"]   # raw price, conversion premium (%), premium over bond floor (%), double-low
 p["conv_value"]  p["bond_value"]  p["conv_price"]  p["stock_close"]  # conversion value, bond floor, conversion price, stock price
@@ -1115,6 +1126,21 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
     "sp.div_help": L("每次分红的除权除息日、每股现金分红及送股、转增比例，用于「现金分红并扣红利税」回测。沪深300首次下载约需 15 分钟",
                      "Ex-dates, cash per share, bonus and capitalization shares for each distribution; used by the \"cash dividends, taxed\" backtest option. First download for CSI 300 takes about 15 minutes"),
     "sp.step_div": L("正在下载 {n} 只股票的分红送转数据…", "Downloading dividends for {n} stocks…"),
+    "sp.with_risk": L("同时下载排雷数据", "Also download risk data"),
+    "sp.risk_downloaded": L("排雷数据", "Risk data"),
+    "sp.risk_help": L("资产负债率、流动比率、经营现金流 / 净利润（按首次公告日起生效），用于排雷因子和选股规则里的排雷条件。"
+                      "每只股票每个季度要两次请求，比财务数据多一倍：2018 年起沪深300 约 1.8 万次（不到一天），全 A 股约 33 万次（约 8 天）",
+                      "Debt ratio, current ratio and operating cash flow / net profit (effective from the first announcement "
+                      "date), used by the risk factors and the risk screens under Rules. Two requests per stock per quarter, "
+                      "twice the financials: from 2018 about 18,000 for CSI 300 (under a day) and 330,000 for all A-shares (about 8 days)"),
+    "sp.risk_estimate": L("排雷数据还需约 {n} 次请求，按每天上限约需 {days} 天；每天到上限自动停止，次日再点下载从断点继续",
+                          "Risk data still needs about {n} requests, about {days} day(s) at the daily cap; the download stops "
+                          "at the cap each day and continues from where it stopped when you download again"),
+    "sp.risk_estimate_none": L("排雷数据已是最新", "Risk data is up to date"),
+    "sp.step_risk": L("正在下载 {n} 只股票的排雷数据…", "Downloading risk data for {n} stocks…"),
+    "sp.need_risk": L("用到了排雷因子或排雷条件，需要先在「数据」页勾选「同时下载排雷数据」后下载。",
+                      "Risk factors or screens are used; download risk data on the Data tab with \"Also download risk data\" checked first."),
+    "sp.risk_filter_note": L("。留空表示不限；没有排雷数据的股票不选", ". Leave empty for no limit; stocks without risk data are skipped"),
     "sp.dividend": L("分红处理", "Dividends"),
     "sp.dividend_help": L("分红再投资：使用后复权价，分红全额再投资、不扣税（默认，与多数回测软件一致）。\n"
                           "现金分红并扣红利税：除息日现金到账，保留在账户中直至下次买入；卖出时按持股期限扣缴红利税"

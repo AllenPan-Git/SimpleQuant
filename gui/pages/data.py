@@ -127,7 +127,7 @@ def _download_tab(on_change):
 
 
 def _rates_card():
-    """利率与信用利差（中债收益率曲线）：择时规则的「利率/信用利差」条件用"""
+    """利率与信用利差（中债收益率曲线）：择时规则的「利率/利差」条件用"""
     from simplequant.bonds.rates import RatesStore, FIRST_YEAR
     st = RatesStore()
     with ui.card().classes("w-full gap-2"):

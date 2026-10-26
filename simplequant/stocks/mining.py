@@ -121,7 +121,8 @@ class Miner:
     def usable_keys(self) -> list[str]:
         p = self.panel
         return [k for k in factors_for(p.kind)
-                if (p.has_fin or not FACTORS[k].get("requires_fin")) and (p.div_codes or not FACTORS[k].get("requires_div"))]
+                if (p.has_fin or not FACTORS[k].get("requires_fin")) and (p.div_codes or not FACTORS[k].get("requires_div"))
+                and (getattr(p, "has_risk", False) or not FACTORS[k].get("requires_risk"))]
 
     def baseline(self, progress=None) -> None:
         """现有因子（内置 + 已保存的自定义因子）在挖掘期的表现：发给 AI 参考，也用来判断新因子是否重复"""

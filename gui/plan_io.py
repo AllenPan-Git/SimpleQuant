@@ -175,7 +175,7 @@ def apply(plan: dict, metas: list):
     """还原回测页的设置并自动回测"""
     spec = plan["strategy"]
     name = _unique_name(plan["name"], spec)
-    strategies.save_strategy(name, spec)
+    strategies.save_strategy(name, spec, broker=asdict(P.broker_of(plan)))
     S = state.STATE
     restore_broker("bt", plan, {"cash": 100_000, "preset": "etf", "t1": True, "slippage": 5.0, "custom": {}})
     S["bt_ids"] = [m.id for m in metas]
@@ -247,7 +247,7 @@ def review_selection(plan: dict):
                 if missing:
                     steps = {"universe": t("sp.step_universe"), "index": t("sp.step_index"),
                              "stocks": t("plan.sel_step_stocks"), "fin": t("plan.sel_step_fin"),
-                             "div": t("plan.sel_step_div"), "list": t("cb.step_list"), "info": t("cb.step_info"),
+                             "div": t("plan.sel_step_div"), "risk": t("plan.sel_step_risk"), "list": t("cb.step_list"), "info": t("cb.step_info"),
                              "daily": t("cb.step_daily")}
                     if U.kind(uni) == "cb":
                         steps["index"] = t("cb.step_index")
@@ -316,7 +316,7 @@ def apply_selection(plan: dict):
     for f in spec["factors"]:
         f["key"] = mapping.get(f["key"], f["key"])
     name = _unique_name(plan["name"], spec)
-    strategies.save_strategy(name, spec)
+    strategies.save_strategy(name, spec, broker=asdict(P.broker_of(plan)))
     SP = sp_state()
     apply_spec(SP, spec, name)
     uni, (start, end) = spec["universe"], plan["range"]

@@ -83,6 +83,13 @@ def describe_selection(spec: dict, lang: str = "zh") -> str:
         items = [f"{pick(m['label'], lang)} {flt[k]:g}" for k, m in CB_FILTERS.items() if flt.get(k) is not None]
         if items:
             text += f"\n【{tr('sel.filters', lang)}】" + sep.join(items)
+    else:                                                        # 股票：排雷条件（设了的才写）
+        from ..stocks.panel import RISK_FILTERS
+        flt = spec.get("filters") or {}
+        items = [f"{pick(m['label'], lang)} {float(flt[k]):g}" for k, m in RISK_FILTERS.items()
+                 if flt.get(k) not in (None, "")]
+        if items:
+            text += f"\n【{tr('sel.filters', lang)}】" + sep.join(items)
     if spec.get("dividend") == "cash":
         text += " · " + tr("sel.div_cash", lang)
     return text
@@ -184,10 +191,24 @@ def _path(name: str, store_dir: Path) -> Path:
     return store_dir / (re.sub(r'[\\/:*?"<>|]+', "_", name.strip()) + ".json")
 
 
-def save_strategy(name: str, spec: dict, store_dir: Path = STORE_DIR) -> Path:
+def save_strategy(name: str, spec: dict, store_dir: Path = STORE_DIR, *, broker: dict | None = None) -> Path:
+    """
+    broker：一起记下的资金与费率（asdict(BrokerConfig)；也可以直接放在 spec["broker"] 里）。
+    没给时沿用同名文件里原来记的（在策略页改规则后重新保存，不丢回测页存下的资金）
+    """
     store_dir.mkdir(parents=True, exist_ok=True)
     path = _path(name, store_dir)
-    path.write_text(json.dumps({"name": name, **spec}, ensure_ascii=False, indent=2), encoding="utf-8")
+    data = {"name": name, **spec}
+    if broker is not None:
+        data["broker"] = broker
+    elif "broker" not in data and path.exists():
+        try:
+            old = json.loads(path.read_text(encoding="utf-8")).get("broker")
+        except (json.JSONDecodeError, AttributeError):
+            old = None
+        if isinstance(old, dict):
+            data["broker"] = old
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     return path
 
 

@@ -672,6 +672,38 @@ async def test_backtest_dca(user: User, lib_dir):
     await user.should_see("每月追加 2,000 元")
 
 
+async def test_backtest_saved_strategy_keeps_cash(user: User, lib_dir):
+    """回测页保存策略时记下资金与费率；改了资金后再选它，恢复成保存时的（控件也跟着变）；参数优化页选它也恢复"""
+    _save_prices()
+    state.STATE["bt_broker"] = {"cash": 50_000, "preset": "etf", "t1": True, "slippage": 3.0,
+                                "custom": {"etf": {"commission": 0.5, "min_commission": 0, "stamp_duty": 0}}}
+    await user.open("/backtest")
+    user.find(marker="bt_strategy").elements.pop().set_value("tpl:sma_cross")
+    await settle()
+    user.find(marker="bt_save_name").elements.pop().set_value("均线5万")
+    user.find(marker="bt_save").click()
+    b = strategies.strategy_brokers()["均线5万"]
+    assert b["cash"] == 50_000 and b["commission"] == pytest.approx(0.5e-4) and b["slippage"] == pytest.approx(3e-4)
+    assert "broker" not in strategies.list_strategies()["均线5万"]
+
+    state.STATE["bt_broker"].update(cash=200_000, slippage=10.0)
+    state.STATE["bt_strategy"] = "tpl:sma_cross"
+    await user.open("/backtest")
+    user.find(marker="bt_strategy").elements.pop().set_value("saved:均线5万")
+    await settle()
+    saved = state.STATE["bt_broker"]
+    assert saved["cash"] == 50_000 and saved["slippage"] == pytest.approx(3) and saved["custom"]["etf"]["commission"] == 0.5
+    cash = next(e for e in user.find(kind=ui.number).elements if e.props.get("label") == "初始资金（元）")
+    assert cash.value == 50_000
+
+    state.STATE["opt_broker"] = {"cash": 300_000, "preset": "etf", "t1": True, "slippage": 5.0, "custom": {}}
+    _opt_setup()
+    await user.open("/optimize")
+    user.find(marker="opt_strategy").elements.pop().set_value("saved:均线5万")
+    await settle()
+    assert state.STATE["opt_broker"]["cash"] == 50_000
+
+
 async def test_optimize_cash_dividend(user: User, lib_dir, monkeypatch):
     from simplequant.data import cash_dividend
     monkeypatch.setattr(cash_dividend, "fund_dividends", lambda s: cash_dividend.EMPTY)
@@ -873,6 +905,32 @@ async def test_selection_backtest(user: User):
     assert (buys["size"] % 100 == 0).all()
     await user.should_see("调仓次数")
     await user.should_see("可信度检查")
+
+
+@needs_stocks
+async def test_selection_risk_screen_needs_data(user: User):
+    """排雷条件：填了值才写进策略；本机没有排雷数据时提示先下载、回测报错，不当成不限；数据页估计要下几天"""
+    from gui.pages.selection import current_spec
+    from simplequant.stocks import StockStore
+    if (StockStore().root / "risk").exists():
+        pytest.skip("本机已有排雷数据")
+    SP = await _open_selection(user)
+    assert "max_debt_ratio" not in current_spec(SP)["filters"]
+    user.find(marker="sp_max_debt_ratio").elements.pop().set_value(60)
+    await settle()
+    assert current_spec(SP)["filters"]["max_debt_ratio"] == 60
+    await user.should_see("资产负债率上限（%） 60")
+    await user.should_see("需要先在「数据」页勾选「同时下载排雷数据」")
+    user.find(marker="sp_run").click()
+    await settle()
+    assert await _wait(lambda: SP.get("result") is None, n=200)
+    SP["riskf"]["max_debt_ratio"] = None
+    state.STATE["sp_tab"] = "data"
+    await user.open("/selection")
+    assert await _wait(lambda: user.find(marker="sp_with_risk").elements, n=600)
+    user.find(marker="sp_with_risk").elements.pop().set_value(True)
+    await settle()
+    await user.should_see("排雷数据还需约")
 
 
 @needs_stocks
@@ -1370,6 +1428,28 @@ def paper_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(schedule, "task_exists", lambda: False)
     monkeypatch.setattr(schedule, "create_task", lambda at="18:30": (True, "ok"))
     return tmp_path / "paper"
+
+
+async def test_paper_new_account_uses_saved_strategy_cash(user: User, lib_dir, paper_dir):
+    """新建模拟账户选一个记有资金的已保存策略时填上它的资金；手动改了的保留到再换策略；模板不动当前设置"""
+    _save_prices()
+    strategies.save_strategy("均线3万", {"kind": "template", "template": "sma_cross", "params": {}},
+                             broker={"cash": 30_000.0, "commission": 0.0001, "min_commission": 0.0, "stamp_duty": 0.0})
+    await user.open("/paper")
+    user.find(marker="pp_strategy").elements.pop().set_value("saved:均线3万")
+    await settle()
+    b = state.STATE["pp_single_broker"]
+    assert b["cash"] == 30_000
+    b["cash"] = 40_000                                    # 手动改过：选标的会重画表单，但不覆盖
+    user.find(marker="pp_assets").elements.pop().set_value(list(library.list_datasets()[0:1] and [library.list_datasets()[0].id]))
+    await settle()
+    assert state.STATE["pp_single_broker"]["cash"] == 40_000
+    user.find(marker="pp_strategy").elements.pop().set_value("tpl:rsi_reversion")
+    await settle()
+    assert state.STATE["pp_single_broker"]["cash"] == 40_000
+    user.find(marker="pp_strategy").elements.pop().set_value("saved:均线3万")
+    await settle()
+    assert state.STATE["pp_single_broker"]["cash"] == 30_000
 
 
 async def test_paper_single_account_flow(user: User, lib_dir, paper_dir, monkeypatch):

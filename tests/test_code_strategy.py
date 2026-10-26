@@ -211,3 +211,16 @@ def test_saved_code_strategy_roundtrip(tmp_path):
     strategies.save_strategy("我的代码", spec, tmp_path)
     back = strategies.list_strategies(tmp_path)["我的代码"]
     assert back == spec and strategies.runnable_on_single_assets(back)
+
+
+def test_resaving_strategy_keeps_recorded_broker(tmp_path):
+    """策略页重新保存（不带资金）时，沿用回测页保存时记下的资金与费率；明确给了就替换"""
+    spec = {"kind": "template", "template": "sma_cross", "params": {"fast": 5}}
+    strategies.save_strategy("均线", spec, tmp_path, broker={"cash": 50_000.0})
+    strategies.save_strategy("均线", {**spec, "params": {"fast": 8}}, tmp_path)
+    assert strategies.list_strategies(tmp_path)["均线"]["params"] == {"fast": 8}
+    assert strategies.strategy_brokers(tmp_path)["均线"] == {"cash": 50_000.0}
+    strategies.save_strategy("均线", spec, tmp_path, broker={"cash": 80_000.0})
+    assert strategies.strategy_brokers(tmp_path)["均线"] == {"cash": 80_000.0}
+    strategies.save_strategy("新的", spec, tmp_path)
+    assert "新的" not in strategies.strategy_brokers(tmp_path)

@@ -1,5 +1,6 @@
 """回测页和参数优化页共用的设置区块（对应 ui/components.py）"""
 
+import copy
 import datetime as dt
 from dataclasses import dataclass, field
 
@@ -10,7 +11,7 @@ from simplequant import strategies
 from simplequant.data import library
 from simplequant.data.ratio_adjust import is_additive
 from simplequant.engine import BrokerConfig, COST_PRESETS
-from simplequant.rules import INDICATORS, required_columns, macro_columns
+from simplequant.rules import INDICATORS, required_columns, macro_columns, requires_of
 from simplequant.rules.schema import BARS_PER_YEAR
 from simplequant.strategies import TEMPLATES
 from gui import state
@@ -144,14 +145,14 @@ def load_prices(by_id: dict, pick: DataPick, warm: bool = False) -> dict:
 
 
 def _pct_uses(spec: dict | None) -> list:
-    """规则里用到估值历史百分位（pe_pct / pb_pct）的条件两侧；估值定投模板按同样的格式给出"""
+    """规则里用到历史百分位（pe_pct / pb_pct / erp_pct）的条件两侧；估值定投模板按同样的格式给出"""
     if spec and spec.get("kind") == "template" and spec.get("template") == "value_dca":
         years = (spec.get("params") or {}).get("years", 5)
         return [{"ind": "pe_pct", "params": {"years": years}}]
     if not spec or spec.get("kind") != "rule":
         return []
     return [s for side in ("buy", "sell") for c in (spec["rule"].get(side) or {}).get("conditions", [])
-            for s in (c["left"], c["right"]) if s.get("ind") in ("pe_pct", "pb_pct")]
+            for s in (c["left"], c["right"]) if s.get("ind") in ("pe_pct", "pb_pct", "erp_pct")]
 
 
 def warm_start(pick: DataPick, spec: dict | None) -> pd.Timestamp | None:
@@ -207,14 +208,17 @@ def dividend_notices(skipped: dict, patched: dict):
 
 
 # ---------------- 策略 ----------------
-def strategy_selector(key: str, on_change) -> dict:
-    """返回 {"spec": 策略描述, "label": 显示名}（原地更新）"""
+def strategy_selector(key: str, on_change, on_broker=None) -> dict:
+    """
+    返回 {"spec": 策略描述, "label": 显示名}（原地更新）。
+    on_broker(broker)：选中的已保存策略记有资金与费率时调用（只在手动选择时，不在页面打开时）
+    """
     lg = lang()
     options = {}
     cur = state.STATE.get("current_spec")
     if cur:
         options["__current__"] = t("bt.opt_current", name=cur["name"])
-    saved = strategies.list_strategies()
+    saved, brokers = strategies.list_strategies(), strategies.strategy_brokers()
     for n, s in saved.items():
         if strategies.runnable_on_single_assets(s):
             options[f"saved:{n}"] = t("bt.opt_saved", name=n)
@@ -239,6 +243,9 @@ def strategy_selector(key: str, on_change) -> dict:
         def on_pick(e):
             state.STATE[f"{key}_strategy"] = e.value
             resolve(e.value)
+            broker = brokers.get(e.value[6:]) if e.value.startswith("saved:") else None
+            if broker and on_broker:
+                on_broker(broker)
             on_change()
         ui.select(options, label=t("bt.pick_strategy"), value=choice, on_change=on_pick) \
             .props(DENSE).classes("w-full").mark(f"{key}_strategy")
@@ -320,6 +327,24 @@ def broker_settings(key: str, default_preset: str = "etf", default_cash: int = 1
                             dividend=div.value if div else "reinvest", price_limit=limit.value if limit else True,
                             contribution=float(add.value or 0) if add else 0.0,
                             contribution_freq=freq.value if freq else "monthly")
+
+    def load(broker: dict):
+        """把保存策略时记下的资金与费率（asdict(BrokerConfig)）填回控件和页面记住的设置"""
+        from gui.plan_io import restore_broker
+        restore_broker(key, {"broker": broker}, saved)
+        want = copy.deepcopy(saved)          # 下面每改一个控件都会 remember()，先把目标值复制出来
+        costs = want["custom"][want["preset"]]
+        cash.value, preset.value = want["cash"], want["preset"]
+        comm.value, minc.value, stamp.value = costs["commission"], costs["min_commission"], costs["stamp_duty"]
+        slip.value = want["slippage"]
+        if t1:
+            t1.value, limit.value = want["t1"], want["limit"]
+        if div:
+            div.value = want["dividend"]
+        if add:
+            add.value, freq.value = want["contribution"], want["contribution_freq"]
+        remember()
+    make.load = load
     return make
 
 
@@ -356,7 +381,12 @@ def percentile_warnings(by_id: dict, pick: DataPick, spec: dict) -> list[tuple[s
         years = max(int((s.get("params") or {}).get("years", 5)) for s in uses)
     except (TypeError, ValueError):
         years = 5
-    cols = {INDICATORS[s["ind"]]["requires"] for s in uses}
+    cols = {c for s in uses for c in requires_of(s["ind"]) if not INDICATORS[c].get("macro")}
+    rates_first = None                # 股债利差还要利率数据（2015 年起），比估值晚开始时从它算
+    if any(INDICATORS[c].get("macro") for s in uses for c in requires_of(s["ind"])):
+        from simplequant.bonds.rates import RatesStore
+        rates = RatesStore().load()
+        rates_first = rates.index.min() if len(rates) else None
     start = pd.Timestamp(pick.start)
     names, out, earlier = shared.asset_names(by_id, pick.ids, lang()), [], False
     for i in pick.ids:
@@ -364,6 +394,8 @@ def percentile_warnings(by_id: dict, pick: DataPick, spec: dict) -> list[tuple[s
         earlier = earlier or (len(df) > 0 and df.index[0] < start)
         have = sorted(cols & set(df.columns))
         first = df[have].dropna(how="all").index.min() if have else None
+        if first is not None and rates_first is not None:
+            first = max(first, rates_first)
         if first is None or pd.isna(first) or first >= start:
             continue          # 没有估值数据（missing_factor_warnings 会提示），或区间前没有估值数据（与原来一样）
         before = int(((df.index >= first) & (df.index < start)).sum())

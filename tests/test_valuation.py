@@ -142,3 +142,29 @@ def test_percentile_rule_warms_up_with_data_before_range(monkeypatch):
     rule["buy"]["conditions"][0]["left"] = make_ind("pe")      # 没用百分位：照常截到区间内，不提示
     assert C.warm_start(pick, spec) is None and C.percentile_warnings(by_id, pick, spec) == []
     assert C.percentile_warnings(by_id, pick, {"kind": "template"}) == []
+
+
+def test_erp_percentile_counts_years_from_rates_start(monkeypatch):
+    """股债利差百分位：区间前够不够回看年数，按估值和利率两者中较晚开始的那个算（利率 2015 年起）"""
+    import datetime as dt
+    from types import SimpleNamespace
+    import gui.components as C
+    from simplequant.bonds import rates
+    cal = pd.bdate_range("2012-01-02", "2026-09-30")
+    df = pd.DataFrame({"close": 1.0, "pe": 12.0}, index=cal)
+    monkeypatch.setattr(C.library, "load", lambda i: df)
+    macro = pd.DataFrame({"cgb10y": 2.0}, index=pd.bdate_range("2015-01-05", "2026-09-30"))
+    monkeypatch.setattr(rates.RatesStore, "load", lambda self: macro)
+    by_id = {"a": SimpleNamespace(name="510300", symbol="510300", source="akshare", adjust="hfq", freq="1d",
+                                  start="2012-01-02", end="2026-09-30", extra={})}
+    pick = SimpleNamespace(ids=["a"], start=dt.date(2018, 1, 2), end=dt.date(2026, 9, 30),
+                           date_range=(dt.date(2018, 1, 2), dt.date(2026, 9, 30)))
+    rule = {"buy": {"logic": "all", "conditions": [{"left": make_ind("erp_pct", years=5), "op": ">", "right": {"value": 80}}]},
+            "sell": {"logic": "all", "conditions": [{"left": make_ind("erp_pct", years=5), "op": "<", "right": {"value": 20}}]}}
+    spec = {"kind": "rule", "rule": rule}
+    assert C.warm_start(pick, spec) == pd.Timestamp("2018-01-02")
+    (_, k1), (short, k2) = C.percentile_warnings(by_id, pick, spec)       # 市盈率有 6 年，利率只有 3 年
+    assert (k1, k2) == ("info", "warning") and "5 年" in short and "约 3.2 年" in short
+    rule["buy"]["conditions"][0]["left"] = make_ind("pe_pct", years=5)
+    rule["sell"]["conditions"][0]["left"] = make_ind("pe_pct", years=5)
+    assert [k for _, k in C.percentile_warnings(by_id, pick, spec)] == ["info"]

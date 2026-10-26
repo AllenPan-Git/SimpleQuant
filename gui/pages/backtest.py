@@ -1,6 +1,7 @@
 """第 3 页：回测（结果按研究报告排版：结论段落 → 指标 → 图 → 明细，右侧给出下一步）"""
 
 import datetime as dt
+from dataclasses import asdict
 
 import pandas as pd
 from nicegui import run, ui
@@ -59,8 +60,12 @@ def page():
                              value=state.STATE.get("bt_mode", "portfolio"), on_change=lambda e: on_mode(e.value)) \
                         .props("inline dense").mark("bt_mode")
                     ui.icon("help_outline").classes("sq-muted").tooltip(t("bt.mode_help"))
-                strat = strategy_selector("bt", lambda: check())
+                strat = strategy_selector("bt", lambda: (save_name.set_value(strat.get("name", "")), check()),
+                                          on_broker=lambda b: make_broker.load(b))
                 make_broker = broker_settings("bt", show_dividend=True, show_contribution=True)
+                with ui.row().classes("w-full items-end gap-3"):
+                    save_name = ui.input(t("bt.save_name"), value=strat.get("name", ""))                         .props("outlined dense").classes("grow").mark("bt_save_name")
+                    ui.button(t("bt.save_strategy"), icon="save", on_click=lambda: save_strategy())                         .props("outline no-caps").tooltip(t("bt.save_strategy_help")).mark("bt_save")
         setup.on_value_change(lambda _: draw_chips())
         warnings = ui.column().classes("w-full gap-2")
         running = ui.row().classes("items-center gap-2")
@@ -72,6 +77,14 @@ def page():
         def batch() -> bool:
             """分别回测：选了两个及以上标的，并选择了「分别回测」"""
             return state.STATE.get("bt_mode") == "batch" and len(pick.ids) > 1
+
+        def save_strategy():
+            """策略连同当前的资金与费率一起保存；之后在回测页选它时恢复"""
+            name = (save_name.value or "").strip()
+            if not name:
+                return
+            strategies.save_strategy(name, strat["spec"], broker=asdict(make_broker()))
+            ui.notify(t("strat.saved", name=name), type="positive")
 
         def on_mode(v):
             state.STATE["bt_mode"] = v

@@ -22,8 +22,10 @@ from simplequant.stocks import (StockStore, UNIVERSES, FACTORS, GROUPS, REBALANC
 from simplequant.stocks import custom_factors, panel_cache, universe as U, factors_for
 from simplequant.stocks import ml as ML
 from simplequant.stocks import mining as MN
-from simplequant.stocks.selection import panel_warmup_days, ic_history_short, skip_months
+from simplequant.stocks.selection import panel_warmup_days, ic_history_short, skip_months, needs_risk
+from simplequant.stocks.panel import RISK_FILTERS
 from simplequant.bonds.panel import CB_FILTERS, CB_DEFAULT_FILTERS
+from simplequant.stocks.store import DAILY_LIMIT
 from simplequant.system import open_folder
 from simplequant.stocks.walkforward import (walk_forward_selection, selection_tunables, selection_grid,
                                             REBALANCE_CHOICES, TARGET_METRICS as WF_TARGETS, MAX_COMBOS as WF_MAX)
@@ -77,6 +79,8 @@ def sp_state() -> dict:
     sp.setdefault("cf_ai", {"text": "", "base": False, "result": None})
     # 可转债的选股条件（价格上限等；None = 不限）；旧版保存的界面状态里没有这两项
     sp.setdefault("cbf", {k: v for k, v in CB_DEFAULT_FILTERS.items() if k in CB_FILTERS})
+    sp.setdefault("riskf", {k: None for k in RISK_FILTERS})      # 股票的排雷条件（None = 不限）
+    sp["dl"].setdefault("with_risk", False)
     sp.setdefault("forms", {})
     sp.setdefault("ml_model", ML.DEFAULT_MODEL)
     sp.setdefault("ml_window", ML.DEFAULT_WINDOW)
@@ -363,12 +367,14 @@ def _data_tab(SP, ctx, reload_all):
         have = sum(st.has(c) for c in codes)
         have_fin = sum(st.has_fin(c) for c in codes)
         have_div = sum(st.has_div(c) for c in codes)
-        with ui.grid().classes("w-full gap-3 grid-cols-2 md:grid-cols-5"):
+        have_risk = sum(st.has_risk(c) for c in codes)
+        with ui.grid().classes("w-full gap-3 grid-cols-2 md:grid-cols-6"):
             metric_tile(t("sp.snapshots"), str(uni["date"].nunique()))
             metric_tile(t("sp.codes"), str(len(codes)), help_text=t("sp.codes_help"))
             metric_tile(t("sp.downloaded"), f"{have}/{len(codes)}")
             metric_tile(t("sp.fin_downloaded"), f"{have_fin}/{len(codes)}", help_text=t("sp.fin_help"))
             metric_tile(t("sp.div_downloaded"), f"{have_div}/{len(codes)}", help_text=t("sp.div_help"))
+            metric_tile(t("sp.risk_downloaded"), f"{have_risk}/{len(codes)}", help_text=t("sp.risk_help"))
     else:
         notice(t("sp.no_data"), "info")
 
@@ -381,19 +387,37 @@ def _data_tab(SP, ctx, reload_all):
                 .classes("w-44")
             with_fin = ui.switch(t("sp.with_fin"), value=D["with_fin"]).tooltip(t("sp.fin_help"))
             with_div = ui.switch(t("sp.with_div"), value=D.get("with_div", True)).tooltip(t("sp.div_help"))
+            with_risk = ui.switch(t("sp.with_risk"), value=D["with_risk"]).tooltip(t("sp.risk_help"))                 .mark("sp_with_risk")
+        risk_est = ui.label().classes("text-sm")
+
+        def estimate():
+            """排雷数据要的请求多（每只每季度 2 次），按当前进度估计还要几天，免得以为卡住了"""
+            risk_est.set_visibility(bool(with_risk.value) and ctx.lo is not None)
+            if not risk_est.visible:
+                return
+            try:
+                year = int(str(d_start.value)[:4]) - 1
+            except ValueError:
+                return
+            codes = sorted(st.load_universe(universe)["code"].unique())
+            n = st.risk_requests(codes, year)
+            risk_est.text = t("sp.risk_estimate", n=f"{n:,}", days=max(1, -(-n // DAILY_LIMIT))) if n                 else t("sp.risk_estimate_none")
+        with_risk.on_value_change(lambda _: estimate())
+        d_start.on_value_change(lambda _: estimate())
+        estimate()
         ui.label(t("sp.download_note")).classes("sq-muted text-sm")
         prog = Progress()
         out = ui.column().classes("w-full")
 
         async def download():
-            D.update(start=d_start.value, with_fin=with_fin.value, with_div=with_div.value)
+            D.update(start=d_start.value, with_fin=with_fin.value, with_div=with_div.value, with_risk=with_risk.value)
             s, e = d_start.value, min(d_end.value, today())
             btn.disable()
             out.clear()
             prog.start()
             t0 = time.time()
 
-            fin, div = with_fin.value, with_div.value
+            fin, div, risk = with_fin.value, with_div.value, with_risk.value
 
             def work():
                 # 进度文字：步骤 · 进度 · 用时（后台线程只写进度条的数值，界面由定时器刷新）
@@ -415,6 +439,10 @@ def _data_tab(SP, ctx, reload_all):
                     prog.set(0, t("sp.step_div", n=len(codes)))
                     errs.update(st.update_dividends(codes, int(s[:4]) - 1,
                                                     progress=step(t("sp.step_div", n=len(codes)), time.time())))
+                if risk:                    # 最慢，放在最后：额度用完时前面的都已下完
+                    prog.set(0, t("sp.step_risk", n=len(codes)))
+                    errs.update(st.update_risk(codes, int(s[:4]) - 1,
+                                               progress=step(t("sp.step_risk", n=len(codes)), time.time())))
                 return codes, errs
             try:
                 codes, errs = await run.io_bound(work)
@@ -544,7 +572,8 @@ def _research(SP, ctx):
     kinds = factors_for(panel.kind)
     if R["fkey"] not in kinds:
         R["fkey"] = kinds[0]
-    usable = [k for k in kinds if panel.has_fin or not FACTORS[k].get("requires_fin")]
+    usable = [k for k in kinds if (panel.has_fin or not FACTORS[k].get("requires_fin"))
+              and (panel.has_risk or not FACTORS[k].get("requires_risk"))]
 
     with ui.card().classes("w-full gap-3"):
         with ui.row().classes("w-full items-start gap-3"):
@@ -583,6 +612,9 @@ def _research(SP, ctx):
             if FACTORS[R["fkey"]].get("requires_div") and not panel.div_codes:
                 with hint_box:
                     notice(t("sp.need_div_factor"), "warning", "warning")
+            if FACTORS[R["fkey"]].get("requires_risk") and not panel.has_risk:
+                with hint_box:
+                    notice(t("sp.need_risk"), "warning", "warning")
         hints()
 
         def factor_values(k, mask):
@@ -1188,6 +1220,8 @@ def current_spec(SP) -> dict:
     filters = {"exclude_st": bool(SP["excl_st"]) and not cb, "min_list_days": int(SP["min_list"])}
     if cb:
         filters.update({k: SP["cbf"].get(k) for k in CB_FILTERS})
+    else:                                   # 只写设了值的，没用排雷条件的策略与原来一字不差
+        filters.update({k: v for k, v in (SP.get("riskf") or {}).items() if v is not None})
     return {"kind": "selection", "universe": SP["universe"],
             "factors": [dict(f) for f in SP["factors"]], "top_n": int(SP["top_n"]),
             "rebalance": SP["reb"] if SP["reb"] != "n" else int(SP["reb_n"]),
@@ -1218,6 +1252,8 @@ def apply_spec(SP, spec: dict, name: str = ""):
     SP["excl_st"], SP["min_list"] = bool(flt["exclude_st"]), int(flt["min_list_days"])
     if kind == "cb":
         SP["cbf"] = {k: flt.get(k) for k in CB_FILTERS}
+    else:
+        SP["riskf"] = {k: flt.get(k) for k in RISK_FILTERS}
     SP["pos"] = int(spec.get("position_pct", 95))
     SP["weighting"] = spec.get("weighting", "manual")
     SP["lookback"] = int(spec.get("ic_lookback", 252))
@@ -1422,6 +1458,13 @@ def _backtest_form(SP, ctx, rebuild):
                     ui.number(p(m["label"]), value=SP["cbf"].get(k), on_change=on_f) \
                         .props("outlined dense clearable").classes("w-60") \
                         .tooltip(p(m["help"]) + t("cb.empty_no_limit")).mark(f"cb_{k}")
+        if panel.kind == "stock":
+            with ui.row().classes("w-full items-center gap-4"):
+                for k, m in RISK_FILTERS.items():
+                    def on_r(e, k=k):
+                        SP["riskf"][k] = float(e.value) if e.value not in (None, "") else None
+                        changed()
+                    ui.number(p(m["label"]), value=SP["riskf"].get(k), on_change=on_r)                         .props("outlined dense clearable").classes("w-60")                         .tooltip(p(m["help"]) + t("sp.risk_filter_note")).mark(f"sp_{k}")
         with ui.row().classes("w-full items-center gap-4"):
             if panel.kind == "stock":
                 ui.switch(t("sp.exclude_st"), value=SP["excl_st"], on_change=lambda e: set_sp("excl_st", e.value))
@@ -1489,6 +1532,9 @@ def _backtest_form(SP, ctx, rebuild):
         if not panel.div_codes and any(FACTORS[f["key"]].get("requires_div") for f in SP["factors"]):
             with fin_warn:
                 notice(t("sp.need_div_factor"), "warning", "warning")
+        if panel.kind == "stock" and not panel.has_risk and needs_risk(spec):
+            with fin_warn:
+                notice(t("sp.need_risk"), "warning", "warning")
         div_warn.clear()
         if SP.get("dividend") == "cash" and not panel.div_codes and panel.kind == "stock":
             with div_warn:

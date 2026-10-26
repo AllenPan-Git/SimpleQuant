@@ -22,7 +22,7 @@ from ..engine.commission import AShareCommission
 from ..engine import limits as limits_module
 from ..engine.market import t0_names
 from ..i18n import pick
-from ..rules import INDICATORS, default_line
+from ..rules import INDICATORS, default_line, requires_of
 from ..rules.schema import BARS_PER_YEAR
 from ..strategies import templates as tpl_module
 from ..strategies.factors import KDJ, OBV, Percentile
@@ -63,7 +63,7 @@ def _line_expr(spec: dict) -> tuple[str, str]:
     if ind in ("pe_pct", "pb_pct"):
         col, years = INDICATORS[ind]["requires"], n("years")
         return f"{ind}_{years}", f"Percentile(d.{col}, window={years * BARS_PER_YEAR}, min_count={BARS_PER_YEAR}).pct"
-    if INDICATORS.get(ind, {}).get("macro"):
+    if any(INDICATORS.get(c, {}).get("macro") for c in requires_of(ind)):
         raise ValueError("rates indicators are not supported in the exported script yet / 利率类条件暂不支持导出为独立脚本")
     if ind == "obv":
         return "obv", "OBV(d).obv"
@@ -552,7 +552,7 @@ def selection_script(spec: dict, broker: dict, start: str, project_dir: str, tit
     :param exe: 打包版 SimpleQuant 可执行文件的路径；给出时说明改为用它运行（自带引擎，不需要装 Python）
     """
     from ..stocks import FACTORS
-    from ..stocks.selection import panel_warmup_days
+    from ..stocks.selection import panel_warmup_days, needs_risk
     needs_fin = any(FACTORS.get(f["key"], {}).get("requires_fin") for f in spec["factors"]) or \
         bool((spec.get("neutralize") or {}).get("size"))
     needs_div = spec.get("dividend") == "cash" or \
@@ -591,6 +591,7 @@ BROKER = BrokerConfig(**{broker!r})
 START = "{start}"
 NEEDS_FIN = {needs_fin!r}
 NEEDS_DIV = {needs_div!r}
+NEEDS_RISK = {needs_risk(spec)!r}
 WARMUP_DAYS = {panel_warmup_days(spec)!r}       # 机器学习的训练窗口、超过 252 天的 IC 回看期要多取，其余为 400
 OUT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -599,7 +600,7 @@ if __name__ == "__main__":
     store = StockStore()
     end = latest_expected_day(load_calendar()).date().isoformat()
     print("updating data / 更新数据…", flush=True)
-    universe.update(SPEC["universe"], START, end, store, fin=NEEDS_FIN, div=NEEDS_DIV)
+    universe.update(SPEC["universe"], START, end, store, fin=NEEDS_FIN, div=NEEDS_DIV, risk=NEEDS_RISK)
     first = universe.load_benchmark(SPEC["universe"], store).index[0]
     first = max(first, pd.Timestamp(START) - pd.Timedelta(days=WARMUP_DAYS))    # 面板往前多取一段预热因子
     print("backtesting / 回测…", flush=True)

@@ -102,3 +102,51 @@ def test_rates_rules_cannot_be_exported():
     with pytest.raises(ValueError, match="利率"):
         platform_script("joinquant", spec, [{"name": "510300", "symbol": "510300", "asset": "etf"}],
                         asdict(BrokerConfig()), "2024-01-01", "2024-12-31")
+
+
+ERP_RULE = {"buy": {"logic": "all", "conditions": [
+                {"left": make_ind("erp"), "op": ">", "right": {"value": 4}}]},
+            "sell": {"logic": "all", "conditions": [
+                {"left": make_ind("erp"), "op": "<", "right": {"value": 2}}]},
+            "position_pct": 90}
+
+
+def test_rule_uses_equity_risk_premium():
+    """股债利差 = 100 / PE − 10 年国债；要市盈率列和利率数据两样，市盈率为负时为空（不触发条件）"""
+    assert validate(ERP_RULE, "zh") == []
+    assert required_columns(ERP_RULE) == {"pe", "cgb10y"} and macro_columns(ERP_RULE) == {"cgb10y"}
+    df = make_prices(n=200)
+    pe = pd.Series(np.where(np.arange(200) % 80 < 40, 12.5, 25.0), index=df.index)      # 1/PE 8% 与 4% 交替
+    pe.iloc[150:] = -10.0                                                                 # 亏损：利差为空
+    df["pe"] = pe
+    macro = pd.DataFrame({"cgb10y": 2.5, "term_spread": 50.0, "credit_spread": 50.0}, index=df.index)
+    prices = attach({"510300": df}, {"cgb10y"}, macro)
+    res = run_backtest(prices, *strategies.resolve({"kind": "rule", "rule": ERP_RULE}), BrokerConfig())
+    o = res.orders
+    buys, sells = o[o["side"] == "buy"], o[o["side"] == "sell"]
+    assert len(buys) == 2 and len(sells) == 2                     # 8 − 2.5 = 5.5 > 4 买；4 − 2.5 = 1.5 < 2 卖
+    for t in buys["time"]:
+        assert pe.loc[:t].iloc[-2] == 12.5
+    assert o["time"].max() < df.index[151]                        # 市盈率为负以后不再有信号
+
+
+def test_erp_percentile_and_export():
+    from simplequant.export.python_script import _line_expr
+    rule = {"buy": {"logic": "all", "conditions": [
+                {"left": make_ind("erp_pct", years=1), "op": ">", "right": {"value": 80}}]},
+            "sell": {"logic": "all", "conditions": [
+                {"left": make_ind("erp_pct", years=1), "op": "<", "right": {"value": 20}}]},
+            "position_pct": 90}
+    assert validate(rule, "zh") == [] and macro_columns(rule) == {"cgb10y"}
+    df = make_prices(n=600)
+    df["pe"] = 10 + 5 * np.sin(np.arange(600) / 40)
+    macro = pd.DataFrame({"cgb10y": 2.0, "term_spread": 50.0, "credit_spread": 50.0}, index=df.index)
+    res = run_backtest(attach({"A": df}, {"cgb10y"}, macro), *strategies.resolve({"kind": "rule", "rule": rule}),
+                       BrokerConfig())
+    o = res.orders
+    assert len(o) and o["time"].min() >= df.index[244]           # 至少一年有效值才有百分位
+    for t in o[o["side"] == "buy"]["time"]:                      # 买在市盈率低（利差高）的时候
+        assert df["pe"].loc[:t].iloc[-2] < 10
+    for key in ("erp", "erp_pct"):
+        with pytest.raises(ValueError):
+            _line_expr(make_ind(key))

@@ -41,7 +41,7 @@ from ..engine.commission import AShareCommission
 from ..engine.results import EquityRecorder, BacktestResult, compute_metrics
 from ..engine.runner import BrokerConfig
 from ..engine.base_strategy import ORDER_COLUMNS, TRADE_COLUMNS
-from ..i18n import L
+from ..i18n import L, pick
 from . import factors as F
 from .dividends import split_factor, tax_rate
 
@@ -144,10 +144,28 @@ def effective_filters(panel, spec: dict) -> dict:
     return {**DEFAULT_FILTERS, **(spec.get("filters") or {})}
 
 
+def uses_risk_filters(spec: dict) -> list[str]:
+    """设了值的排雷条件"""
+    from .panel import RISK_FILTERS
+    flt = spec.get("filters") or {}
+    return [k for k in RISK_FILTERS if flt.get(k) not in (None, "")]
+
+
+def needs_risk(spec: dict) -> bool:
+    """选股策略要不要排雷数据：用到排雷因子（含用到排雷字段的自定义因子）或设了排雷条件"""
+    return bool(uses_risk_filters(spec)) or         any(F.FACTORS.get(f["key"], {}).get("requires_risk") for f in spec.get("factors", []))
+
+
 def eligible_mask(panel, filters: dict) -> pd.DataFrame:
     """可选范围：成分股、正常交易、非 ST、上市天数，加上品种自己的条件（可转债的价格上限等；值为空表示不限）"""
     mask = panel.eligible(bool(filters.get("exclude_st")), int(filters.get("min_list_days") or 0))
-    for k, fn in (getattr(panel, "extra_filters", None) or {}).items():
+    from .panel import RISK_FILTERS
+    extra = getattr(panel, "extra_filters", None) or {}
+    lacking = [k for k in RISK_FILTERS if filters.get(k) not in (None, "") and k not in extra]
+    if lacking and getattr(panel, "kind", "stock") == "stock":   # 不能当作「不限」悄悄跳过
+        raise ValueError(pick(L("用到了排雷条件，需要先在「数据」标签页下载排雷数据",
+                                "Risk screens need the risk data; download it on the Data tab first")))
+    for k, fn in extra.items():
         v = filters.get(k)
         if v is not None and v != "":
             mask = mask & fn(panel, float(v)).fillna(False).astype(bool)

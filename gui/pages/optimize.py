@@ -1,5 +1,7 @@
 """第 4 页：参数优化（网格搜索 / 滚动优化）"""
 
+from dataclasses import asdict
+
 import pandas as pd
 from nicegui import run, ui
 
@@ -36,7 +38,8 @@ def page():
         lg = lang()
 
         pick = data_selector(by_id, "opt", lambda: update())
-        strat = strategy_selector("opt", lambda: (params_box.refresh(), update()))
+        strat = strategy_selector("opt", lambda: (params_box.refresh(), update()),
+                                  on_broker=lambda b: make_broker.load(b))
         make_broker = broker_settings("opt", show_dividend=True, show_contribution=True)
 
         def set_mode(e):
@@ -247,7 +250,7 @@ def page():
                             start=is_res.equity.index[0] if warm is not None
                             else min(d.index[0] for d in prices.values()),
                             end=max(d.index[-1] for d in prices.values()), div_notes=(skipped, patched),
-                            checks=checks, tried=int(ok), years=years)
+                            checks=checks, tried=int(ok), years=years, broker=asdict(broker))
             try:
                 O["result"] = await run.io_bound(work)
             except Exception as e:  # noqa: BLE001
@@ -416,7 +419,7 @@ def _grid_results(res: dict):
 
         def save():
             if (name.value or "").strip():
-                strategies.save_strategy(name.value.strip(), res["best_spec"])
+                strategies.save_strategy(name.value.strip(), res["best_spec"], broker=res.get("broker"))
                 ui.notify(t("strat.saved", name=name.value.strip()), type="positive")
 
         def use_best():

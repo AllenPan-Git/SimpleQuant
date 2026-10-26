@@ -103,7 +103,7 @@ def refresh_selection_data(acc: PaperAccount, store, done: set | None = None, wo
                            calendar: pd.DatetimeIndex | None = None) -> None:
     """选股账户：增量更新股票池数据（同一次运行中同一个股票池只更新一次）"""
     from ..stocks import UNIVERSES, FACTORS, universe
-    from ..stocks.selection import panel_warmup_days
+    from ..stocks.selection import panel_warmup_days, needs_risk
     done = done if done is not None else set()
     if acc.universe in done:
         return
@@ -128,6 +128,8 @@ def refresh_selection_data(acc: PaperAccount, store, done: set | None = None, wo
     if acc.spec.get("dividend") == "cash" or \
             any(FACTORS.get(f["key"], {}).get("requires_div") for f in acc.spec["factors"]):
         store.update_dividends(codes, int(first[:4]) - 1, workers=workers)
+    if needs_risk(acc.spec):
+        store.update_risk(codes, int(first[:4]) - 1, workers=workers)
     done.add(acc.universe)
 
 

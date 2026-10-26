@@ -17,6 +17,7 @@ from simplequant.stocks import Panel, build_schedule
 from simplequant.stocks.panel import trading_constraints
 
 CODES = 30
+INDEX = "IDX"
 
 
 def make_panel(days=520, seed=0) -> Panel:
@@ -62,9 +63,16 @@ def make_panel(days=520, seed=0) -> Panel:
     ipo = pd.Series(pd.Timestamp("2015-01-05"), index=codes)
     ipo.iloc[25] = cal[200]
     listed = df((cal.values[:, None] - ipo.values[None, :]).astype("timedelta64[D]").astype(float))
+    # 指数：多加一列 IDX（从来不是成分股，选不到），模拟平台取指数行情时取这一列
+    index = pd.Series(close.mean(axis=1), index=cal)
+    for k in fields:
+        fields[k][INDEX] = index if k not in ("volume", "amount", "turnover", "adj_factor") else 1.0
+    tradable[INDEX], is_st[INDEX], member[INDEX] = True, False, False
+    ipo[INDEX] = pd.Timestamp("2005-01-04")
+    listed[INDEX] = (cal - ipo[INDEX]).days.astype(float)
     can_buy, can_sell = trading_constraints(fields["raw_open"], fields["raw_preclose"], tradable, is_st)
     return Panel(fields=fields, member=member, tradable=tradable, is_st=is_st, listed_days=listed,
-                 can_buy=can_buy, can_sell=can_sell, benchmark=pd.Series(close.mean(axis=1), index=cal),
+                 can_buy=can_buy, can_sell=can_sell, benchmark=index, index_close=index,
                  names={c: c for c in codes}, has_fin=True), ipo
 
 
@@ -82,8 +90,16 @@ def core_schedule(panel, ipo, spec, start):
     win = core.sel_window(spec)
     filters = {"exclude_st": True, "min_list_days": 250, **(spec.get("filters") or {})}
     out = {}
+    cash = core.sel_market_cash(spec, panel.index_close.values, sum(d < start for d in days))
     for i in range(len(cal) - 1):
-        if not core.sel_is_rebalance(spec, days[:i + 1], days[i + 1], start):
+        back = False
+        if core.sel_market_on(spec) and days[i] >= start:      # 与 sel_target 相同：空仓期间不调仓，恢复当天选股
+            if cash[i]:
+                if not cash[i - 1]:
+                    out[cal[i]] = []
+                continue
+            back = bool(cash[i - 1])
+        if not back and not core.sel_is_rebalance(spec, days[:i + 1], days[i + 1], start):
             continue
         if int(days[i + 1][5:7]) in core.sel_skip_months(spec):      # 与 sel_target 相同：空仓月份清仓
             out[cal[i]] = []
@@ -120,6 +136,22 @@ SPECS = {
     "skip_weekly": {"factors": [{"key": "ep", "weight": 1}, {"key": "turn20", "weight": 1, "direction": -1}],
                     "rebalance": "weekly", "skip_months": [3, 12]},
     "skip_n": {"factors": [{"key": "size", "weight": 1, "direction": -1}], "rebalance": 15, "skip_months": [2, 9]},
+    # 大盘条件：只设空仓条件（不满足就恢复）；空仓 + 恢复两组，并与空仓月份一起用
+    "market_ma": {"factors": [{"key": "ret20", "weight": 1, "direction": -1},
+                              {"key": "vol60", "weight": 1, "direction": -1}],
+                  "market": {"sell": {"logic": "all", "conditions": [
+                      {"left": {"ind": "close"}, "op": "<", "right": {"ind": "sma", "params": {"period": 20}},
+                       "days": 2}]}}},
+    "market_cross": {"factors": [{"key": "ep", "weight": 1}, {"key": "ret5", "weight": 1, "direction": -1}],
+                     "rebalance": "weekly", "skip_months": [4],
+                     "market": {"sell": {"logic": "any", "conditions": [
+                         {"left": {"ind": "macd", "params": {"fast": 12, "slow": 26, "signal": 9}, "line": "dif"},
+                          "op": "cross_below", "right": {"ind": "macd", "params": {"fast": 12, "slow": 26, "signal": 9},
+                                                         "line": "dea"}},
+                         {"left": {"ind": "rsi", "params": {"period": 14}}, "op": ">", "right": {"value": 75}}]},
+                         "buy": {"logic": "all", "conditions": [
+                             {"left": {"ind": "close"}, "op": "cross_above",
+                              "right": {"ind": "ema", "params": {"period": 30}}}]}}},
 }
 
 
@@ -183,7 +215,8 @@ class Sim:
 
     def __init__(self, panel, platform):
         self.p = panel
-        self.code = {c: platform_code(c, "stock", platform) for c in panel.codes}
+        self.code = {c: platform_code(c, "stock", platform) for c in panel.codes if c != INDEX}
+        self.code[INDEX] = platform_code("000300", "index", platform)
         self.name = {v: k for k, v in self.code.items()}
         self.cash, self.pos, self.fills = BROKER.cash, {}, []
 
@@ -544,7 +577,8 @@ def overlap_lines(logs):
 @pytest.mark.parametrize("platform,name", [("joinquant", "price_manual"), ("joinquant", "value_liquidity"),
                                            ("joinquant", "size_neutral"), ("joinquant", "ic"),
                                            ("joinquant", "skip_monthly"), ("joinquant", "skip_n"),
-                                           ("qmt", "price_manual"), ("qmt", "ic")])
+                                           ("joinquant", "market_ma"), ("joinquant", "market_cross"),
+                                           ("qmt", "price_manual"), ("qmt", "ic"), ("qmt", "market_ma")])
 def test_exported_trades_match_run_selection(panel_ipo, platform, name):
     """聚宽、QMT：开盘时知道开盘价和涨跌停，每一笔委托都应与 SimpleQuant 相同"""
     panel, ipo = panel_ipo
@@ -559,7 +593,7 @@ def test_exported_trades_match_run_selection(panel_ipo, platform, name):
     assert len(lines) > 5 and all("重合 8/8" in ln for ln in lines), lines
 
 
-@pytest.mark.parametrize("name", ["value_liquidity", "size_neutral", "icir"])
+@pytest.mark.parametrize("name", ["value_liquidity", "size_neutral", "icir", "market_cross"])
 def test_myquant_picks_match(panel_ipo, name):
     """掘金：收盘下单、次日开盘成交，股数按收盘价估算，只比较名单与持仓"""
     panel, ipo = panel_ipo

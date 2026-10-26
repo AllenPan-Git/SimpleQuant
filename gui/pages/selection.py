@@ -22,7 +22,7 @@ from simplequant.stocks import (StockStore, UNIVERSES, FACTORS, GROUPS, REBALANC
 from simplequant.stocks import custom_factors, panel_cache, universe as U, factors_for
 from simplequant.stocks import ml as ML
 from simplequant.stocks import mining as MN
-from simplequant.stocks.selection import panel_warmup_days, ic_history_short, skip_months, needs_risk
+from simplequant.stocks.selection import panel_warmup_days, ic_history_short, skip_months, needs_risk, MARKET_INDS
 from simplequant.stocks.panel import RISK_FILTERS
 from simplequant.bonds.panel import CB_FILTERS, CB_DEFAULT_FILTERS
 from simplequant.stocks.store import DAILY_LIMIT
@@ -38,7 +38,7 @@ from gui.plan_io import import_button, export_selection_bytes, plan_filename, pl
 from simplequant import plan as plan_mod
 from gui.widgets import section, df_table, fmt_table, plot, notice, download_btn, Progress, code_editor, LogBox
 from ui.charts import ic_chart, quantile_chart, group_bar, equity_chart, corr_heatmap
-from ui.shared import export_filename, default_range, fmt_metric, pct, num, orders_table, logs_table
+from ui.shared import export_filename, default_range, fmt_metric, pct, num, orders_table, logs_table, with_ids, clean
 
 DENSE = "outlined dense options-dense"
 WARMUP_DAYS = 400          # 面板往前多取约 400 天，只用来预热因子；研究与回测从所选开始日起算（机器学习另取更长的面板）
@@ -77,6 +77,7 @@ def sp_state() -> dict:
         "cf": {"key": None, "name": "", "code": "", "direction": 1, "desc": ""}, "cf_trial": None,
     })
     sp.setdefault("cf_ai", {"text": "", "base": False, "result": None})
+    sp.setdefault("market", empty_market())         # 大盘条件（界面里的条件带 _id）
     # 可转债的选股条件（价格上限等；None = 不限）；旧版保存的界面状态里没有这两项
     sp.setdefault("cbf", {k: v for k, v in CB_DEFAULT_FILTERS.items() if k in CB_FILTERS})
     sp.setdefault("riskf", {k: None for k in RISK_FILTERS})      # 股票的排雷条件（None = 不限）
@@ -97,6 +98,19 @@ def kind_defaults(kind: str) -> dict:
                 "min_list": CB_DEFAULT_FILTERS["min_list_days"], "dividend": "reinvest", "ni": False, "ns": False}
     return {"factors": [dict(f) for f in SEL_DEFAULT], "excl_st": True, "min_list": DEFAULT_FILTERS["min_list_days"],
             "dividend": "reinvest", "ni": False, "ns": False}
+
+
+def empty_market() -> dict:
+    return {"sell": {"logic": "any", "conditions": []}, "buy": {"logic": "all", "conditions": []}}
+
+
+def market_spec(SP) -> dict | None:
+    """表单里的大盘条件；没有空仓条件时为 None（恢复条件单独设没有意义）"""
+    m = SP.get("market") or {}
+    if not (m.get("sell") or {}).get("conditions"):
+        return None
+    out = clean({"buy": m.get("buy") or {"logic": "all", "conditions": []}, "sell": m["sell"]})
+    return {"sell": out["sell"], **({"buy": out["buy"]} if out["buy"]["conditions"] else {})}
 
 
 def switch_kind(SP, old: str, new: str):
@@ -1226,6 +1240,7 @@ def current_spec(SP) -> dict:
             "factors": [dict(f) for f in SP["factors"]], "top_n": int(SP["top_n"]),
             "rebalance": SP["reb"] if SP["reb"] != "n" else int(SP["reb_n"]),
             **({"skip_months": sorted(SP["skip"])} if SP.get("skip") else {}),
+            **({"market": m} if (m := market_spec(SP)) else {}),
             "filters": filters,
             "position_pct": int(SP["pos"]), "weighting": SP["weighting"], "ic_lookback": int(SP["lookback"]),
             **({"ml": {"model": SP["ml_model"], "window": int(SP["ml_window"]), **SP["ml_params"][SP["ml_model"]]}}
@@ -1248,6 +1263,9 @@ def apply_spec(SP, spec: dict, name: str = ""):
     if reb not in REBALANCE:
         SP["reb_n"] = int(reb)
     SP["skip"] = skip_months(spec)
+    market = spec.get("market") or {}
+    SP["market"] = with_ids({"buy": market.get("buy") or {"logic": "all", "conditions": []},
+                             "sell": market.get("sell") or {"logic": "any", "conditions": []}})
     flt = {**(CB_DEFAULT_FILTERS if kind == "cb" else DEFAULT_FILTERS), **(spec.get("filters") or {})}
     SP["excl_st"], SP["min_list"] = bool(flt["exclude_st"]), int(flt["min_list_days"])
     if kind == "cb":
@@ -1491,6 +1509,19 @@ def _backtest_form(SP, ctx, rebuild):
                 div_radio.tooltip(t("sp.dividend_help"))
             div_warn = ui.column()
         div_row.set_visibility(panel.kind == "stock")
+
+    # ---- 大盘条件 ----
+    from gui.pages.strategy import side_editor      # 与择时策略页共用条件积木
+    with section(t("sp.market"), "show_chart"):
+        index_name = t(f"sp.market_index_{SP['universe']}") if SP["universe"] in ("all", "cb") \
+            else p(UNIVERSES[SP["universe"]]["label"])
+        ui.label(t("sp.market_help", index=index_name)).classes("sq-muted text-sm")
+        with ui.card().classes("w-full gap-3"):
+            side_editor(SP, "sell", t("sp.market_out"), "trending_down", lambda: changed(), options=MARKET_INDS,
+                        empty_text=t("sp.market_out_empty"), key="market")
+        with ui.card().classes("w-full gap-3"):
+            side_editor(SP, "buy", t("sp.market_back"), "trending_up", lambda: changed(), options=MARKET_INDS,
+                        empty_text=t("sp.market_back_empty"), key="market")
 
     make_broker = broker_settings(broker_key(panel.kind), default_preset="bond" if panel.kind == "cb" else "stock",
                                   default_cash=1_000_000, show_t1=False)

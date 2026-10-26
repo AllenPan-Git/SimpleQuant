@@ -16,7 +16,7 @@ import pprint
 
 from .. import strategies
 from ..i18n import L, pick
-from . import selection_core
+from . import platforms, selection_core
 from .platforms import PLATFORMS, platform_code
 
 INDEX_CODE = {"hs300": "000300", "zz500": "000905", "sz50": "000016"}
@@ -53,7 +53,10 @@ def check_selection_exportable(spec: dict, platform: str, follow: bool = False, 
                                 "暂不支持在平台上计算；可以用「按名单调仓」导出",
                                 f"Financial factors ({', '.join(fin)}) differ across platforms and can't be computed "
                                 "there yet; use the 'follow picks' export instead"), lang))
-    from ..stocks.selection import needs_risk
+    from ..stocks.selection import needs_risk, market_errors
+    if market_errors(spec, lang):
+        raise ValueError(pick(L("大盘条件只能用收盘价算的指标（均线、MACD、RSI 等）", "Market conditions can only use "
+                                "close-based indicators (MA, MACD, RSI, ...)"), lang))
     if needs_risk(spec):
         raise ValueError(pick(L("用到了排雷因子或排雷条件（资产负债率等），各平台的财务数据口径不同，暂不支持在平台上计算；"
                                 "可以用「按名单调仓」导出",
@@ -135,6 +138,8 @@ def _header(platform, title, spec, start, end, broker, follow, expected, lang) -
     notes = NOTES[platform].format(start=start, end=end, cash=broker["cash"], index=index)
     if follow:
         notes += "\n" + FOLLOW_NOTE.format(last=max(expected) if expected else end)
+    elif selection_core.sel_market_on(spec):
+        notes += "\n" + MARKET_NOTE
     return f'''{coding}"""
 {title} —— {pick(PLATFORMS[platform]["label"], "zh")}
 由 SimpleQuant 导出于 {dt.datetime.now():%Y-%m-%d %H:%M}（Exported by SimpleQuant）
@@ -160,11 +165,12 @@ def _dict_lines(d: dict) -> str:
 
 def _settings(platform, spec, start, end, panel_start, broker, follow, expected) -> str:
     keep = ("cash", "commission", "min_commission", "stamp_duty", "slippage")
-    spec = {k: spec[k] for k in ("kind", "universe", "factors", "top_n", "rebalance", "skip_months", "filters",
-                                 "position_pct", "weighting", "ic_lookback", "neutralize") if k in spec}
+    spec = {k: spec[k] for k in ("kind", "universe", "factors", "top_n", "rebalance", "skip_months", "market",
+                                 "filters", "position_pct", "weighting", "ic_lookback", "neutralize") if k in spec}
     exp = {str(d)[:10]: [platform_code(c, "stock", platform) for c in codes] for d, codes in (expected or {}).items()}
     return f'''
 import datetime
+import json
 import math
 import time
 import warnings
@@ -190,6 +196,11 @@ EXPECTED = {_dict_lines(exp)}
 '''
 
 
+MARKET_NOTE = """  - 大盘条件用平台的指数收盘价逐日计算（SimpleQuant 用 BaoStock 的指数行情），指标值可能有极小的差别，
+    恰好在临界值附近时空仓 / 恢复的日子可能差一天"""
+
+SIGNAL_TITLE = ("# ============================== SimpleQuant 指标核心（大盘条件用，与择时策略导出相同） "
+                "==============================\n")
 CORE_TITLE = "# ============================== SimpleQuant 选股核心（与平台无关） ==============================\n"
 
 
@@ -228,6 +239,9 @@ def initialize(context):
 class _Data(object):
     def members(self, day):
         return get_index_stocks(INDEX, date=day)
+
+    def index_close(self, dates):
+        return self.bars([INDEX], dates, ["close"], True)["close"][:, 0]
 
     def ipo(self, codes):
         if g.sq_ipo is None:
@@ -322,6 +336,9 @@ class _Data(object):
         except NameError:          # 旧版 gm SDK
             res = get_history_constituents(index=INDEX, start_date=day, end_date=day)
             return list(res[0]["constituents"].keys()) if res else []
+
+    def index_close(self, dates):
+        return self.bars([INDEX], dates, ["close"], True)["close"][:, 0]
 
     def ipo(self, codes):
         cache = self.context.sq_ipo
@@ -453,6 +470,9 @@ class _Data(object):
         ms = int(time.mktime(datetime.datetime.strptime(day, "%Y-%m-%d").timetuple()) * 1000)
         return self.C.get_sector(INDEX, ms)
 
+    def index_close(self, dates):
+        return self.bars([INDEX], dates, ["close"], True)["close"][:, 0]
+
     def ipo(self, codes):
         for c in codes:
             if c not in G.ipo:
@@ -579,4 +599,5 @@ def selection_platform_script(platform: str, spec: dict, broker: dict, start: st
     check_selection_exportable(spec, platform, follow, lang)
     return (_header(platform, title, spec, start, end, broker, follow, expected, lang)
             + _settings(platform, spec, start, end, panel_start, broker, follow, expected)
+            + (SIGNAL_TITLE + platforms._core_source() if selection_core.sel_market_on(spec) and not follow else "")
             + CORE_TITLE + _core_source() + CHUNKS + ADAPTERS[platform])

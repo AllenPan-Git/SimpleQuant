@@ -82,6 +82,7 @@ class Panel:
     delisting_period: pd.DataFrame | None = None      # 当天在退市整理期（bool）；BaoStock 这段 isST = 0，排除 ST 时一并排除
     extra_filters: dict = field(default_factory=dict)   # 选股条件名 -> fn(panel, 值) -> bool DataFrame
     bench_total_return: bool = False     # 股票池基准是全收益指数（False：价格指数，不含分红，超额收益偏高）
+    index_close: pd.Series | None = None  # 股票池指数（价格指数）收盘价：选股的大盘条件用
 
     @property
     def calendar(self) -> pd.DatetimeIndex:
@@ -246,6 +247,7 @@ def build_panel(store: StockStore, universe: str, start: str, end: str) -> Panel
     return Panel(fields=frames, member=membership(uni, calendar, codes), tradable=tradable, is_st=is_st,
                  listed_days=listed_days, can_buy=can_buy, can_sell=can_sell,
                  benchmark=bench.loc[calendar, "close"] if tr is None else tr, names=names,
+                 index_close=bench.loc[calendar, "close"],
                  industry=store.load_industry().reindex(codes), has_fin=has_fin, div_codes=div_codes,
                  div_patched=div_patched, bench_total_return=tr is not None, has_risk=has_risk,
                  extra_filters={k: m["fn"] for k, m in RISK_FILTERS.items()} if has_risk else {},

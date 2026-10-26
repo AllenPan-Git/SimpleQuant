@@ -10,6 +10,10 @@
   "rebalance": "monthly",          # monthly / weekly / 整数（每 N 个交易日）
   "skip_months": [1, 4],           # 这些月份空仓（可省略）：上个月最后一个交易日收盘清空名单、次日开盘全卖，
                                    # 空仓月最后一个交易日照常选股、次日开盘买回；不论调仓频率，月份交界处都加一次调仓
+  "market": {                      # 大盘条件（可省略）：股票池指数的收盘价逐日判断，条件写法同择时规则（只能用收盘价算的指标）
+    "sell": {"logic": "any", "conditions": [...]},   # 空仓条件：收盘满足 → 次日开盘全卖，之后不调仓
+    "buy": {"logic": "all", "conditions": [...]}},   # 恢复条件：空仓时收盘满足 → 当天选股、次日开盘买回；
+                                                     #   不设恢复条件时，空仓条件不再满足就恢复
   "filters": {"exclude_st": true, "min_list_days": 250},
   "position_pct": 95,
   "weighting": "manual",           # manual / ic / icir（按过去一段时间的 IC 自动定权重和方向）/ ml（机器学习，见 ml.py）
@@ -41,6 +45,7 @@ from ..engine.commission import AShareCommission
 from ..engine.results import EquityRecorder, BacktestResult, compute_metrics
 from ..engine.runner import BrokerConfig
 from ..engine.base_strategy import ORDER_COLUMNS, TRADE_COLUMNS
+from ..export.selection_core import MARKET_INDS, sel_market_cash, sel_market_on
 from ..i18n import L, pick
 from . import factors as F
 from .dividends import split_factor, tax_rate
@@ -79,6 +84,37 @@ def month_edges(calendar: pd.DatetimeIndex, months) -> tuple[pd.DatetimeIndex, s
     into = np.isin(nxt.month, list(months))
     edge = (cur.month != nxt.month) & (into | np.isin(cur.month, list(months)))
     return cur[edge], set(cur[into])
+
+
+def market_cash(panel, spec: dict, start=None) -> pd.Series | None:
+    """大盘条件：每天收盘后是否空仓（面板日历上的 bool；回测开始前为 False）。没设大盘条件时返回 None"""
+    if not sel_market_on(spec):
+        return None
+    close = getattr(panel, "index_close", None)
+    if close is None:
+        raise ValueError(pick(L("大盘条件需要股票池指数的行情，请重新打开选股页（面板缓存是旧版本）",
+                                "Market conditions need the index prices; reopen the selection page")))
+    cal = panel.calendar
+    first = cal.searchsorted(pd.Timestamp(start)) if start is not None else 0
+    return pd.Series(sel_market_cash(spec, close.reindex(cal).to_numpy(dtype=float), first), index=cal)
+
+
+def market_errors(spec: dict, lang: str = "zh") -> list[str]:
+    """大盘条件的格式问题（只能用收盘价算的指标、不能用持仓收益）；没有问题返回空列表"""
+    market = spec.get("market")
+    if not market:
+        return []
+    from ..rules import validate
+    if not isinstance(market, dict) or not all(isinstance(market.get(s) or {}, dict) for s in ("sell", "buy")):
+        return ["market: format"]
+    sell, buy = market.get("sell") or {}, market.get("buy") or {}
+    errors = validate({"buy": sell, "sell": buy}, lang) if sell.get("conditions") else ["market: no sell conditions"]
+    for block in (sell, buy):
+        for c in block.get("conditions") or []:
+            for s in (c.get("left") or {}, c.get("right") or {}):
+                if "value" not in s and s.get("ind") not in MARKET_INDS:
+                    errors.append(f"market: {s.get('ind')}")
+    return errors
 
 
 def rebalance_horizon(rule) -> int:
@@ -197,6 +233,11 @@ def build_schedule(panel, spec: dict, start=None, next_days=None, cache: dict | 
     dates = dates[dates <= panel.calendar[-1]]
     if start is not None:
         dates = dates[dates >= pd.Timestamp(start)]
+    cash = market_cash(panel, spec, start)
+    if cash is not None:            # 加上空仓 / 恢复的日子；空仓期间的其他调仓日去掉
+        flips = cash.index[cash.to_numpy() != np.r_[False, cash.to_numpy()[:-1]]]
+        dates = dates.union(flips)
+        dates = dates[~cash.reindex(dates).to_numpy(dtype=bool) | dates.isin(flips)]
     ml_info = None
     if spec.get("weighting") == "ml":
         from . import ml
@@ -208,7 +249,7 @@ def build_schedule(panel, spec: dict, start=None, next_days=None, cache: dict | 
                             neutral=spec.get("neutralize"), horizon=horizon,
                             lookback=int(spec.get("ic_lookback", 252)), cache=sub)
     for d in dates:
-        if d in to_cash:
+        if d in to_cash or (cash is not None and cash[d]):
             picks[d] = []
             continue
         row = score.loc[d].dropna()
@@ -589,7 +630,7 @@ def _selection_pending(strat) -> list[dict]:
     for d in sorted(held - set(target) - strat.retry_sell - exiting, key=lambda x: x._name):
         out.append({"symbol": d._name, "side": "sell", "size": shares(d),
                     "ref_price": float(d.close[0] * d.ratio[0]), "reason": ("sel.reason_dropped", {})})
-    if not target:                     # 空仓月份：只卖不买
+    if not target:                     # 空仓月份、大盘空仓：只卖不买
         return out
     per_name = strat.broker.getvalue() * strat.p.position_pct / 100 / len(target)
     for d in target:

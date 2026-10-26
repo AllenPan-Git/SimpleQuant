@@ -17,7 +17,7 @@ from . import templates as _templates  # noqa: F401  注册内置模板
 from .rule_strategy import RuleStrategy
 from . import code_strategy
 from ..i18n import pick, tr
-from ..rules import describe_rule, describe_ind, INDICATORS
+from ..rules import describe_rule, describe_ind, describe_condition, INDICATORS
 from ..rules.schema import MAX_DAYS, MAX_COOLDOWN, MAX_ADDS
 from ..paths import STRATEGY_DIR
 
@@ -77,6 +77,14 @@ def describe_selection(spec: dict, lang: str = "zh") -> str:
             + tr("sel.top_n", lang, n=spec["top_n"]) + f"\n【{tr('sel.factors', lang)}】{facs}")
     if neutral:
         text += f"\n【{tr('sel.neutral', lang)}】" + sep.join(neutral)
+    market = spec.get("market") or {}
+    for side, key in (("sell", "sel.market_out"), ("buy", "sel.market_back")):
+        block = market.get(side) or {}
+        if block.get("conditions"):
+            joiner = tr("rule.and" if block.get("logic", "all") == "all" else "rule.or", lang)
+            text += f"\n【{tr(key, lang)}】" + joiner.join(describe_condition(c, lang) for c in block["conditions"])
+    if (market.get("sell") or {}).get("conditions") and not (market.get("buy") or {}).get("conditions"):
+        text += f"\n【{tr('sel.market_back', lang)}】" + tr("sel.market_back_auto", lang)
     if UNIVERSES[spec["universe"]].get("kind") == "cb":          # 可转债：价格上限等条件
         from ..bonds.panel import CB_FILTERS, cb_filters
         flt = cb_filters(spec.get("filters"))

@@ -290,7 +290,7 @@ def test_risk_plan_version_and_platform_export():
             "top_n": 10, "rebalance": "monthly", "filters": {"exclude_st": True, "min_list_days": 250}}
     assert P.selection_version(base) == P.SELECTION_VERSION
     risky = {**base, "filters": {**base["filters"], "min_cfo_np": 0.8}}
-    assert P.selection_version(risky) == P.RISK_VERSION == P.VERSION
+    assert P.selection_version(risky) == P.RISK_VERSION <= P.VERSION
     assert P.needs({"strategy": risky})["risk"] and not P.needs({"strategy": base})["risk"]
     for spec in (risky, {**base, "factors": [{"key": "debt_ratio", "weight": 1, "direction": -1}]}):
         with pytest.raises(ValueError, match="排雷"):

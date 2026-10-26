@@ -240,9 +240,10 @@ def _normalize(spec: dict, options: list) -> dict:
     return spec
 
 
-def ind_editor(spec: dict, allow_position: bool, changed, restructure):
-    """编辑一个指标（原地修改 spec）；换指标时调用 restructure() 重画所在条件"""
-    options = [k for k in IND_ORDER if allow_position or not INDICATORS[k].get("position")]
+def ind_editor(spec: dict, allow_position: bool, changed, restructure, options=None):
+    """编辑一个指标（原地修改 spec）；换指标时调用 restructure() 重画所在条件；options：可选的指标（默认全部）"""
+    options = [k for k in IND_ORDER if (options is None or k in options)
+               and (allow_position or not INDICATORS[k].get("position"))]
     _normalize(spec, options)
     ind = spec["ind"]
     meta = INDICATORS[ind]
@@ -278,14 +279,14 @@ def ind_editor(spec: dict, allow_position: bool, changed, restructure):
                     .props("outlined dense").classes("grow min-w-[80px]")
 
 
-def cond_editor(side_block: dict, c: dict, changed, redraw_side):
+def cond_editor(side_block: dict, c: dict, changed, redraw_side, options=None):
     card = ui.card().classes("w-full p-3").props("flat")
 
     def draw():
         card.clear()
         with card, ui.row().classes("w-full items-start gap-3 no-wrap"):
             with ui.column().classes("gap-2").style("flex: 5"):
-                ind_editor(c["left"], True, changed, draw)
+                ind_editor(c["left"], True, changed, draw, options)
             position = INDICATORS[c["left"]["ind"]].get("position")
             ops = [o for o in OPS if not (position and o in CROSS_OPS)]
             if c["op"] not in ops:
@@ -328,7 +329,7 @@ def cond_editor(side_block: dict, c: dict, changed, redraw_side):
                     ui.number(value=float(c["right"].get("value", 0)), on_change=on_value) \
                         .props("outlined dense").classes("w-full")
                 else:
-                    ind_editor(c["right"], False, changed, draw)
+                    ind_editor(c["right"], False, changed, draw, options)
 
             def delete():
                 side_block["conditions"] = [x for x in side_block["conditions"] if x["_id"] != c["_id"]]
@@ -339,11 +340,14 @@ def cond_editor(side_block: dict, c: dict, changed, redraw_side):
     draw()
 
 
-def side_editor(S, side: str, title: str, icon: str, changed):
+def side_editor(S, side: str, title: str, icon: str, changed, options=None, empty_text=None, key="rule"):
+    """一组条件（S[key][side]）；options：可选的指标；empty_text：没有条件时的说明"""
     box = ui.column().classes("w-full gap-3")
+    if empty_text is None and side == "sell":
+        empty_text = t("strat.no_sell")
 
     def draw():
-        block = S["rule"][side]
+        block = S[key][side]
         block.setdefault("logic", "all")
         box.clear()
         with box:
@@ -359,9 +363,9 @@ def side_editor(S, side: str, title: str, icon: str, changed):
                 ui.toggle({k: p(v) for k, v in LOGICS.items()}, value=block["logic"], on_change=on_logic) \
                     .props("dense no-caps unelevated rounded toggle-color=primary")
             for c in block["conditions"]:
-                cond_editor(block, c, changed, draw)
-            if side == "sell" and not block["conditions"]:
-                ui.label(t("strat.no_sell")).classes("sq-muted text-sm")
+                cond_editor(block, c, changed, draw, options)
+            if empty_text and not block["conditions"]:
+                ui.label(empty_text).classes("sq-muted text-sm")
 
             def add():
                 block["conditions"].append(
@@ -369,7 +373,7 @@ def side_editor(S, side: str, title: str, icon: str, changed):
                 draw()
                 changed()
             ui.button(t("strat.add_cond"), icon="add", on_click=add).props("flat no-caps dense color=primary") \
-                .mark(f"add:{side}")
+                .mark(f"add:{side}" if key == "rule" else f"add:{key}_{side}")
     draw()
 
 

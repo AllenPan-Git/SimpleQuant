@@ -908,6 +908,29 @@ async def test_selection_backtest(user: User):
 
 
 @needs_stocks
+async def test_selection_market_condition(user: User):
+    """大盘条件：加一条空仓条件（默认「收盘价 小于 均线 MA(20)」）后写进策略，回测里空仓日名单为空"""
+    from gui.pages.selection import current_spec
+    SP = await _open_selection(user)
+    SP["market"] = {"sell": {"logic": "any", "conditions": []}, "buy": {"logic": "all", "conditions": []}}
+    await user.open("/selection")
+    assert await _wait(lambda: state.STATE.get("sp_panel_key") is not None, n=2400)
+    await settle()
+    assert "market" not in current_spec(SP)
+    await user.should_see("没有空仓条件")
+    user.find(marker="add:market_sell").click()
+    await settle()
+    spec = current_spec(SP)
+    assert spec["market"]["sell"]["conditions"][0]["right"]["ind"] == "sma"
+    assert "_id" not in spec["market"]["sell"]["conditions"][0] and "buy" not in spec["market"]
+    await user.should_see("【大盘空仓条件】收盘价 小于 均线 MA(20)")
+    user.find(marker="sp_run").click()
+    assert await _wait(lambda: SP.get("result"), n=1200)
+    assert any(v == [] for v in SP["result"][0].schedule.picks.values())
+    SP["market"] = {"sell": {"logic": "any", "conditions": []}, "buy": {"logic": "all", "conditions": []}}
+
+
+@needs_stocks
 async def test_selection_risk_screen_needs_data(user: User):
     """排雷条件：填了值才写进策略；本机没有排雷数据时提示先下载、回测报错，不当成不限；数据页估计要下几天"""
     from gui.pages.selection import current_spec
@@ -1391,6 +1414,27 @@ async def test_settings_preset_and_save(user: User, monkeypatch, tmp_path):
     await user.should_not_see(str(llm.CONFIG_PATH))          # 本机路径只在「打开所在文件夹」的悬停提示里
     cfg = real_load(tmp_path / "llm.json")
     assert cfg.provider == "openai" and cfg.model == "deepseek-chat" and cfg.api_key == "sk-test"
+
+
+async def test_settings_keeps_saved_key(user: User, monkeypatch, tmp_path):
+    """已保存的 key：打开设置页能看到，不改直接保存、换页再回来都不会丢"""
+    import simplequant.llm as llm
+    from simplequant.llm.config import load_config as real_load, save_config as real_save
+    path = tmp_path / "llm.json"
+    real_save(llm.LLMConfig.from_preset("deepseek", api_key="sk-abc"), path)
+    monkeypatch.setattr(llm, "load_config", lambda: real_load(path))
+    monkeypatch.setattr(llm, "save_config", lambda cfg: real_save(cfg, path))
+    await user.open("/settings")
+    await settle()
+    assert user.find(marker="llm_api_key").elements.pop().value == "sk-abc"
+    assert user.find(marker="llm_preset").elements.pop().value == "deepseek"
+    user.find(marker="llm_save").click()
+    await settle()
+    assert real_load(path).api_key == "sk-abc"
+    await user.open("/")
+    await user.open("/settings")
+    await settle()
+    assert user.find(marker="llm_api_key").elements.pop().value == "sk-abc"
 
 
 async def test_settings_update_section_and_banner(user: User, monkeypatch):

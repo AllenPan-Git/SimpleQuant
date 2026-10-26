@@ -5,6 +5,7 @@ SimpleQuant 多因子选股核心：与平台无关的纯 Python 实现（只依
 上市日期）、查持仓、下单。算法逐项对照 simplequant/stocks（factors.py、selection.py）：
 - 因子计算、按日 MAD 去极值 + z-score、市值中性化、手动 / IC / ICIR 加权合成、取前 top_n
 - 调仓日：每月 / 每周最后一个交易日，或从数据起点起每 N 个交易日
+- 大盘条件：股票池指数的收盘价逐日判断空仓 / 恢复（指标用 signal_core，与择时策略相同）
 - 调仓执行：先重试之前卖不出的，再卖出落选的，最后用释放的资金等额买入新入选的（整手、预留 1% 资金）
 测试保证：给定与 SimpleQuant 相同的数据，每个调仓日选出的名单完全相同（tests/test_selection_export.py）。
 
@@ -18,6 +19,8 @@ import math
 import warnings
 
 import numpy as np
+
+from .signal_core import _CMP, _Lines, _line_mp, _operand_line   # 导出时 signal_core 的正文另外嵌入在前面
 
 NAN = float("nan")
 LOT = 100
@@ -92,6 +95,81 @@ def sel_is_rebalance(spec, calendar, today, start):
     return (len(calendar) - 1) % int(rule) == 0
 
 
+# ============================== 大盘条件 ==============================
+# 只用指数收盘价就能算的指标（指数数据只有开盘、收盘价）
+MARKET_INDS = ("close", "sma", "ema", "rsi", "roc", "ma_slope", "bias", "macd", "boll", "volatility")
+
+
+def sel_market_on(spec):
+    return bool(((spec.get("market") or {}).get("sell") or {}).get("conditions"))
+
+
+def _cross_series(a, b):
+    """每根 K 线的 signal_core.sq_cross（+1 / -1 / 0），一次算完"""
+    out = np.zeros(len(a), dtype=int)
+    start = max(_line_mp(a), _line_mp(b)) - 1
+    if start + 1 >= len(a):
+        return out
+    nzd = a[start] - b[start]
+    for i in range(start + 1, len(a)):
+        if nzd < 0 and a[i] > b[i]:
+            out[i] = 1
+        elif nzd > 0 and a[i] < b[i]:
+            out[i] = -1
+        d = a[i] - b[i]
+        nzd = d if d else nzd
+    return out
+
+
+def _cond_series(cond, lines, n):
+    """一条条件逐日是否成立（与 signal_core._check 在每一天的结果相同）"""
+    op = cond["op"]
+    a, _ = _operand_line(lines, cond["left"], n)
+    b, _ = _operand_line(lines, cond["right"], n)
+    if op in ("cross_above", "cross_below"):
+        return _cross_series(a, b) == (1 if op == "cross_above" else -1)
+    with np.errstate(invalid="ignore"):
+        hit = _CMP[op](a, b) & ~np.isnan(a) & ~np.isnan(b)
+    out = hit.copy()
+    for k in range(1, int(cond.get("days", 1))):     # 连续 days 根 K 线都满足
+        out[k:] &= hit[:-k]
+        out[:k] = False
+    return out
+
+
+def _block_series(block, lines, n):
+    conds = (block or {}).get("conditions") or []
+    if not conds:
+        return None
+    hits = [_cond_series(c, lines, n) for c in conds]
+    return np.logical_and.reduce(hits) if (block.get("logic") or "all") == "all" else np.logical_or.reduce(hits)
+
+
+def sel_market_cash(spec, close, first):
+    """
+    大盘条件：每天收盘后是否空仓（True = 空仓，下一个交易日开盘全卖、不买）
+    close：指数收盘价，从数据起点到信号日；first：回测开始日在其中的位置，之前不算（按持仓）
+    持仓时空仓条件成立 → 空仓；空仓时恢复条件成立 → 恢复（没设恢复条件时：空仓条件不再成立就恢复）
+    """
+    close = np.asarray(close, dtype=float)
+    n = len(close)
+    market = spec.get("market") or {}
+    lines = _Lines({"close": close})
+    out_hit = _block_series(market.get("sell"), lines, n)
+    back_hit = _block_series(market.get("buy"), lines, n)
+    cash = np.zeros(n, dtype=bool)
+    if out_hit is None:
+        return cash
+    state = False
+    for i in range(max(0, int(first)), n):
+        if not state:
+            state = bool(out_hit[i])
+        else:
+            state = not back_hit[i] if back_hit is not None else bool(out_hit[i])
+        cash[i] = state
+    return cash
+
+
 # ============================== 矩阵工具（与 pandas 行为一致） ==============================
 def _ffill(a):
     """按列向前填充（停牌日沿用最后价格）"""
@@ -102,7 +180,7 @@ def _ffill(a):
     return a
 
 
-def _shift(a, k):
+def _mshift(a, k):
     out = np.full(a.shape, NAN)
     if k >= 0 and k < len(a):
         out[k:] = a[:len(a) - k]
@@ -111,7 +189,7 @@ def _shift(a, k):
     return out
 
 
-def _rolling(a, n, min_periods, fn):
+def _mrolling(a, n, min_periods, fn):
     """pandas rolling(n, min_periods)：窗口内有效值个数不少于 min_periods 才计算（跳过 NaN）"""
     out = np.full(a.shape, NAN)
     for i in range(len(a)):
@@ -134,7 +212,7 @@ def _std(w):
 
 
 def _pct(close):
-    return close / _shift(close, 1) - 1
+    return close / _mshift(close, 1) - 1
 
 
 def _inv(x, positive_only):
@@ -158,16 +236,16 @@ def sel_factor(key, data):
             v = np.log(np.where(m > 0, m, NAN))
         elif key in ("ret5", "ret20", "ret60"):
             n = int(key[3:])
-            v = data["close"] / _shift(data["close"], n) - 1
+            v = data["close"] / _mshift(data["close"], n) - 1
         elif key == "mom_120_20":
-            v = _shift(data["close"], 20) / _shift(data["close"], 120) - 1
+            v = _mshift(data["close"], 20) / _mshift(data["close"], 120) - 1
         elif key == "vol60":
-            v = _rolling(_pct(data["close"]), 60, 40, _std)
+            v = _mrolling(_pct(data["close"]), 60, 40, _std)
         elif key == "turn20":
-            v = _rolling(data["turnover"], 20, 15, _mean)
+            v = _mrolling(data["turnover"], 20, 15, _mean)
         elif key == "amihud20":
             amt = data["amount"]
-            v = _rolling(np.abs(_pct(data["close"])) / np.where(amt > 0, amt, NAN), 20, 15, _mean) * 1e8
+            v = _mrolling(np.abs(_pct(data["close"])) / np.where(amt > 0, amt, NAN), 20, 15, _mean) * 1e8
         else:
             raise ValueError("unsupported factor: " + key)
     v = np.array(v, dtype=float)
@@ -249,7 +327,7 @@ def _rank_ic(z, fwd, rows, min_names=10):
 
 
 def _rolling_1d(x, n, min_periods, fn):
-    return _rolling(np.asarray(x, dtype=float).reshape(-1, 1), n, min_periods, fn)[:, 0]
+    return _mrolling(np.asarray(x, dtype=float).reshape(-1, 1), n, min_periods, fn)[:, 0]
 
 
 def sel_mask(data, member, is_st, ipo, dates, filters):
@@ -286,7 +364,7 @@ def sel_scores(spec, data, mask):
     if ic_mode:
         h = sel_horizon(spec)
         o = data["open"]
-        fwd = _shift(o, -(1 + h)) / _shift(o, -1) - 1
+        fwd = _mshift(o, -(1 + h)) / _mshift(o, -1) - 1
         lookback = int(spec.get("ic_lookback", 252))
     total, wsum = None, None
     for f in spec["factors"]:
@@ -295,7 +373,7 @@ def sel_scores(spec, data, mask):
             z = _neutralize_size(z, size_z, rows)
         manual = float(f.get("weight", 1.0)) * f.get("direction", SEL_FACTORS[f["key"]][0])
         if ic_mode:
-            known = _shift(_rank_ic(z, fwd, rows).reshape(-1, 1), h + 1)[:, 0]
+            known = _mshift(_rank_ic(z, fwd, rows).reshape(-1, 1), h + 1)[:, 0]
             minp = min(60, lookback)
             w = _rolling_1d(known, lookback, minp, _mean)
             if spec.get("weighting") == "icir":
@@ -384,6 +462,7 @@ def sel_select(spec, calendar, api, cache):
                                            （full=False 时估值类字段只需要最后 25 行）
       api.st(codes, dates, full) -> 二维 bool（full=False 时只需要最后一行）
       api.ipo(codes) -> 上市日期列表（'YYYY-MM-DD'，未知为 None）
+      api.index_close(dates) -> 股票池指数的收盘价（一维数组，用了大盘条件时才调用）
     cache：跨调仓日保存成分股查询结果（{日期: [代码]}）
     """
     dates = calendar[-sel_window(spec):]
@@ -428,7 +507,20 @@ def sel_target(spec, calendar, today, start, api, cache, expected, follow, log):
         if picks:
             log("%s 按 SimpleQuant 名单调仓 / following SimpleQuant picks: %s" % (t, ", ".join(picks)))
         return picks
-    if not sel_is_rebalance(spec, calendar, today, start):
+    back = False
+    if sel_market_on(spec) and t >= start:
+        first = sum(1 for d in calendar if d < start)
+        cash = sel_market_cash(spec, api.index_close(calendar), first)
+        was = len(calendar) > 1 and cash[-2]
+        if cash[-1]:
+            if was:
+                return None              # 空仓期间不调仓（只重试之前卖不出的）
+            log("%s 满足大盘空仓条件，清仓 / market condition: selling all" % t)
+            return []
+        back = bool(was)
+        if back:
+            log("%s 满足大盘恢复条件，重新选股 / market condition: back in" % t)
+    if not back and not sel_is_rebalance(spec, calendar, today, start):
         return None
     if int(today[5:7]) in sel_skip_months(spec):
         log("%s 下个交易日在空仓月份，清仓 / skip month, selling all" % t)

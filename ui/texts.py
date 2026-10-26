@@ -1270,6 +1270,21 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
     "sp.every_n_days": L("N", "N"),
     "sp.exclude_st": L("排除 ST 股", "Exclude ST stocks"),
     "sp.skip_months": L("空仓月份", "Months in cash"),
+    "sp.market": L("大盘条件", "Market conditions"),
+    "sp.market_help": L("用{index}指数的收盘价逐日判断：收盘满足空仓条件，下一个交易日开盘全部卖出，之后不调仓；"
+                        "空仓时收盘满足恢复条件，当天选股、下一个交易日开盘买回。指数数据只有收盘价，"
+                        "所以只能用均线、MACD、RSI 等靠收盘价算的指标。空仓期间的现金不计利息",
+                        "Checked daily on the {index} index close: when the exit condition holds at the close, "
+                        "sell everything at the next open and stop rebalancing; while in cash, when the re-entry "
+                        "condition holds, pick stocks that day and buy at the next open. Index data has closes "
+                        "only, so only close-based indicators (MA, MACD, RSI, ...) are available. Cash earns no interest"),
+    "sp.market_index_all": L("上证", "SSE Composite"),
+    "sp.market_index_cb": L("中证转债", "CSI Convertible Bond"),
+    "sp.market_out": L("空仓条件", "Exit to cash when"),
+    "sp.market_back": L("恢复条件", "Back in when"),
+    "sp.market_out_empty": L("没有空仓条件：不看大盘，一直按调仓日持仓", "No exit condition: always invested"),
+    "sp.market_back_empty": L("没有恢复条件：空仓条件不再满足就恢复", "No re-entry condition: back in once the exit "
+                              "condition no longer holds"),
     "sp.skip_months_help": L("这些月份不持股：上个月最后一个交易日收盘后清空名单，下一个交易日开盘全部卖出；"
                              "空仓月最后一个交易日照常选股，下一个交易日开盘买回。空仓期间的现金不计利息。"
                              "不论调仓频率，空仓月前后的月份交界处都会调仓一次",

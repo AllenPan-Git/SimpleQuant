@@ -246,6 +246,7 @@ def build_cb_panel(store: CBStore, start: str, end: str) -> Panel:
     stock_codes = info_r["stock_code"].fillna(lst["stock_code"].reindex(codes))
     return Panel(fields=fields, member=member, tradable=trad, is_st=pd.DataFrame(False, index=calendar, columns=codes),
                  listed_days=listed_days, can_buy=can_buy, can_sell=can_sell,
-                 benchmark=bench.loc[calendar, "close"], names=names, industry=_stock_industry(stock_codes),
+                 benchmark=bench.loc[calendar, "close"], index_close=bench.loc[calendar, "close"], names=names,
+                 industry=_stock_industry(stock_codes),
                  kind="cb", lot_size=LOT, size_factor="cb_issue_size", exit=exit_df, exit_dates=exit_dates,
                  extra_filters={k: m["fn"] for k, m in CB_FILTERS.items()})

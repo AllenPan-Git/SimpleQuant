@@ -5,6 +5,14 @@
 
 Changes in each release. `tools/release.py` copies the matching section into the GitHub release notes.
 
+## 1.6.2（2026-10-26）
+
+### 更新内容
+- 新增：多因子选股的「空仓月份」（选股与调仓一栏，可多选）。这些月份不持股：上个月最后一个交易日收盘后清空名单、下一个交易日开盘全部卖出，空仓月最后一个交易日照常选股、下一个交易日开盘买回；空仓期间的现金不计利息。不论调仓频率（每月 / 每周 / 每 N 个交易日），空仓月前后的月份交界处都会调仓一次。不设空仓月份时结果不变。模拟盘、方案文件、导出到聚宽 / 掘金 / QMT 都支持；用到空仓月份的方案文件，旧版软件导入时会提示更新
+
+### Changes
+- New: "Months in cash" for multi-factor selection (under Selection & rebalancing, multiple choice). No stocks are held in these months: the list is emptied at the close of the previous month's last trading day and everything is sold at the next open; stocks are picked again at the close of the month's last trading day and bought at the next open. Cash earns no interest meanwhile. Whatever the rebalance frequency (monthly / weekly / every N trading days), there is always a rebalance at the month boundaries around these months. Results without months in cash are unchanged. Paper trading, plan files and exports to JoinQuant / MyQuant / QMT all support it; older versions ask to be updated when importing a plan file that uses it
+
 ## 1.6.1（2026-10-25）
 
 ### 更新内容

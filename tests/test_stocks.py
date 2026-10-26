@@ -197,6 +197,52 @@ def test_selection_backtest_basics(panel):
     assert res.metrics["total_return"] > res.metrics["benchmark_return"]
 
 
+def test_month_edges():
+    from simplequant.stocks.selection import month_edges
+    cal = pd.bdate_range("2024-01-01", "2024-05-31")
+    edges, to_cash = month_edges(cal, [3])
+    assert list(edges.strftime("%Y-%m-%d")) == ["2024-02-29", "2024-03-29"]
+    assert min(to_cash) == pd.Timestamp("2024-02-29") and max(to_cash) == pd.Timestamp("2024-03-28")
+    edges, to_cash = month_edges(cal, [])
+    assert len(edges) == 0 and to_cash == set()
+
+
+@pytest.mark.parametrize("reb", ["monthly", "weekly", 15])
+def test_skip_months_hold_cash(panel, reb):
+    """空仓月份里不持股；月份交界处不论调仓频率都调仓，空仓月结束后买回"""
+    spec = {**SPEC, "rebalance": reb, "skip_months": [3, 7]}
+    res = run_selection(panel, spec, BrokerConfig(commission=0.00025, stamp_duty=0.0005))
+    eq = res.equity
+    held = eq["value"] - eq["cash"]
+    skip = eq.index.month.isin([3, 7])
+    assert (held[skip].abs() < 1e-6).all()
+    assert skip.sum() > 40
+    first_buy = res.orders["time"].min()
+    assert (held[~skip & (eq.index > first_buy)] > 0).mean() > 0.9
+    for d, codes in res.schedule.picks.items():
+        nxt = panel.calendar[panel.calendar.get_loc(d) + 1] if d != panel.calendar[-1] else None
+        assert (codes == []) == (nxt is not None and nxt.month in (3, 7)), d
+    # 不设空仓月份时结果不变
+    base = run_selection(panel, SPEC, BrokerConfig(commission=0.00025, stamp_duty=0.0005))
+    same = run_selection(panel, {**SPEC, "skip_months": []}, BrokerConfig(commission=0.00025, stamp_duty=0.0005))
+    assert same.metrics["total_return"] == base.metrics["total_return"]
+
+
+def test_skip_month_pending_only_sells(panel):
+    """模拟盘：明天进入空仓月份，待执行只有卖出（名单为空时不能除以 0）"""
+    end = pd.Timestamp("2021-08-31")
+    short = make_panel()
+    for f in short.fields:
+        short.fields[f] = short.fields[f].loc[:end]
+    for attr in ("member", "tradable", "is_st", "listed_days", "can_buy", "can_sell"):
+        setattr(short, attr, getattr(short, attr).loc[:end])
+    short.benchmark = short.benchmark.loc[:end]
+    res = run_selection(short, {**SPEC, "skip_months": [9]}, BrokerConfig(commission=0.00025, stamp_duty=0.0005),
+                        next_days=[pd.Timestamp("2021-09-01")])
+    assert res.schedule.picks[end] == []
+    assert res.pending and all(p["side"] == "sell" for p in res.pending)
+
+
 def test_warmup_history_is_used_but_not_traded(panel):
     """用 60 日波动率：从面板第一天回测会跳过前几个调仓日；指定 start 时用之前的数据预热，第一期就能选股"""
     spec = {**SPEC, "factors": [{"key": "vol60", "weight": 1, "direction": -1}]}

@@ -68,6 +68,11 @@ def _monday(day):
     return d - datetime.timedelta(days=d.weekday())
 
 
+def sel_skip_months(spec):
+    """空仓月份（与 SimpleQuant stocks/selection.skip_months 一致）"""
+    return set(int(m) for m in spec.get("skip_months") or () if 1 <= int(m) <= 12)
+
+
 def sel_is_rebalance(spec, calendar, today, start):
     """
     calendar：从数据起点（SimpleQuant 的面板起点）到信号日 T 的交易日（'YYYY-MM-DD'），T = calendar[-1]
@@ -76,6 +81,9 @@ def sel_is_rebalance(spec, calendar, today, start):
     t = calendar[-1]
     if t < start:
         return False
+    skip = sel_skip_months(spec)
+    if skip and t[:7] != today[:7] and (int(t[5:7]) in skip or int(today[5:7]) in skip):
+        return True                  # 空仓月份前后的月份交界：不论调仓频率都调仓
     rule = spec.get("rebalance", "monthly")
     if rule == "monthly":
         return t[:7] != today[:7]
@@ -422,6 +430,9 @@ def sel_target(spec, calendar, today, start, api, cache, expected, follow, log):
         return picks
     if not sel_is_rebalance(spec, calendar, today, start):
         return None
+    if int(today[5:7]) in sel_skip_months(spec):
+        log("%s 下个交易日在空仓月份，清仓 / skip month, selling all" % t)
+        return []
     picks = sel_select(spec, calendar, api, cache)
     if picks is None:
         log("%s 可选股票不足 %d 只，本期不调仓 / not enough eligible stocks" % (t, int(spec["top_n"])))

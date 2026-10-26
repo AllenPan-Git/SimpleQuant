@@ -147,6 +147,7 @@ def test_selection_round_trip_with_custom_factor(factor_dir):
     (lambda p: (p["strategy"]["factors"].append({"key": "u_12345678"}),
                 p["custom_factors"].update(u_12345678={"name": "坏", "code": "def factor(p) return 1"})),
      "plan.err_factor_code"),
+    (lambda p: p["strategy"].update(skip_months=[13]), "plan.err_format"),
 ])
 def test_selection_plan_refused(change, key):
     plan = P.make_selection_plan("x", SEL, "2021-01-04", "2022-01-04", "2020-01-02", BrokerConfig())
@@ -239,3 +240,12 @@ def test_selection_version_for_call_days():
         == P.CALL_VERSION
     assert P.selection_version({**base, "weighting": "ml"}) == P.ML_VERSION
     assert P.CALL_VERSION <= P.VERSION
+
+
+def test_selection_skip_months_version_and_round_trip():
+    """空仓月份：写 SKIP_VERSION（旧版软件会忽略它、结果悄悄不同），导入后原样还原"""
+    plan = P.make_selection_plan("x", {**SEL, "skip_months": [1, 4]}, "2021-01-04", "2022-01-04", "2020-01-02",
+                                 BrokerConfig())
+    assert plan["version"] == P.SKIP_VERSION <= P.VERSION
+    assert P.loads(P.dumps(plan))["strategy"]["skip_months"] == [1, 4]
+    assert P.selection_version({**SEL, "skip_months": []}) == P.SELECTION_VERSION

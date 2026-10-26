@@ -154,8 +154,8 @@ def _dict_lines(d: dict) -> str:
 
 def _settings(platform, spec, start, end, panel_start, broker, follow, expected) -> str:
     keep = ("cash", "commission", "min_commission", "stamp_duty", "slippage")
-    spec = {k: spec[k] for k in ("kind", "universe", "factors", "top_n", "rebalance", "filters", "position_pct",
-                                 "weighting", "ic_lookback", "neutralize") if k in spec}
+    spec = {k: spec[k] for k in ("kind", "universe", "factors", "top_n", "rebalance", "skip_months", "filters",
+                                 "position_pct", "weighting", "ic_lookback", "neutralize") if k in spec}
     exp = {str(d)[:10]: [platform_code(c, "stock", platform) for c in codes] for d, codes in (expected or {}).items()}
     return f'''
 import datetime

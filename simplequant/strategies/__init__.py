@@ -53,6 +53,9 @@ def describe_selection(spec: dict, lang: str = "zh") -> str:
     from ..stocks import FACTORS, UNIVERSES, REBALANCE, WEIGHTING   # 延迟导入，避免循环依赖
     reb = spec.get("rebalance", "monthly")
     reb_text = pick(REBALANCE[reb], lang) if reb in REBALANCE else tr("sel.every_n", lang, n=reb)
+    if spec.get("skip_months"):
+        reb_text += ("，" if lang == "zh" else ", ") + tr("sel.skip_months", lang, months=(
+            "、" if lang == "zh" else ", ").join(str(m) for m in spec["skip_months"]))
     sep = "、" if lang == "zh" else ", "
     weighting = spec.get("weighting", "manual")
     if weighting == "manual":

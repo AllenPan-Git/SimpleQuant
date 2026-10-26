@@ -8,6 +8,8 @@
   "factors": [{"key": "ep", "weight": 1, "direction": 1}, {"key": "ret20", "weight": 1, "direction": -1}],
   "top_n": 10,
   "rebalance": "monthly",          # monthly / weekly / 整数（每 N 个交易日）
+  "skip_months": [1, 4],           # 这些月份空仓（可省略）：上个月最后一个交易日收盘清空名单、次日开盘全卖，
+                                   # 空仓月最后一个交易日照常选股、次日开盘买回；不论调仓频率，月份交界处都加一次调仓
   "filters": {"exclude_st": true, "min_list_days": 250},
   "position_pct": 95,
   "weighting": "manual",           # manual / ic / icir（按过去一段时间的 IC 自动定权重和方向）/ ml（机器学习，见 ml.py）
@@ -59,6 +61,24 @@ def rebalance_dates(calendar: pd.DatetimeIndex, rule, phase: int = 0) -> pd.Date
         return ends
     pos = calendar.get_indexer(ends) - int(phase)
     return calendar[pos[pos >= 0]]
+
+
+def skip_months(spec: dict) -> list[int]:
+    return sorted({int(m) for m in spec.get("skip_months") or ()} & set(range(1, 13)))
+
+
+def month_edges(calendar: pd.DatetimeIndex, months) -> tuple[pd.DatetimeIndex, set]:
+    """
+    空仓月份：返回 (要另加的调仓日, 名单为空的调仓日)
+    要加的是空仓月前后两个月份交界处的最后一个交易日；下一个交易日落在空仓月的调仓日名单为空。
+    日历的最后一天不知道下一个交易日，按普通调仓日处理
+    """
+    if not months or len(calendar) < 2:
+        return pd.DatetimeIndex([]), set()
+    cur, nxt = calendar[:-1], calendar[1:]
+    into = np.isin(nxt.month, list(months))
+    edge = (cur.month != nxt.month) & (into | np.isin(cur.month, list(months)))
+    return cur[edge], set(cur[into])
 
 
 def rebalance_horizon(rule) -> int:
@@ -154,6 +174,8 @@ def build_schedule(panel, spec: dict, start=None, next_days=None, cache: dict | 
     if next_days is not None and len(next_days):
         cal = cal.union(pd.DatetimeIndex(next_days)[pd.DatetimeIndex(next_days) > cal[-1]])
     dates = rebalance_dates(cal, spec.get("rebalance", "monthly"), spec.get("phase", 0))
+    edges, to_cash = month_edges(cal, skip_months(spec))
+    dates = dates.union(edges)
     dates = dates[dates <= panel.calendar[-1]]
     if start is not None:
         dates = dates[dates >= pd.Timestamp(start)]
@@ -168,6 +190,9 @@ def build_schedule(panel, spec: dict, start=None, next_days=None, cache: dict | 
                             neutral=spec.get("neutralize"), horizon=horizon,
                             lookback=int(spec.get("ic_lookback", 252)), cache=sub)
     for d in dates:
+        if d in to_cash:
+            picks[d] = []
+            continue
         row = score.loc[d].dropna()
         if len(row) < top_n:
             skipped.append(d)
@@ -438,8 +463,8 @@ def run_selection(panel, spec: dict, broker: BrokerConfig | None = None, schedul
     """start：回测起点；面板里更早的数据只用来预热因子，权益曲线与指标从 start 起算"""
     broker = broker or BrokerConfig(commission=0.00025, stamp_duty=0.0005)
     schedule = schedule or build_schedule(panel, spec, start, next_days)
-    if not schedule.picks:
-        if allow_empty:            # 模拟盘刚开户、还没到第一个调仓日：资产不变，没有信号
+    if not any(schedule.picks.values()):
+        if allow_empty:            # 模拟盘刚开户、还没到第一个调仓日（或只碰上空仓月份）：资产不变，没有信号
             return _flat_result(panel, broker, start, schedule)
         raise ValueError("no rebalance date had enough eligible stocks / 没有任何调仓日有足够的可选股票")
     codes = sorted({c for p in schedule.picks.values() for c in p})
@@ -546,6 +571,8 @@ def _selection_pending(strat) -> list[dict]:
     for d in sorted(held - set(target) - strat.retry_sell - exiting, key=lambda x: x._name):
         out.append({"symbol": d._name, "side": "sell", "size": shares(d),
                     "ref_price": float(d.close[0] * d.ratio[0]), "reason": ("sel.reason_dropped", {})})
+    if not target:                     # 空仓月份：只卖不买
+        return out
     per_name = strat.broker.getvalue() * strat.p.position_pct / 100 / len(target)
     for d in target:
         if d in held or d._name in strat.p.exit_next:

@@ -22,7 +22,7 @@ from simplequant.stocks import (StockStore, UNIVERSES, FACTORS, GROUPS, REBALANC
 from simplequant.stocks import custom_factors, panel_cache, universe as U, factors_for
 from simplequant.stocks import ml as ML
 from simplequant.stocks import mining as MN
-from simplequant.stocks.selection import panel_warmup_days, ic_history_short
+from simplequant.stocks.selection import panel_warmup_days, ic_history_short, skip_months
 from simplequant.bonds.panel import CB_FILTERS, CB_DEFAULT_FILTERS
 from simplequant.system import open_folder
 from simplequant.stocks.walkforward import (walk_forward_selection, selection_tunables, selection_grid,
@@ -58,7 +58,7 @@ def sp_state() -> dict:
         "universe": "hs300", "ranges": {},
         # 选股回测表单
         "factors": [dict(f) for f in SEL_DEFAULT], "weighting": "manual", "lookback": 252, "ni": False, "ns": False,
-        "top_n": 10, "reb": "monthly", "reb_n": 20, "excl_st": True,
+        "top_n": 10, "reb": "monthly", "reb_n": 20, "skip": [], "excl_st": True,
         "min_list": DEFAULT_FILTERS["min_list_days"], "pos": 95, "name": "", "follow": False, "dividend": "reinvest",
         "ai_text": "", "ai": None, "ai_base": False, "result": None, "explanation": None,
         # 因子研究
@@ -1191,6 +1191,7 @@ def current_spec(SP) -> dict:
     return {"kind": "selection", "universe": SP["universe"],
             "factors": [dict(f) for f in SP["factors"]], "top_n": int(SP["top_n"]),
             "rebalance": SP["reb"] if SP["reb"] != "n" else int(SP["reb_n"]),
+            **({"skip_months": sorted(SP["skip"])} if SP.get("skip") else {}),
             "filters": filters,
             "position_pct": int(SP["pos"]), "weighting": SP["weighting"], "ic_lookback": int(SP["lookback"]),
             **({"ml": {"model": SP["ml_model"], "window": int(SP["ml_window"]), **SP["ml_params"][SP["ml_model"]]}}
@@ -1212,6 +1213,7 @@ def apply_spec(SP, spec: dict, name: str = ""):
     SP["reb"] = reb if reb in REBALANCE else "n"
     if reb not in REBALANCE:
         SP["reb_n"] = int(reb)
+    SP["skip"] = skip_months(spec)
     flt = {**(CB_DEFAULT_FILTERS if kind == "cb" else DEFAULT_FILTERS), **(spec.get("filters") or {})}
     SP["excl_st"], SP["min_list"] = bool(flt["exclude_st"]), int(flt["min_list_days"])
     if kind == "cb":
@@ -1409,6 +1411,8 @@ def _backtest_form(SP, ctx, rebuild):
             reb_n = ui.number(t("sp.every_n_days"), value=SP["reb_n"], min=1, max=250, precision=0,
                               on_change=lambda e: set_sp("reb_n", e.value, int)).props("outlined dense").classes("w-36")
             reb_n.set_enabled(SP["reb"] == "n")
+            ui.select({m: t("sp.month", m=m) for m in range(1, 13)}, label=t("sp.skip_months"), multiple=True,
+                      value=SP.get("skip", []), on_change=lambda e: set_sp("skip", sorted(e.value or [])))                 .props(DENSE + " use-chips clearable").classes("w-56").tooltip(t("sp.skip_months_help"))                 .mark("sp_skip")
         if panel.kind == "cb":
             with ui.row().classes("w-full items-center gap-4"):
                 for k, m in CB_FILTERS.items():
@@ -1695,7 +1699,8 @@ def _selection_results(SP, ctx):
                     lambda s: s[3:] if s[:1].isalpha() and s[1:3].isdigit() else s).value_counts()
                 return "、".join(f"{k}×{v}" if v > 1 else k for k, v in counts.items())
             rows = [{t("col.time"): d.date(),
-                     t("sp.picked"): "、".join(f"{res.names.get(c, c)}({c.split('.')[-1]})" for c in codes),
+                     t("sp.picked"): "、".join(f"{res.names.get(c, c)}({c.split('.')[-1]})" for c in codes)
+                     or t("sp.cash_period"),
                      t("sp.industry_mix"): industry_mix(codes)}
                     for d, codes in sorted(res.schedule.picks.items(), reverse=True)]
             df_table(pd.DataFrame(rows), rows_per_page=20).props("wrap-cells")

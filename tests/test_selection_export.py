@@ -85,6 +85,9 @@ def core_schedule(panel, ipo, spec, start):
     for i in range(len(cal) - 1):
         if not core.sel_is_rebalance(spec, days[:i + 1], days[i + 1], start):
             continue
+        if int(days[i + 1][5:7]) in core.sel_skip_months(spec):      # 与 sel_target 相同：空仓月份清仓
+            out[cal[i]] = []
+            continue
         lo = max(0, i + 1 - win)
         data = {f: panel[f].iloc[lo:i + 1].values for f in need}
         data["volume"] = np.where(panel.tradable.iloc[lo:i + 1].values, data["volume"], 0)
@@ -111,6 +114,12 @@ SPECS = {
     "icir": {"factors": [{"key": "ep", "weight": 1}, {"key": "turn20", "weight": 1, "direction": -1}],
              "weighting": "icir", "ic_lookback": 60, "rebalance": "weekly",
              "filters": {"exclude_st": False, "min_list_days": 60}},
+    # 空仓月份：每月 / 每周 / 每 N 天，月份交界处都要另加调仓
+    "skip_monthly": {"factors": [{"key": "ret20", "weight": 1, "direction": -1},
+                                 {"key": "vol60", "weight": 1, "direction": -1}], "skip_months": [1, 4]},
+    "skip_weekly": {"factors": [{"key": "ep", "weight": 1}, {"key": "turn20", "weight": 1, "direction": -1}],
+                    "rebalance": "weekly", "skip_months": [3, 12]},
+    "skip_n": {"factors": [{"key": "size", "weight": 1, "direction": -1}], "rebalance": 15, "skip_months": [2, 9]},
 }
 
 
@@ -534,6 +543,7 @@ def overlap_lines(logs):
 
 @pytest.mark.parametrize("platform,name", [("joinquant", "price_manual"), ("joinquant", "value_liquidity"),
                                            ("joinquant", "size_neutral"), ("joinquant", "ic"),
+                                           ("joinquant", "skip_monthly"), ("joinquant", "skip_n"),
                                            ("qmt", "price_manual"), ("qmt", "ic")])
 def test_exported_trades_match_run_selection(panel_ipo, platform, name):
     """聚宽、QMT：开盘时知道开盘价和涨跌停，每一笔委托都应与 SimpleQuant 相同"""

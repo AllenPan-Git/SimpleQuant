@@ -123,6 +123,7 @@ TEXT = {
     "sel.factors": L("因子", "Factors"),
     "sel.top_n": L("持有前 {n} 只", "hold top {n}"),
     "sel.every_n": L("每 {n} 个交易日", "every {n} trading days"),
+    "sel.skip_months": L("{months} 月空仓", "in cash in months {months}"),
     "sel.factor_item": L("{name}（{dir}，权重 {w}）", "{name} ({dir}, weight {w})"),
     "sel.neutral": L("中性化", "Neutralized"),
     "sel.filters": L("条件", "Filters"),

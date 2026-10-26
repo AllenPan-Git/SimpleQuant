@@ -1243,6 +1243,17 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
     "sp.every_n": L("每 N 个交易日", "Every N trading days"),
     "sp.every_n_days": L("N", "N"),
     "sp.exclude_st": L("排除 ST 股", "Exclude ST stocks"),
+    "sp.skip_months": L("空仓月份", "Months in cash"),
+    "sp.skip_months_help": L("这些月份不持股：上个月最后一个交易日收盘后清空名单，下一个交易日开盘全部卖出；"
+                             "空仓月最后一个交易日照常选股，下一个交易日开盘买回。空仓期间的现金不计利息。"
+                             "不论调仓频率，空仓月前后的月份交界处都会调仓一次",
+                             "Hold no stocks in these months: the list is emptied at the close of the previous "
+                             "month's last trading day and everything is sold at the next open; stocks are picked "
+                             "again at the close of the month's last trading day and bought at the next open. Cash "
+                             "earns no interest meanwhile. Whatever the rebalance frequency, there is always a "
+                             "rebalance at the month boundaries around these months"),
+    "sp.month": L("{m} 月", "Month {m}"),
+    "sp.cash_period": L("（空仓）", "(in cash)"),
     "sp.name_ph": L("例如：沪深300 低估值 + 反转", "e.g. CSI 300 value + reversal"),
     "sp.running": L("正在回测…（股票数量较多时需数十秒）", "Running… (may take tens of seconds with many stocks)"),
     "sp.took": L("用时 {s} 秒", "took {s}s"),

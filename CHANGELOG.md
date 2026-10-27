@@ -5,6 +5,16 @@
 
 Changes in each release. `tools/release.py` copies the matching section into the GitHub release notes.
 
+## 未发布
+
+### 更新内容
+- 新增：多因子选股页「个股概览」标签。输入股票代码或名称，查看这只股票的市盈率（TTM）/ 市净率走势及当前值在本地历史中的百分位（只计正值，算法同择时条件「市盈率历史百分位」）、历年年报与最近一期的 ROE、毛利率、净利率、净利润与营收同比（附公告日）、逐年分红与股息率（BaoStock 漏记的分红按复权因子补上，与选股回测一致）、排雷指标（需下载排雷数据）；本地缺少的部分可只下载这一只。只列出事实，不打分。选股回测结果的「每期选股」中点击某一期，列出入选股票当天各因子的原始值与标准分（与选股时的计算一致），股票池为股票时再点击某只股票可打开它的概览
+- 修复：提示条（如可信度检查）的上下内边距被主题样式覆盖为 0，文字紧贴背景边缘；现在上下各留 10 像素，行距加大
+
+### Changes
+- New: Stock overview tab on the Stock selection page. Enter a code or name to see the stock's P/E (TTM) and P/B history with the current value's percentile in local history (positive values only, same method as the P/E percentile timing condition), ROE, gross and net margins and profit / revenue growth from annual reports and the latest period (with announcement dates), dividends and yield by year (payouts missing from BaoStock are added from the adjustment factors, as in selection backtests) and risk indicators (needs risk data); missing local data can be downloaded for that stock alone. Facts only, no score. Clicking a period under Picks per period in selection results lists each pick's raw and standardized factor values that day (computed as in the selection); for stock universes, clicking a stock opens its overview
+- Fix: notices (e.g. the credibility check) had their vertical padding overridden to zero by the theme, so text touched the edges of the background; they now have 10 px above and below and looser line spacing
+
 ## 1.8.0（2026-10-27）
 
 ### 更新内容

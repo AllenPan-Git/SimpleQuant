@@ -211,7 +211,7 @@ body.body--dark .q-btn.bg-primary, body.body--dark .q-btn.bg-primary .q-btn__con
   border: 1px solid var(--sq-border); background: var(--sq-sunk); }}
 .sq-md-tight p, .sq-md-tight ul {{ margin: 0; }}
 .sq-md-tight ul {{ padding-left: 1.2em; }}
-.sq-note {{ padding: 0 14px; border-left: 3px solid var(--sq-text); background: var(--sq-sunk); }}
+.sq-note {{ padding: 10px 14px; line-height: 1.6; border-left: 3px solid var(--sq-text); background: var(--sq-sunk); }}
 .sq-note .q-icon {{ color: var(--sq-text) !important; }}
 .sq-note-warning {{ border-left-color: var(--sq-gold); }}
 .sq-note-warning .q-icon {{ color: var(--sq-gold) !important; }}

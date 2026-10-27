@@ -272,6 +272,20 @@ def ic_chart(ic: pd.Series, lang: str = "zh", window: int = 6) -> go.Figure:
     return _layout(fig, 340)
 
 
+def valuation_chart(val: pd.DataFrame, lang: str = "zh") -> go.Figure:
+    """个股概览：市盈率（TTM）与市净率逐日走势，虚线为区间中位数；为负（亏损）的日子不画"""
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1,
+                        subplot_titles=(tr("chart.pe", lang), tr("chart.pb", lang)))
+    for i, k in enumerate(("pe", "pb"), 1):
+        s = val[k].where(val[k] > 0)
+        fig.add_trace(go.Scatter(x=s.index, y=s.values, name=tr(f"chart.{k}", lang), showlegend=False,
+                                 line=dict(color=STRATEGY, width=1.5),
+                                 hovertemplate="%{x|%Y-%m-%d}  %{y:.2f}<extra></extra>"), row=i, col=1)
+        if s.notna().any():
+            fig.add_hline(y=float(s.median()), line_width=1, line_dash="dot", line_color=BENCHMARK, row=i, col=1)
+    return _layout(fig, 420)
+
+
 def quantile_chart(cum: pd.DataFrame, lang: str = "zh") -> go.Figure:
     groups = [c for c in cum.columns if c != "long_short"]
     fig = go.Figure()

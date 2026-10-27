@@ -1779,3 +1779,44 @@ async def test_backtest_picks_dataset_that_replaced_remembered_one(user: User, l
     await user.should_see(marker="run")
     assert user.find(marker="bt_ids").elements.pop().value == [new.id]
     assert state.STATE["bt_ids"] == [new.id]
+
+
+def _shown(user: User, marker: str) -> bool:
+    try:
+        return bool(user.find(marker=marker).elements)
+    except AssertionError:
+        return False
+
+
+@needs_stocks
+async def test_selection_stock_overview_tab(user: User):
+    """个股概览标签：按 6 位代码查看本机已下载的股票（只读本地数据）"""
+    from simplequant.stocks import StockStore
+    code = sorted(f.stem for f in (StockStore().root / "daily").glob("*.parquet"))[0]
+    SP = await _open_selection(user, "ov")
+    user.find(marker="ov_query").type(code.split(".")[-1])
+    user.find(marker="ov_show").click()
+    assert await _wait(lambda: _shown(user, "ov_title"), n=600)
+    assert SP["ov_code"] == code
+    await user.should_see("估值")
+
+
+@needs_stocks
+async def test_selection_picks_dialog_and_overview(user: User):
+    """选股结果「每期选股」点某一期 → 入选股票的因子值；再点某只股票 → 个股概览"""
+    from simplequant.i18n import tr
+    SP = await _open_selection(user)
+    user.find(marker="sp_run").click()
+    assert await _wait(lambda: SP.get("result"), n=1200)
+    await settle()
+    res = SP["result"][0]
+    day = max(d for d, c in res.schedule.picks.items() if c)
+    user.find(marker="sp_holdings").trigger("rowClick", [{}, {tr("col.time", "zh"): str(day.date())}, 0])
+    assert await _wait(lambda: _shown(user, "pick_table"), n=1200)
+    table = user.find(marker="pick_table").elements.pop()
+    assert len(table.rows) == len(res.schedule.picks[day])
+    first = table.rows[0][tr("sp.pick_stock", "zh")]
+    assert first.endswith(f"({res.schedule.picks[day][0].split('.')[-1]})")
+    table_el = user.find(marker="pick_table")
+    table_el.trigger("rowClick", [{}, {tr("sp.pick_stock", "zh"): first}, 0])
+    assert await _wait(lambda: _shown(user, "ov_title"), n=600)

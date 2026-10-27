@@ -34,6 +34,7 @@ from gui.common import t, p, lang
 from gui.components import broker_settings, metric_tiles, metric_tile, walkforward_results, credibility_box, \
     bench_label
 from gui.layout import frame, page_title
+from gui.pages.stock_overview import overview_tab, picks_dialog
 from gui.plan_io import import_button, export_selection_bytes, plan_filename, plan_check_notice, restore_broker
 from simplequant import plan as plan_mod
 from gui.widgets import section, df_table, fmt_table, plot, notice, download_btn, Progress, code_editor, LogBox
@@ -265,6 +266,7 @@ def page():
             tab_mine = ui.tab("mine", t("sp.tab_mine"), icon="auto_awesome")
             tab_bt = ui.tab("bt", t("sp.tab_backtest"), icon="query_stats")
             tab_wf = ui.tab("wf", t("sp.tab_wf"), icon="timeline")
+            tab_ov = ui.tab("ov", t("sp.tab_overview"), icon="manage_search")
         with ui.tab_panels(tabs, value=state.STATE.get("sp_tab", "bt")).classes("w-full bg-transparent") as panels:
             with ui.tab_panel(tab_data).classes("px-0 gap-4"):
                 data_box = ui.column().classes("w-full gap-4")
@@ -278,6 +280,8 @@ def page():
                 bt_box = ui.column().classes("w-full gap-4")
             with ui.tab_panel(tab_wf).classes("px-0 gap-4"):
                 wf_box = ui.column().classes("w-full gap-4")
+            with ui.tab_panel(tab_ov).classes("px-0 gap-4"):        # 只读本地数据，不需要面板
+                overview_tab(SP)
         def on_tab(e):
             state.STATE["sp_tab"] = e.value
             if e.value == "wf":          # 滚动优化总是用选股回测标签页里的最新设置
@@ -1785,7 +1789,10 @@ def _selection_results(SP, ctx):
                      or t("sp.cash_period"),
                      t("sp.industry_mix"): industry_mix(codes)}
                     for d, codes in sorted(res.schedule.picks.items(), reverse=True)]
-            df_table(pd.DataFrame(rows), rows_per_page=20).props("wrap-cells")
+            ui.label(t("sp.pick_hint")).classes("sq-muted text-xs")
+            tbl = df_table(pd.DataFrame(rows), rows_per_page=20).props("wrap-cells").classes("cursor-pointer")                 .mark("sp_holdings")
+            tbl.on("rowClick", lambda e: picks_dialog(SP, run_panel, rspec, res,
+                                                      pd.Timestamp(e.args[1][t("col.time")])))
             if res.schedule.skipped:
                 ui.label(t("sp.skipped", n=len(res.schedule.skipped))).classes("sq-muted text-xs")
         with ui.tab_panel(tab_o).classes("px-0"):

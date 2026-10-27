@@ -55,7 +55,7 @@ def fmt_table(df: pd.DataFrame, formats: dict) -> pd.DataFrame:
 
 def notice(text: str, icon: str = "info", kind: str = "info"):
     """提示条：info / warning / error"""
-    with ui.row().classes(f"w-full items-start gap-2 no-wrap sq-note sq-note-{kind} py-2") as row:
+    with ui.row().classes(f"w-full items-start gap-2 no-wrap sq-note sq-note-{kind}") as row:
         ui.icon(icon).classes("mt-[2px]")
         ui.markdown(text).classes("text-sm grow sq-md-tight")
     return row

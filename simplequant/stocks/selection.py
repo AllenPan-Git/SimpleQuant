@@ -264,6 +264,27 @@ def build_schedule(panel, spec: dict, start=None, next_days=None, cache: dict | 
     return Schedule(picks=picks, scores=scores, skipped=skipped, ml=ml_info)
 
 
+def pick_details(panel, spec: dict, date, codes: list[str], cache: dict | None = None) -> dict:
+    """
+    某个调仓日入选股票的各因子（选股结果里「为什么入选」）：{代码: {因子: (原始值, 标准分)}}。
+    标准分与选股时一致（当天可选范围内去极值、标准化、按设置中性化），方向未调整；
+    cache：同一次回测结果里多次查看时共用，每个因子只算一次
+    """
+    cache = {} if cache is None else cache
+    if "mask" not in cache:
+        cache["mask"] = eligible_mask(panel, effective_filters(panel, spec))
+    d = pd.Timestamp(date)
+    out = {c: {} for c in codes}
+    for f in spec["factors"]:
+        key = f["key"]
+        if key not in cache:
+            cache[key] = (F.compute(panel, key), F.factor_zscores(panel, key, cache["mask"], spec.get("neutralize")))
+        raw, z = (x.loc[d].reindex(codes) for x in cache[key])
+        for c in codes:
+            out[c][key] = (float(raw[c]), float(z[c]))
+    return out
+
+
 # ---------------- Backtrader ----------------
 class SelectionFeed(bt.feeds.PandasData):
     # ratio = 不复权价 / 后复权价；exit = 当天开盘必须卖出；delist = 退市结算（0 无，1 按 0 计价，2 按最后价格折现）

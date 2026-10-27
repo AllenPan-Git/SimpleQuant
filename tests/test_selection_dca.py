@@ -14,7 +14,7 @@ from simplequant.engine.results import hold_with_flows
 from simplequant.engine.runner import contribution_on_days
 from simplequant.export.selection_platforms import selection_platform_script
 from simplequant.stocks import run_selection
-from simplequant.stocks.selection import Schedule, rebalance_dates
+from simplequant.stocks.selection import Schedule, SelectionStrategy, rebalance_dates
 from test_selection_export import make_panel
 
 BASE = {"kind": "selection", "universe": "hs300", "top_n": 5, "rebalance": "monthly", "position_pct": 95,
@@ -98,6 +98,24 @@ def test_weekly_money_waits_for_monthly_rebalance(panel, start):
     exec_days = {cal[cal.get_loc(d) + 1] for d in sched.picks if cal.get_loc(d) + 1 < len(cal)}
     assert set(res.orders["time"].dt.normalize()) <= exec_days
     assert res.metrics["contributions"] > 3 * len(exec_days) // 2
+
+
+def test_new_cash_only_on_arrival_day(panel, start, monkeypatch):
+    """每周调仓、每月追加：只有到账那天的调仓把 new_cash 算进总资产；最后一笔到账后不能沿用旧值"""
+    seen = {}
+    orig = SelectionStrategy._buy_to_target
+
+    def spy(self, target, held, freed):
+        seen[pd.Timestamp(self.datas[0].datetime.date(0))] = self.new_cash
+        return orig(self, target, held, freed)
+
+    monkeypatch.setattr(SelectionStrategy, "_buy_to_target", spy)
+    b = dataclasses.replace(BROKER, contribution=50_000)
+    run_selection(panel, {**BASE, "rebalance": "weekly"}, b, start=start)
+    arrivals = set(contribution_on_days(panel.calendar, b, start).index)
+    assert any(d > max(arrivals) for d in seen)            # 最后一笔到账后还有调仓
+    for d, cash in seen.items():
+        assert cash == (50_000 if d in arrivals else 0), d
 
 
 def test_cash_kept_during_skipped_months(panel, start):

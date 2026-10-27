@@ -403,6 +403,7 @@ class SelectionStrategy(bt.Strategy):
             self.log("log.contribution", cash=f"{amount:,.2f}")
 
     def next_open(self):
+        self.new_cash = 0.0            # 最后一笔到账后 flows 为空、不再调用 _contribute，这里先清零
         if self.flows:
             self._contribute()
         if self.div_events:

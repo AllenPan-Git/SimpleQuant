@@ -258,7 +258,8 @@ def strategy_selector(key: str, on_change, on_broker=None) -> dict:
 
 # ---------------- 资金与费率 ----------------
 def broker_settings(key: str, default_preset: str = "etf", default_cash: int = 100_000, show_t1: bool = True,
-                    show_dividend: bool = False, show_contribution: bool = False):
+                    show_dividend: bool = False, show_contribution: bool = False,
+                    contribution_help: str = "bt.contribution_help"):
     """返回一个函数，调用时按当前控件值生成 BrokerConfig；show_contribution：显示定投的每期追加资金"""
     saved = state.STATE.setdefault(f"{key}_broker", {"cash": default_cash, "preset": default_preset, "t1": True,
                                                     "slippage": 5.0, "custom": {}})
@@ -283,7 +284,7 @@ def broker_settings(key: str, default_preset: str = "etf", default_cash: int = 1
                                 precision=0, format="%.0f").props("outlined dense").classes("w-48")                     .mark(f"{key}_contribution")
                 freq = ui.select({"monthly": t("bt.contrib_monthly"), "weekly": t("bt.contrib_weekly")},
                                  label=t("bt.contrib_freq"), value=saved["contribution_freq"])                     .props(DENSE).classes("w-36")
-                ui.icon("help_outline").classes("sq-muted").tooltip(t("bt.contribution_help"))                     .props("max-width=420px")
+                ui.icon("help_outline").classes("sq-muted").tooltip(t(contribution_help))                     .props("max-width=420px")
         div = None
         if show_dividend:
             with ui.row().classes("w-full items-center gap-3"):

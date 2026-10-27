@@ -190,7 +190,14 @@ def build_benchmark(prices: dict[str, pd.DataFrame], index: pd.DatetimeIndex, in
     """
     normed = [_hold_value(df) for df in prices.values()]
     avg = pd.concat(normed, axis=1).ffill().mean(axis=1)
-    curve = avg.reindex(index, method="ffill").bfill()
+    return hold_with_flows(avg.reindex(index, method="ffill").bfill(), initial_cash, flows)
+
+
+def hold_with_flows(curve: pd.Series, initial_cash: float, flows: pd.Series | None = None) -> pd.Series:
+    """
+    curve：开始时买入 1 元的市值。初始资金第一根 K 线买入并持有，每笔追加资金在到账那根 K 线按收盘价买入
+    """
+    index = curve.index
     if flows is None or not len(flows):
         return (curve * initial_cash).rename("benchmark")
     units = flows_on_bars(index, flows) / curve

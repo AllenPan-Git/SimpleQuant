@@ -596,6 +596,10 @@ def selection_platform_script(platform: str, spec: dict, broker: dict, start: st
         raise ValueError(f"Unknown platform / 未知平台 {platform}")
     if follow and not expected:
         raise ValueError(pick(L("按名单调仓方式需先在选股页运行回测", "Run the selection backtest first"), lang))
+    if broker.get("contribution"):
+        raise ValueError(pick(L("设了每期追加资金的选股策略暂不支持导出到平台（平台账户的追加资金需自行转入），请使用独立 Python 脚本",
+                                "Selection strategies with contributions can't be exported to platforms (contributions to a "
+                                "platform account are made by hand); use the standalone Python script"), lang))
     check_selection_exportable(spec, platform, follow, lang)
     return (_header(platform, title, spec, start, end, broker, follow, expected, lang)
             + _settings(platform, spec, start, end, panel_start, broker, follow, expected)

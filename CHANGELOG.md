@@ -5,6 +5,14 @@
 
 Changes in each release. `tools/release.py` copies the matching section into the GitHub release notes.
 
+## 未发布
+
+### 更新内容
+- 新增：多因子选股（股票与可转债）支持定投。选股页「资金与交易成本」新增「每期追加（元）」与每月 / 每周；追加的钱先留作现金，到下一个调仓日开盘再买：先卖落选、买新入选，剩下的按目标仓位补到继续持有的股票上（只补不减，不为凑权重卖出）；空仓月份、大盘空仓期间一直留作现金，恢复持仓时一起买。指标与择时回测的定投一致：总收益按累计投入、资金加权年化（XIRR）、累计投入，回撤、波动、夏普按扣除追加资金后的净值；基准为同样的资金与日期买入持有股票池指数，资产曲线加累计投入线。调仓日检验、AI 解读、导出 Python 脚本同样计入追加资金；选股的滚动优化仍按一次性投入计算（页面有提示），选股 / 组合模拟账户和导出到聚宽 / 掘金 / QMT 暂不支持。设了追加资金的选股方案文件，旧版软件导入时会提示先更新
+
+### Changes
+- New: dollar-cost averaging for multi-factor selection (stocks and convertibles). Capital & trading costs on the Stock selection page now takes a contribution per period (monthly / weekly). New money waits as cash until the next rebalance open: dropped stocks are sold, new picks bought, and what is left tops up the stocks still held toward their target weight (never trimmed to rebalance); during skipped months and market-exit periods it stays in cash and is invested when positions resume. Metrics match DCA timing backtests: total return against the total invested, money-weighted annual return (XIRR), total invested, and drawdown, volatility and Sharpe on the unit value with contributions removed; the benchmark buys and holds the universe index with the same amounts on the same dates, and the equity chart adds a total-invested line. The rebalance-day check, AI explanations and exported Python scripts include contributions; selection walk-forward still uses a lump sum (noted on the page), and selection / portfolio paper accounts and export to JoinQuant / MyQuant / QMT are not supported yet. Older versions ask to be updated when importing a selection plan file with contributions
+
 ## 1.7.0（2026-10-26）
 
 ### 更新内容

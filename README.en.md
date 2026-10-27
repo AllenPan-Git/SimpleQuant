@@ -189,7 +189,8 @@ PyInstaller cannot cross-compile, so each system's version is built on that syst
 - **Dollar-cost averaging**: buys whole lots at the close on the day each contribution arrives, filled at the next open; split equally across assets, with amounts too small for a lot rolled over.
 - **Valuation-based DCA**: scales each contribution by the P/E percentile over the past N years (default 5): 2x below 30%, 0.5x above 70% (0 pauses when expensive), 1x otherwise. Money held back is kept as a reserve and spent first when cheap; the reserve earns the set annual rate (default 2%, like a money market fund). Needs data with P/E: stock daily data, or ETFs / indexes downloaded with index valuation (updated monthly).
 - **Metrics**: total return = final value ÷ total invested − 1; XIRR is the money-weighted annual return, accounting for when each amount was invested; time-weighted return, CAGR, Sharpe and max drawdown use the unit value with contributions removed, so new money does not hide losses.
-- Not yet supported: contributions in selection backtests and selection / portfolio paper accounts, and export to JoinQuant / MyQuant / QMT.
+- **Selection backtests**: new money waits as cash until the next rebalance open — dropped stocks are sold, new picks bought, and what is left tops up the stocks still held toward their target weight (never trimmed); it stays in cash during skipped months and market-exit periods. The benchmark buys and holds the universe index with the same amounts on the same dates.
+- Not yet supported: selection walk-forward (computed as a lump sum), contributions in selection / portfolio paper accounts, and export to JoinQuant / MyQuant / QMT.
 </details>
 
 <details>

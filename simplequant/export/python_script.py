@@ -606,7 +606,10 @@ if __name__ == "__main__":
     print("backtesting / 回测…", flush=True)
     panel = universe.build(SPEC["universe"], str(first.date()), end, store)
     res = run_selection(panel, SPEC, BROKER, start=max(START, str((first + pd.Timedelta(days=400)).date())))
-    for k in ("total_return", "cagr", "max_drawdown", "sharpe", "benchmark_return", "turnover_annual"):
+    keys = ("total_return", "cagr", "max_drawdown", "sharpe", "benchmark_return", "turnover_annual")
+    if "invested" in res.metrics:    # 定投：总收益按累计投入；另看资金加权年化（XIRR）
+        keys += ("invested", "xirr", "benchmark_xirr")
+    for k in keys:
         print(f"{{k:18s}} {{res.metrics[k]:.4f}}")
     res.orders.to_csv(os.path.join(OUT_DIR, "orders.csv"), index=False, encoding="utf-8-sig")
     last = max(res.schedule.picks)

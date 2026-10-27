@@ -33,6 +33,8 @@
    - 股票退市时仍未卖出的（面板的 delist）：退市日开盘按 0 或最后价格结算，规则见 panel.py
    - 分红：默认后复权（分红全额再投资、不扣税）；"dividend": "cash" 时现金到账并在卖出时扣红利税，
      规则见 dividends.py
+   - 定投（资金设置里的每期追加资金）：到账日开盘前加入现金，留到下一个调仓日再买；调仓日先卖落选、买新入选，
+     再把剩下的现金按目标权重补到继续入选的持仓上（只补不减）。不设追加资金时结果不变
 """
 
 from dataclasses import dataclass, field
@@ -42,8 +44,8 @@ import numpy as np
 import pandas as pd
 
 from ..engine.commission import AShareCommission
-from ..engine.results import EquityRecorder, BacktestResult, compute_metrics
-from ..engine.runner import BrokerConfig
+from ..engine.results import EquityRecorder, BacktestResult, compute_metrics, flows_on_bars, hold_with_flows, unit_value
+from ..engine.runner import BrokerConfig, contribution_on_days
 from ..engine.base_strategy import ORDER_COLUMNS, TRADE_COLUMNS
 from ..export.selection_core import MARKET_INDS, sel_market_cash, sel_market_on
 from ..i18n import L, pick
@@ -306,7 +308,8 @@ class SelectionFeed(bt.feeds.PandasData):
 class SelectionStrategy(bt.Strategy):
     params = (("schedule", None), ("position_pct", 95), ("lot_size", 100), ("cash_buffer", 0.01),
               ("dividends", None),        # 现金分红模式：{日期: [(代码, 每股现金, 每股送股, 每股转增)]}
-              ("exit_next", ()))          # 下一个开盘必须卖出的代码（模拟盘的明日信号）
+              ("exit_next", ()),          # 下一个开盘必须卖出的代码（模拟盘的明日信号）
+              ("contributions", None))    # 定投：{日期: 追加金额}
 
     def __init__(self):
         self.by_name = {d._name: d for d in self.datas}
@@ -323,6 +326,10 @@ class SelectionStrategy(bt.Strategy):
         self.div_taxable = {}          # 持有期间累计的应税分红所得（卖出时按持股期限扣税）
         self.div_cash = self.div_tax = 0.0
         self.div_applied = set()       # (代码, 日期)：实际碰上了的除权除息
+        self.flows = dict(self.p.contributions or {})
+        self.top_up = bool(self.flows)  # 定投：调仓日把现金补到继续入选的持仓上
+        self.contributed = 0.0
+        self.new_cash = 0.0            # 本次开盘前刚到账的追加资金（还没算进 getvalue()）
 
     def log(self, key, **kw):
         self.logs.append((self.datas[0].datetime.datetime(0), key, kw))
@@ -381,7 +388,23 @@ class SelectionStrategy(bt.Strategy):
             else:
                 self.log("sel.delist_cash", name=d._name, price=f"{raw_price:.2f}")
 
+    def _contribute(self):
+        """
+        到账日开盘前追加现金，当天开盘调仓就能用。不用 broker.add_cash：它要等这根 K 线撮合完才计入，
+        当天的买入会因现金不足被拒；getvalue() 也是上一根收盘的缓存值，所以另记 new_cash 加进总资产
+        """
+        today = pd.Timestamp(self.datas[0].datetime.date(0))
+        due = [k for k in self.flows if k <= today]
+        amount = sum(self.flows.pop(k) for k in due)
+        self.new_cash = amount
+        if amount:
+            self.broker.cash += amount
+            self.contributed += amount
+            self.log("log.contribution", cash=f"{amount:,.2f}")
+
     def next_open(self):
+        if self.flows:
+            self._contribute()
         if self.div_events:
             self._dividends()
         self._settle_delisted()
@@ -421,6 +444,10 @@ class SelectionStrategy(bt.Strategy):
                 self.retry_sell.add(d)
                 self.log("sel.sell_blocked", name=d._name)
 
+        if self.top_up:
+            if target:                 # 空仓月份、大盘空仓：追加的钱留作现金，恢复持仓时一起买
+                self._buy_to_target(target, held, freed)
+            return
         # 3. 等额买入新入选的股票
         new = [d for d in target if d not in held]
         if not new:
@@ -440,6 +467,35 @@ class SelectionStrategy(bt.Strategy):
             raw_shares = lots * self.p.lot_size
             self.buy(data=d, size=raw_shares * d.ratio[0])   # Backtrader 里用后复权价，数量相应换算
             cash -= raw_shares * raw_price * (1 + self.p.cash_buffer)
+
+    def _buy_to_target(self, target, held, freed):
+        """
+        定投时的第 3 步：每只的目标市值 = 总资产 × 仓位 / 名单只数，新入选的和低于目标的持仓都买到目标；
+        现金不够时各只按差额同比例缩小（与名单顺序无关）。超过目标的持仓不卖
+        """
+        per_name = (self.broker.getvalue() + self.new_cash) * self.p.position_pct / 100 / len(target)
+        gaps = {}
+        for d in target:
+            if d in self.retry_sell:
+                continue
+            if d not in held and d.can_buy[0] <= 0:
+                self.log("sel.buy_blocked", name=d._name)
+                continue
+            gap = per_name - (self.getposition(d).size * d.open[0] if d in held else 0.0)
+            if gap > 0 and (d not in held or d.can_buy[0] > 0):
+                gaps[d] = gap
+        total = sum(gaps.values())
+        if not total:
+            return
+        scale = min(1.0, (self.broker.getcash() + freed) / (1 + self.p.cash_buffer) / total)
+        for d, gap in gaps.items():
+            raw_price = d.open[0] * d.ratio[0]
+            lots = int(gap * scale / (raw_price * (1 + self.p.cash_buffer)) / self.p.lot_size)
+            if lots < 1:
+                if d not in held:
+                    self.log("log.lot_too_big", name=d._name, cost=raw_price * self.p.lot_size)
+                continue
+            self.buy(data=d, size=lots * self.p.lot_size * d.ratio[0])
 
     def notify_order(self, order):
         if order.status in (order.Submitted, order.Accepted):
@@ -529,6 +585,7 @@ def run_selection(panel, spec: dict, broker: BrokerConfig | None = None, schedul
     codes = sorted({c for p in schedule.picks.values() for c in p})
     cash_div = spec.get("dividend") == "cash"
     div_codes = {c for c in codes if c in panel.div_codes} if cash_div else set()
+    flows = contribution_on_days(panel.calendar, broker, start)
 
     cerebro = bt.Cerebro(stdstats=False, cheat_on_open=True)
     cerebro.broker.set_checksubmit(False)          # 先卖后买：资金在成交时检查
@@ -542,7 +599,8 @@ def run_selection(panel, spec: dict, broker: BrokerConfig | None = None, schedul
         cerebro.adddata(SelectionFeed(dataname=_feed_frame(panel, c, c in div_codes), name=c, dtnums=dtnums))
     cerebro.addstrategy(SelectionStrategy, schedule=schedule, position_pct=spec.get("position_pct", 95),
                         lot_size=getattr(panel, "lot_size", 100), exit_next=_exit_next(panel, next_days),
-                        dividends=_dividend_events(panel, div_codes) if cash_div else None)
+                        dividends=_dividend_events(panel, div_codes) if cash_div else None,
+                        contributions={pd.Timestamp(d): float(a) for d, a in flows.items()} or None)
     cerebro.addanalyzer(EquityRecorder, _name="equity")
     strat = cerebro.run()[0]
 
@@ -550,11 +608,16 @@ def run_selection(panel, spec: dict, broker: BrokerConfig | None = None, schedul
     if start is not None:          # 预热期内没有交易，资产恒为初始资金，直接截掉
         equity = equity.loc[pd.Timestamp(start):].copy()
     bench = panel.benchmark.reindex(equity.index).ffill()
-    equity["benchmark"] = bench / bench.iloc[0] * broker.cash
-    equity["drawdown"] = equity["value"] / equity["value"].cummax() - 1
+    equity["benchmark"] = hold_with_flows(bench / bench.iloc[0], broker.cash, flows)
+    if len(flows):        # 定投：累计投入；回撤按扣除追加资金后的单位净值算（同择时回测）
+        equity["invested"] = broker.cash + flows_on_bars(equity.index, flows).cumsum()
+        nav = unit_value(equity["value"], flows)
+        equity["drawdown"] = nav / nav.cummax() - 1
+    else:
+        equity["drawdown"] = equity["value"] / equity["value"].cummax() - 1
     orders = pd.DataFrame(strat.order_records, columns=ORDER_COLUMNS)
     trades = pd.DataFrame(strat.trade_records, columns=TRADE_COLUMNS)
-    metrics = compute_metrics(equity["value"], equity["benchmark"], trades, broker.cash, broker.risk_free)
+    metrics = compute_metrics(equity["value"], equity["benchmark"], trades, broker.cash, broker.risk_free, flows)
     metrics["turnover_annual"] = _annual_turnover(orders, equity)
     if cash_div:
         metrics["dividend_cash"], metrics["dividend_tax"] = strat.div_cash, strat.div_tax

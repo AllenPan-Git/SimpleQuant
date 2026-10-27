@@ -65,6 +65,13 @@ def contribution_flows(prices: dict[str, pd.DataFrame], broker: BrokerConfig, tr
     if not broker.contribution or broker.contribution <= 0 or not prices:
         return pd.Series(dtype=float)
     days = pd.DatetimeIndex(sorted(set().union(*(df.index.normalize() for df in prices.values()))))
+    return contribution_on_days(days, broker, trade_start)
+
+
+def contribution_on_days(days: pd.DatetimeIndex, broker: BrokerConfig, trade_start=None) -> pd.Series:
+    """同 contribution_flows，交易日直接给出（选股回测用面板的交易日历）"""
+    if not broker.contribution or broker.contribution <= 0:
+        return pd.Series(dtype=float)
     if trade_start is not None:
         days = days[days >= pd.Timestamp(trade_start)]
     if not len(days):

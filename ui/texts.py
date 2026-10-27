@@ -258,6 +258,17 @@ TEXT.update({
                               "contributions start from the second period. The DCA templates buy on the day the money "
                               "arrives; other strategies only use it when they signal a buy. With contributions, total "
                               "return is measured against the total invested, and a money-weighted annual return (XIRR) is shown."),
+    "sp.contribution_help": L("定投：每月或每周第一个交易日开盘前追加这笔资金，0 表示不追加。初始资金视为第一期投入，从第二期开始追加。"
+                              "追加的钱先留作现金，到下一个调仓日开盘再买：先卖落选、买新入选，剩下的按目标仓位补到继续持有的股票上"
+                              "（只补不减）；空仓月份或大盘空仓期间一直留作现金。"
+                              "设置后，总收益按累计投入计算，并给出资金加权年化收益率（XIRR）；基准用同样的资金与日期买入持有指数。",
+                              "Dollar-cost averaging: this amount is added before the open on the first trading day of each "
+                              "month or week; 0 adds nothing. The initial capital counts as the first installment, and "
+                              "contributions start from the second period. New money waits as cash until the next rebalance "
+                              "open: dropped stocks are sold, new picks bought, and what is left tops up the stocks still held "
+                              "toward their target weight (never trimmed). During skipped months or market-exit periods it stays "
+                              "in cash. With contributions, total return is measured against the total invested, a money-weighted "
+                              "annual return (XIRR) is shown, and the benchmark buys the index with the same money on the same dates."),
     "bt.cost_preset": L("费率预设", "Cost preset"),
     "bt.t1": L("T+1（按品种执行）", "T+1 (by product type)"),
     "bt.t1_help": L("开启时，股票及境内股票 ETF 当日买入、次日方可卖出；债券 ETF、可转债、货币 ETF、黄金 ETF、商品期货 ETF、"
@@ -1733,6 +1744,9 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
                      "Over a backtest period of {span}, {n} contributions brought the total invested to <em>{invested}</em>; the final value was <em>{final}</em>, a return of <em>{ret}</em> on the money invested, or <em>{xirr}</em> money-weighted per year. Investing the same amounts on the same dates and holding returned <em>{bench}</em> ({bxirr} per year). Maximum drawdown, with contributions removed, was <em>{dd}</em>."),
     "bt.lede_dca_beat": L("策略比同样节奏的买入持有多 {v} 个百分点。", "The strategy was {v} percentage points ahead of holding with the same contributions."),
     "bt.lede_dca_lag": L("策略比同样节奏的买入持有少 {v} 个百分点。", "The strategy was {v} percentage points behind holding with the same contributions."),
+    "spwf.no_contribution": L("滚动优化按一次性投入初始资金计算，不含回测标签页设置的每期追加资金。",
+                              "Walk-forward uses the initial capital as a lump sum; contributions set on the Backtest tab are not included."),
+    "sp.bench_dca": L("{name}（同样的资金与日期买入持有）", "{name} (same contributions, buy & hold)"),
     "bt.bench_dca": L("基准（同样的资金与日期买入持有）", "Benchmark (same contributions, buy & hold)"),
     "bt.dca_no_contribution": L("未设置每期追加金额，定投模板只投入初始资金，结果等同于买入持有。可在「资金与交易成本」中填写每期追加金额。",
                                 "No contribution amount is set, so the DCA template only invests the initial capital and behaves like buy & hold. Set a contribution in Capital & trading costs."),

@@ -20,7 +20,7 @@ from . import __version__
 from .engine.runner import BrokerConfig
 
 FORMAT = "simplequant-plan"
-VERSION = 9                     # 能读取的最高版本
+VERSION = 10                    # 能读取的最高版本
 TIMING_VERSION = 1              # 择时方案仍写 1，旧版软件也能导入
 SELECTION_VERSION = 2           # 选股方案：0.2.4 及以前的版本会提示「请先更新软件」
 ML_VERSION = 3                  # 用机器学习合成因子的选股方案：0.3.0 及以前的版本会提示「请先更新软件」
@@ -30,6 +30,7 @@ DCA_VERSION = 6                 # 定投（每期追加资金或定投模板）�
 SKIP_VERSION = 7                # 选股设了空仓月份：1.6.1 及以前的版本会提示「请先更新软件」
 RISK_VERSION = 8                # 选股用了排雷因子或排雷条件：1.6.2 及以前的版本会提示「请先更新软件」
 MARKET_VERSION = 9              # 选股设了大盘条件（空仓 / 恢复）：1.6.2 及以前的版本会提示「请先更新软件」
+SEL_DCA_VERSION = 10            # 选股设了每期追加资金：1.7.0 及以前的版本会提示「请先更新软件」（它们读得到追加金额，但选股回测不用）
 SUFFIX = ".sqplan"
 DOWNLOADABLE = ("akshare", "baostock")          # 导入时可以自动下载的数据源
 RESULT_KEYS = ("total_return", "benchmark_return", "max_drawdown", "trades")
@@ -84,9 +85,11 @@ def make_plan(name: str, spec: dict, metas: list, start, end, broker: BrokerConf
     return plan
 
 
-def selection_version(spec: dict) -> int:
+def selection_version(spec: dict, broker: BrokerConfig | None = None) -> int:
     """旧版软件会忽略不认识的条件（结果悄悄不同），所以用到新功能就写更高的版本号"""
     from .stocks.selection import needs_risk, sel_market_on
+    if broker is not None and broker.contribution:
+        return SEL_DCA_VERSION
     if sel_market_on(spec):
         return MARKET_VERSION
     if spec.get("universe") != "cb" and needs_risk(spec):
@@ -119,7 +122,7 @@ def make_selection_plan(name: str, spec: dict, start, end, warmup_start, broker:
                 raise PlanError("plan.err_factor_missing", name=f["key"])
             custom[f["key"]] = {k: d.get(k, "") for k in ("name", "code", "direction", "desc")}
     plan = {
-        "format": FORMAT, "version": selection_version(spec),
+        "format": FORMAT, "version": selection_version(spec, broker),
         "app": __version__,
         "created": dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
         "name": name, "strategy": spec,

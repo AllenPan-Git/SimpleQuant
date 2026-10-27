@@ -1524,7 +1524,8 @@ def _backtest_form(SP, ctx, rebuild):
                         empty_text=t("sp.market_back_empty"), key="market")
 
     make_broker = broker_settings(broker_key(panel.kind), default_preset="bond" if panel.kind == "cb" else "stock",
-                                  default_cash=1_000_000, show_t1=False)
+                                  default_cash=1_000_000, show_t1=False, show_contribution=True,
+                                  contribution_help="sp.contribution_help")
 
     preview = ui.label().classes("sq-code w-full")
     with ui.row().classes("w-full items-end gap-3"):
@@ -1762,8 +1763,12 @@ def _selection_results(SP, ctx):
     tr = run_panel.bench_total_return
     if U.kind(rspec["universe"]) == "stock" and not tr:
         notice(t("sp.bench_price_note"), "info", "warning")
+    dca = "invested" in res.equity
+    bench = bench_label(rspec["universe"], tr)
     with ui.card().classes("w-full p-2"):
-        plot(equity_chart(res.equity, lg, bench_label(rspec["universe"], tr)))
+        plot(equity_chart(res.equity, lg, t("sp.bench_dca", name=bench) if dca else bench))
+    if dca:
+        ui.label(t("bt.fig1_caption_dca")).classes("sq-caption")
 
     with ui.tabs().classes("w-full").props("align=left no-caps") as tabs:
         tab_h = ui.tab("h", t("sp.tab_holdings"))
@@ -1996,6 +2001,8 @@ def _walkforward(SP, ctx):
         return
     ui.label(t("spwf.using")).classes("font-semibold")
     ui.label(strategies.describe(spec, lg)).classes("sq-code w-full")
+    if (state.STATE.get(f"{broker_key(ctx.panel.kind)}_broker") or {}).get("contribution"):
+        notice(t("spwf.no_contribution"), "info", "info")
 
     tbs = {tb.path: tb for tb in selection_tunables(spec, lg)}
     labels_all = {"rebalance": t("sp.rebalance"), **{k: tb.label for k, tb in tbs.items()}}

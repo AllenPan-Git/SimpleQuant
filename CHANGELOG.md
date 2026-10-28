@@ -5,6 +5,14 @@
 
 Changes in each release. `tools/release.py` copies the matching section into the GitHub release notes.
 
+## 未发布
+
+### 更新内容
+- 新增：多因子选股页「持仓诊断」标签。可逐只添加股票与股数、粘贴券商软件中复制的持仓表（自动识别代码 / 名称与股数），或读取模拟账户的股票持仓；持仓保存在本机。选择对照股票池（沪深300、中证500、上证50、全 A 股）后显示：持仓市值与各股占比、最大一只与前三只合计、有效持仓数（1 ÷ 各股占比的平方和）、行业分布（与股票池按总市值的占比对照）；总市值、市盈率（TTM）、市净率、股息率、ROE 在股票池当天成分股中的百分位，组合按市值加权；过去 244 个交易日的日收益相关系数矩阵与相关性最高的几对；假设按现在的股数过去一年一直持有（分红再投资）的市值走势、收益、年化波动率、最大回撤与 β，并与同金额的股票池全收益指数对照。本地缺少数据的股票可只下载这几只。只列出事实，不打分
+
+### Changes
+- New: Holdings check tab on the Stock selection page. Add stocks and share counts one by one, paste a holdings table copied from broker software (codes / names and share counts are recognized), or read a paper account's stock positions; holdings are saved on this computer. Against a chosen universe (CSI 300, CSI 500, SSE 50, all A-shares) it shows market value and weights, the largest and top-three positions, the effective number of holdings (1 ÷ sum of squared weights), industry mix (against the universe's market-cap weights), percentiles of market cap, P/E (TTM), P/B, dividend yield and ROE among the universe's constituents that day (weighted for the portfolio), the correlation matrix of daily returns over the past 244 trading days with the most correlated pairs, and the value, return, annualized volatility, max drawdown and beta had the current share counts been held over the past year (dividends reinvested), against the same amount in the universe's total return index. Missing data can be downloaded for just those stocks. Facts only, no score
+
 ## 1.9.0（2026-10-28）
 
 ### 更新内容

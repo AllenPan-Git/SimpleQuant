@@ -1820,3 +1820,31 @@ async def test_selection_picks_dialog_and_overview(user: User):
     table_el = user.find(marker="pick_table")
     table_el.trigger("rowClick", [{}, {tr("sp.pick_stock", "zh"): first}, 0])
     assert await _wait(lambda: _shown(user, "ov_title"), n=600)
+
+
+@needs_stocks
+async def test_selection_holdings_check(user: User, tmp_path, monkeypatch):
+    """持仓诊断标签：粘贴持仓 → 与沪深300 对照诊断（持仓文件写到临时目录）"""
+    from simplequant.stocks import StockStore
+    from simplequant.stocks import diagnosis as D
+    monkeypatch.setattr(D, "HOLDINGS_FILE", tmp_path / "holdings.json")
+    st = StockStore()
+    uni = st.load_universe("hs300")
+    codes = [c for c in sorted(uni["code"].unique()) if st.has(c)][:3]
+    SP = await _open_selection(user, "hd")
+    SP["hd"]["holdings"] = []
+    user.find(marker="hd_paste").click()
+    await settle()
+    user.find(marker="hd_paste_text").type("\n".join(f"{c.split('.')[-1]} 某股票 {i * 100 + 100}"
+                                                      for i, c in enumerate(codes)))
+    user.find(marker="hd_paste_replace").click()
+    await settle()
+    assert [h["code"] for h in SP["hd"]["holdings"]] == codes
+    assert D.load_holdings() == SP["hd"]["holdings"]
+    user.find(marker="hd_run").click()
+    assert await _wait(lambda: SP["hd"].get("result") is not None, n=2400)
+    await settle()
+    res = SP["hd"]["result"]
+    assert len(res.holdings) + len(res.missing) + len(res.unpriced) == 3
+    assert len(user.find(marker="hd_table").elements.pop().rows) == len(res.holdings)
+    await user.should_see("有效持仓数")

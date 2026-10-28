@@ -35,6 +35,7 @@ from gui.components import broker_settings, metric_tiles, metric_tile, walkforwa
     bench_label
 from gui.layout import frame, page_title
 from gui.pages.stock_overview import overview_tab, picks_dialog
+from gui.pages.holdings_check import diag_tab
 from gui.plan_io import import_button, export_selection_bytes, plan_filename, plan_check_notice, restore_broker
 from simplequant import plan as plan_mod
 from gui.widgets import section, df_table, fmt_table, plot, notice, download_btn, Progress, code_editor, LogBox
@@ -267,6 +268,7 @@ def page():
             tab_bt = ui.tab("bt", t("sp.tab_backtest"), icon="query_stats")
             tab_wf = ui.tab("wf", t("sp.tab_wf"), icon="timeline")
             tab_ov = ui.tab("ov", t("sp.tab_overview"), icon="manage_search")
+            tab_hd = ui.tab("hd", t("sp.tab_diag"), icon="fact_check")
         with ui.tab_panels(tabs, value=state.STATE.get("sp_tab", "bt")).classes("w-full bg-transparent") as panels:
             with ui.tab_panel(tab_data).classes("px-0 gap-4"):
                 data_box = ui.column().classes("w-full gap-4")
@@ -282,6 +284,8 @@ def page():
                 wf_box = ui.column().classes("w-full gap-4")
             with ui.tab_panel(tab_ov).classes("px-0 gap-4"):        # 只读本地数据，不需要面板
                 overview_tab(SP)
+            with ui.tab_panel(tab_hd).classes("px-0 gap-4"):        # 自己按所选股票池取面板
+                diag_tab(SP, get_panel)
         def on_tab(e):
             state.STATE["sp_tab"] = e.value
             if e.value == "wf":          # 滚动优化总是用选股回测标签页里的最新设置

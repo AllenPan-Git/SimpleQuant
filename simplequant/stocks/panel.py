@@ -194,12 +194,15 @@ def exit_frame(exit_dates: dict, calendar: pd.DatetimeIndex, codes: list[str]) -
     return out
 
 
-def build_panel(store: StockStore, universe: str, start: str, end: str) -> Panel:
+def build_panel(store: StockStore, universe: str, start: str, end: str, codes: list[str] | None = None) -> Panel:
+    """codes：只放这些股票（不必是成分股，member 为 False），用股票池的交易日历和基准；持仓诊断用"""
     uni = store.load_universe(universe)
     bench = store.load_index(UNIVERSES[universe]["index"])
     calendar = bench.loc[start:end].index
     tr = universe_mod.total_return(universe, calendar, store)
-    codes = sorted(uni.loc[uni["date"] <= pd.Timestamp(end), "code"].unique())
+    if codes is None:
+        codes = uni.loc[uni["date"] <= pd.Timestamp(end), "code"].unique()
+    codes = sorted(set(codes))
     codes = [c for c in codes if store.has(c)]
 
     cols = {f: {} for f in PRICE_FIELDS + OTHER_FIELDS + ["tradable", "is_st"]}

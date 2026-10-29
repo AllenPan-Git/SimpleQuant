@@ -1,3 +1,3 @@
 """SimpleQuant：低代码 A 股量化回测工具（Backtrader 引擎）"""
 
-__version__ = "1.9.0"
+__version__ = "2.0.0"

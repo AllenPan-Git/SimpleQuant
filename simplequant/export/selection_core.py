@@ -98,6 +98,35 @@ def sel_is_rebalance(spec, calendar, today, start):
 # ============================== 大盘条件 ==============================
 # 只用指数收盘价就能算的指标（指数数据只有开盘、收盘价）
 MARKET_INDS = ("close", "sma", "ema", "rsi", "roc", "ma_slope", "bias", "macd", "boll", "volatility")
+DEFAULT_RECOVERY = {"logic": "all", "conditions": [{"left": {"ind": "close"}, "op": ">", "right": {"ind": "sma", "params": {"period": 20}}}]}
+
+
+def uses_drawdown_stop(spec):
+    ds = (spec or {}).get("drawdown_stop")
+    if isinstance(ds, (int, float)):
+        return float(ds) > 0
+    if isinstance(ds, dict):
+        return float(ds.get("max_drawdown", 0)) > 0
+    return False
+
+
+def sel_recovery_block(spec):
+    ds = (spec or {}).get("drawdown_stop")
+    if isinstance(ds, dict) and (ds.get("recovery") or {}).get("conditions"):
+        return ds["recovery"]
+    market = (spec or {}).get("market") or {}
+    if (market.get("buy") or {}).get("conditions"):
+        return market["buy"]
+    return DEFAULT_RECOVERY
+
+
+def sel_recovery_hit(spec, close):
+    close = np.asarray(close, dtype=float)
+    n = len(close)
+    lines = _Lines({"close": close})
+    block = sel_recovery_block(spec)
+    hit = _block_series(block, lines, n)
+    return np.zeros(n, dtype=bool) if hit is None else hit
 
 
 def sel_market_on(spec):
@@ -496,7 +525,7 @@ def sel_select(spec, calendar, api, cache):
     return sel_pick(spec, data, mask, codes)
 
 
-def sel_target(spec, calendar, today, start, api, cache, expected, follow, log):
+def sel_target(spec, calendar, today, start, api, cache, expected, follow, log, state=None, total_value=None):
     """
     执行日 today 开盘前调用：返回要调仓到的名单，今天不调仓返回 None
     follow=True：不计算因子，直接按 SimpleQuant 回测的名单（expected）调仓
@@ -520,6 +549,37 @@ def sel_target(spec, calendar, today, start, api, cache, expected, follow, log):
         back = bool(was)
         if back:
             log("%s 满足大盘恢复条件，重新选股 / market condition: back in" % t)
+
+    # 净值回撤停手
+    if uses_drawdown_stop(spec) and total_value is not None and t >= start:
+        ds = spec.get("drawdown_stop")
+        max_dd = (float(ds) / 100.0) if not isinstance(ds, dict) else (float(ds.get("max_drawdown", 0)) / 100.0)
+        st = state if isinstance(state, dict) else {}
+        peak = st.get("dd_peak", 0.0)
+        stopped = st.get("dd_stopped", False)
+        if peak <= 0:
+            peak = total_value
+        elif total_value > peak and not stopped:
+            peak = total_value
+        st["dd_peak"] = peak
+        dd = (peak - total_value) / peak if peak > 0 else 0.0
+        if not stopped:
+            if dd >= max_dd:
+                st["dd_stopped"] = True
+                log("%s 净值回撤达到 %.1f%%，触发回撤停手清仓 / drawdown stop-loss triggered" % (t, dd * 100))
+                return []
+        else:
+            rec_hit = sel_recovery_hit(spec, api.index_close(calendar))
+            if rec_hit[-1]:
+                st["dd_stopped"] = False
+                st["dd_peak"] = total_value
+                log("%s 大盘满足恢复条件，解除回撤停手 / recovery condition met, stop-loss lifted" % t)
+            else:
+                return None              # 停手期间不调仓
+
+    if state and state.get("dd_stopped"):
+        return None                      # 仍处于回撤停手状态，不调仓
+
     if not back and not sel_is_rebalance(spec, calendar, today, start):
         return None
     if int(today[5:7]) in sel_skip_months(spec):

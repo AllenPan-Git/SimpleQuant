@@ -151,6 +151,14 @@ TEXT = {
     "sel.dividend_tax": L("{name} 卖出，持股 {days} 天，补扣红利税 {tax} 元",
                           "{name} sold after {days} days; dividend tax {tax} deducted"),
     "sel.div_cash": L("现金分红并扣红利税", "cash dividends, taxed"),
+    "sel.dd_stop": L("净值回撤达到 {dd}，触发回撤停手，次日开盘清仓（历史高点 {peak}，当前净值 {val}）",
+                     "NAV drawdown reached {dd}; triggered drawdown stop-loss and liquidate at next open (peak {peak}, current NAV {val})"),
+    "sel.dd_resume": L("基准指数满足恢复条件，解除回撤停手（当前净值 {val}），将于下一个调仓日恢复选股",
+                       "Benchmark index met recovery condition; drawdown stop-loss lifted (current NAV {val}), stock selection will resume on the next rebalance date"),
+    "sel.reason_dd_stop": L("触发回撤停手，清仓", "drawdown stop-loss triggered; liquidating"),
+    "sel.dd_stop_title": L("回撤停手", "Drawdown stop-loss"),
+    "sel.dd_stop_desc": L("最大回撤达到 {dd}% 停手清仓，大盘满足恢复条件后于下一个调仓日恢复",
+                          "Stop and liquidate when max drawdown reaches {dd}%, resume on next rebalance date after market meets recovery condition"),
 
     # ---- 规则描述 ----
     "rule.buy": L("买入", "Buy"),

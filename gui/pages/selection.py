@@ -80,6 +80,7 @@ def sp_state() -> dict:
     })
     sp.setdefault("cf_ai", {"text": "", "base": False, "result": None})
     sp.setdefault("market", empty_market())         # 大盘条件（界面里的条件带 _id）
+    sp.setdefault("dd_stop", 0)                     # 净值回撤停手阈值（%）
     # 可转债的选股条件（价格上限等；None = 不限）；旧版保存的界面状态里没有这两项
     sp.setdefault("cbf", {k: v for k, v in CB_DEFAULT_FILTERS.items() if k in CB_FILTERS})
     sp.setdefault("riskf", {k: None for k in RISK_FILTERS})      # 股票的排雷条件（None = 不限）
@@ -107,12 +108,21 @@ def empty_market() -> dict:
 
 
 def market_spec(SP) -> dict | None:
-    """表单里的大盘条件；没有空仓条件时为 None（恢复条件单独设没有意义）"""
+    """表单里的大盘条件；没有空仓条件且未设回撤停手恢复时为 None"""
     m = SP.get("market") or {}
-    if not (m.get("sell") or {}).get("conditions"):
+    has_sell = bool((m.get("sell") or {}).get("conditions"))
+    has_buy = bool((m.get("buy") or {}).get("conditions"))
+    has_dd = float(SP.get("dd_stop") or 0) > 0
+    if not has_sell and not (has_buy and has_dd):
         return None
-    out = clean({"buy": m.get("buy") or {"logic": "all", "conditions": []}, "sell": m["sell"]})
-    return {"sell": out["sell"], **({"buy": out["buy"]} if out["buy"]["conditions"] else {})}
+    out = clean({"buy": m.get("buy") or {"logic": "all", "conditions": []},
+                 "sell": m.get("sell") or {"logic": "any", "conditions": []}})
+    res = {}
+    if out["sell"]["conditions"]:
+        res["sell"] = out["sell"]
+    if out["buy"]["conditions"]:
+        res["buy"] = out["buy"]
+    return res or None
 
 
 def switch_kind(SP, old: str, new: str):
@@ -1249,6 +1259,7 @@ def current_spec(SP) -> dict:
             "rebalance": SP["reb"] if SP["reb"] != "n" else int(SP["reb_n"]),
             **({"skip_months": sorted(SP["skip"])} if SP.get("skip") else {}),
             **({"market": m} if (m := market_spec(SP)) else {}),
+            **({"drawdown_stop": float(SP["dd_stop"])} if float(SP.get("dd_stop") or 0) > 0 else {}),
             "filters": filters,
             "position_pct": int(SP["pos"]), "weighting": SP["weighting"], "ic_lookback": int(SP["lookback"]),
             **({"ml": {"model": SP["ml_model"], "window": int(SP["ml_window"]), **SP["ml_params"][SP["ml_model"]]}}
@@ -1271,6 +1282,7 @@ def apply_spec(SP, spec: dict, name: str = ""):
     if reb not in REBALANCE:
         SP["reb_n"] = int(reb)
     SP["skip"] = skip_months(spec)
+    SP["dd_stop"] = float(spec.get("drawdown_stop") or 0)
     market = spec.get("market") or {}
     SP["market"] = with_ids({"buy": market.get("buy") or {"logic": "all", "conditions": []},
                              "sell": market.get("sell") or {"logic": "any", "conditions": []}})
@@ -1520,6 +1532,51 @@ def _backtest_form(SP, ctx, rebuild):
 
     # ---- 大盘条件 ----
     from gui.pages.strategy import side_editor      # 与择时策略页共用条件积木
+
+    def dd_stop_editor(SP, on_changed):
+        box = ui.column().classes("w-full gap-3")
+
+        def draw():
+            box.clear()
+            val = float(SP.get("dd_stop") or 0)
+            with box:
+                with ui.row().classes("w-full items-center justify-between"):
+                    with ui.row().classes("items-center gap-2"):
+                        with ui.element("div").classes("sq-icon-chip"):
+                            ui.icon("shield")
+                        ui.label(t("sp.dd_stop_title")).classes("text-lg font-semibold")
+
+                if val > 0:
+                    with ui.card().classes("w-full p-3").props("flat"):
+                        with ui.row().classes("w-full items-center justify-between gap-3"):
+                            with ui.row().classes("items-center gap-2"):
+                                ui.label(t("sp.dd_stop_cond_prefix")).classes("text-sm")
+                                def on_val(e):
+                                    if e.value is not None:
+                                        SP["dd_stop"] = max(0.0, float(e.value))
+                                        on_changed()
+                                ui.number(value=val, min=1, max=90, step=1,
+                                          on_change=on_val) \
+                                    .props("outlined dense suffix=%").classes("w-28").mark("sp_dd_stop")
+                                ui.label(t("sp.dd_stop_cond_suffix")).classes("text-sm")
+                            def on_del():
+                                SP["dd_stop"] = 0
+                                draw()
+                                on_changed()
+                            ui.button(icon="delete", on_click=on_del) \
+                                .props("flat round dense color=negative").tooltip(t("sp.dd_stop_del")).mark("del:dd_stop")
+                    ui.label(t("sp.dd_stop_help")).classes("sq-muted text-sm")
+                else:
+                    ui.label(t("sp.dd_stop_empty")).classes("sq-muted text-sm")
+                    def on_add():
+                        SP["dd_stop"] = 15
+                        draw()
+                        on_changed()
+                    ui.button(t("sp.dd_stop_add"), icon="add", on_click=on_add) \
+                        .props("flat no-caps dense color=primary").mark("add:dd_stop")
+
+        draw()
+
     with section(t("sp.market"), "show_chart"):
         index_name = t(f"sp.market_index_{SP['universe']}") if SP["universe"] in ("all", "cb") \
             else p(UNIVERSES[SP["universe"]]["label"])
@@ -1527,6 +1584,8 @@ def _backtest_form(SP, ctx, rebuild):
         with ui.card().classes("w-full gap-3"):
             side_editor(SP, "sell", t("sp.market_out"), "trending_down", lambda: changed(), options=MARKET_INDS,
                         empty_text=t("sp.market_out_empty"), key="market")
+        with ui.card().classes("w-full gap-3"):
+            dd_stop_editor(SP, lambda: changed())
         with ui.card().classes("w-full gap-3"):
             side_editor(SP, "buy", t("sp.market_back"), "trending_up", lambda: changed(), options=MARKET_INDS,
                         empty_text=t("sp.market_back_empty"), key="market")

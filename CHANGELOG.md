@@ -5,6 +5,14 @@
 
 Changes in each release. `tools/release.py` copies the matching section into the GitHub release notes.
 
+## 2.1.0（2026-10-30）
+
+### 更新内容
+- 新增：多因子选股支持「净值回撤停手」。在选股页「大盘条件」区域设置「回撤停手（%）」（默认 0 为不启用）：当策略净值从历史高点回撤达到或超过设定比例时，收盘判定触发，下一个交易日开盘全部卖出清仓并进入空仓停手状态；停手期间跳过常规调仓。空仓期间，当股票池基准指数满足恢复条件（默认指数收盘价站上 20 日均线，若配置了大盘恢复条件则以其为准）时，停手解除并将历史最高点基准重置为当前净值，在随后的下一个常规调仓日恢复选股买入。回测引擎、模拟盘交易理由、方案文件（版本升至 11，旧版导入提示更新）、独立 Python 脚本以及聚宽 / 掘金 / QMT 平台导出均同步支持
+
+### Changes
+- New: drawdown stop for multi-factor selection. In the Market conditions section of the Stock selection page, set "Drawdown stop (%)" (default 0 means disabled): when strategy net asset value drops from its peak by or beyond the specified percentage, it triggers at the close, liquidating all holdings at the next open and pausing new purchases; regular rebalancing is skipped during the pause. While paused, once the universe benchmark index satisfies the recovery condition (by default index close > 20-day SMA, or custom market recovery conditions if specified), the stop is lifted, peak NAV is reset to the current value, and stock picking resumes on the following scheduled rebalance day. Supported across backtesting, paper trading reasons, plan files (version bumped to 11 with update prompts for older versions), standalone Python script export, and JoinQuant / MyQuant / QMT exports
+
 ## 2.0.0（2026-10-29）
 
 ### 更新内容

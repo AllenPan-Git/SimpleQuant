@@ -20,7 +20,7 @@ from . import __version__
 from .engine.runner import BrokerConfig
 
 FORMAT = "simplequant-plan"
-VERSION = 10                    # 能读取的最高版本
+VERSION = 11                    # 能读取的最高版本
 TIMING_VERSION = 1              # 择时方案仍写 1，旧版软件也能导入
 SELECTION_VERSION = 2           # 选股方案：0.2.4 及以前的版本会提示「请先更新软件」
 ML_VERSION = 3                  # 用机器学习合成因子的选股方案：0.3.0 及以前的版本会提示「请先更新软件」
@@ -31,6 +31,7 @@ SKIP_VERSION = 7                # 选股设了空仓月份：1.6.1 及以前的�
 RISK_VERSION = 8                # 选股用了排雷因子或排雷条件：1.6.2 及以前的版本会提示「请先更新软件」
 MARKET_VERSION = 9              # 选股设了大盘条件（空仓 / 恢复）：1.6.2 及以前的版本会提示「请先更新软件」
 SEL_DCA_VERSION = 10            # 选股设了每期追加资金：1.7.0 及以前的版本会提示「请先更新软件」（它们读得到追加金额，但选股回测不用）
+DRAWDOWN_STOP_VERSION = 11      # 选股设了回撤停手：2.0.0 及以前的版本会提示「请先更新软件」
 SUFFIX = ".sqplan"
 DOWNLOADABLE = ("akshare", "baostock")          # 导入时可以自动下载的数据源
 RESULT_KEYS = ("total_return", "benchmark_return", "max_drawdown", "trades")
@@ -87,7 +88,9 @@ def make_plan(name: str, spec: dict, metas: list, start, end, broker: BrokerConf
 
 def selection_version(spec: dict, broker: BrokerConfig | None = None) -> int:
     """旧版软件会忽略不认识的条件（结果悄悄不同），所以用到新功能就写更高的版本号"""
-    from .stocks.selection import needs_risk, sel_market_on
+    from .stocks.selection import needs_risk, sel_market_on, uses_drawdown_stop
+    if uses_drawdown_stop(spec):
+        return DRAWDOWN_STOP_VERSION
     if broker is not None and broker.contribution:
         return SEL_DCA_VERSION
     if sel_market_on(spec):

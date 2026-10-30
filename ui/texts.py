@@ -1296,6 +1296,16 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
     "sp.market_out_empty": L("没有空仓条件：不看大盘，一直按调仓日持仓", "No exit condition: always invested"),
     "sp.market_back_empty": L("没有恢复条件：空仓条件不再满足就恢复", "No re-entry condition: back in once the exit "
                               "condition no longer holds"),
+    "sp.dd_stop": L("净值回撤停手（%）", "NAV drawdown stop-loss (%)"),
+    "sp.dd_stop_title": L("净值回撤停手", "Drawdown Stop-Loss"),
+    "sp.dd_stop_empty": L("没有回撤停手：不监控净值回撤，仅按大盘条件与调仓周期运行",
+                          "No drawdown stop: positions managed solely by market conditions and scheduled rebalancing"),
+    "sp.dd_stop_add": L("添加回撤停手", "Add drawdown stop"),
+    "sp.dd_stop_cond_prefix": L("策略净值从历史高点回撤达到或超过", "Strategy NAV drops from peak by or beyond"),
+    "sp.dd_stop_cond_suffix": L("时次日开盘清仓停手", "liquidate at next open and pause purchases"),
+    "sp.dd_stop_del": L("删除停手条件", "Remove drawdown stop"),
+    "sp.dd_stop_help": L("策略净值从历史高点回撤达到设定比例时，次日开盘全部卖出进入空仓；当大盘满足恢复条件（未设置时默认收盘价高于 20 日均线）后解除停手，并于下一个常规调仓日恢复选股买入",
+                         "When the strategy NAV drawdown from peak reaches this threshold, sell all positions at the next open to hold cash; when the market meets recovery conditions (defaults to close > 20-day SMA if unset), the stop-loss is lifted, and stock selection resumes on the next scheduled rebalance date"),
     "sp.skip_months_help": L("这些月份不持股：上个月最后一个交易日收盘后清空名单，下一个交易日开盘全部卖出；"
                              "空仓月最后一个交易日照常选股，下一个交易日开盘买回。空仓期间的现金不计利息。"
                              "不论调仓频率，空仓月前后的月份交界处都会调仓一次",

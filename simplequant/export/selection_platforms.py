@@ -165,7 +165,7 @@ def _dict_lines(d: dict) -> str:
 
 def _settings(platform, spec, start, end, panel_start, broker, follow, expected) -> str:
     keep = ("cash", "commission", "min_commission", "stamp_duty", "slippage")
-    spec = {k: spec[k] for k in ("kind", "universe", "factors", "top_n", "rebalance", "skip_months", "market",
+    spec = {k: spec[k] for k in ("kind", "universe", "factors", "top_n", "rebalance", "skip_months", "market", "drawdown_stop",
                                  "filters", "position_pct", "weighting", "ic_lookback", "neutralize") if k in spec}
     exp = {str(d)[:10]: [platform_code(c, "stock", platform) for c in codes] for d, codes in (expected or {}).items()}
     return f'''
@@ -283,7 +283,7 @@ def sq_trade(context):
     calendar = [str(d) for d in get_trade_days(start_date=PANEL_START, end_date=context.previous_date)]
     if not calendar:
         return
-    target = sel_target(SPEC, calendar, today, START, _Data(), g.sq_members, EXPECTED, FOLLOW, log.info)
+    target = sel_target(SPEC, calendar, today, START, _Data(), g.sq_members, EXPECTED, FOLLOW, log.info, state=g.sq_state, total_value=context.portfolio.total_value)
     positions = context.portfolio.positions
     held = dict((c, positions[c].total_amount) for c in list(positions.keys()) if positions[c].total_amount > 0)
     if target is None and not g.sq_state["retry"]:
@@ -390,7 +390,9 @@ def on_bar(context, bars):
     if not calendar or calendar[-1] != t:
         return
     state = context.sq_state
-    target = sel_target(SPEC, calendar, today, START, _Data(context), context.sq_members, EXPECTED, FOLLOW, print)
+    account = context.account()
+    nav_val = account.cash.get("nav") if hasattr(account, "cash") and isinstance(account.cash, dict) else (account.cash.nav if hasattr(account, "cash") and hasattr(account.cash, "nav") else None)
+    target = sel_target(SPEC, calendar, today, START, _Data(context), context.sq_members, EXPECTED, FOLLOW, print, state=context.sq_state, total_value=nav_val)
     account = context.account()
     held = dict((p["symbol"], p["volume"]) for p in account.positions() if p["volume"] > 0)
     if target is not None:
@@ -547,7 +549,7 @@ def handlebar(ContextInfo):
     calendar = [d for d in calendar if d < today]
     if not calendar:
         return
-    target = sel_target(SPEC, calendar, today, START, _Data(C), G.members, EXPECTED, FOLLOW, print)
+    target = sel_target(SPEC, calendar, today, START, _Data(C), G.members, EXPECTED, FOLLOW, print, state=G.state, total_value=G.book.get("value"))
     held = dict(G.book["pos"])
     if target is None and not G.state["retry"]:
         return

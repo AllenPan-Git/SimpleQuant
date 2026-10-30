@@ -47,7 +47,8 @@ from ..engine.commission import AShareCommission
 from ..engine.results import EquityRecorder, BacktestResult, compute_metrics, flows_on_bars, hold_with_flows, unit_value
 from ..engine.runner import BrokerConfig, contribution_on_days
 from ..engine.base_strategy import ORDER_COLUMNS, TRADE_COLUMNS
-from ..export.selection_core import MARKET_INDS, sel_market_cash, sel_market_on
+from ..export.selection_core import (MARKET_INDS, DEFAULT_RECOVERY, sel_market_cash, sel_market_on,
+                                      uses_drawdown_stop, sel_recovery_block, sel_recovery_hit)
 from ..i18n import L, pick
 from . import factors as F
 from .dividends import split_factor, tax_rate
@@ -101,6 +102,25 @@ def market_cash(panel, spec: dict, start=None) -> pd.Series | None:
     return pd.Series(sel_market_cash(spec, close.reindex(cal).to_numpy(dtype=float), first), index=cal)
 
 
+
+
+def drawdown_stop_threshold(spec: dict) -> float:
+    ds = (spec or {}).get("drawdown_stop")
+    if isinstance(ds, (int, float)):
+        return float(ds) / 100.0
+    if isinstance(ds, dict):
+        return float(ds.get("max_drawdown", 0)) / 100.0
+    return 0.0
+
+
+def drawdown_recovery_hit(panel, spec: dict) -> dict[pd.Timestamp, bool]:
+    close = getattr(panel, "index_close", None)
+    if close is None:
+        raise ValueError(pick(L("回撤停手需要股票池指数的行情，请重新打开选股页（面板缓存是旧版本）",
+                                "Drawdown stop-loss needs the index prices; reopen the selection page")))
+    hit = sel_recovery_hit(spec, close.to_numpy())
+    return dict(zip(panel.calendar, hit.astype(bool)))
+
 def market_errors(spec: dict, lang: str = "zh") -> list[str]:
     """大盘条件的格式问题（只能用收盘价算的指标、不能用持仓收益）；没有问题返回空列表"""
     market = spec.get("market")
@@ -110,7 +130,12 @@ def market_errors(spec: dict, lang: str = "zh") -> list[str]:
     if not isinstance(market, dict) or not all(isinstance(market.get(s) or {}, dict) for s in ("sell", "buy")):
         return ["market: format"]
     sell, buy = market.get("sell") or {}, market.get("buy") or {}
-    errors = validate({"buy": sell, "sell": buy}, lang) if sell.get("conditions") else ["market: no sell conditions"]
+    if sell.get("conditions"):
+        errors = validate({"buy": sell, "sell": buy}, lang)
+    elif uses_drawdown_stop(spec) and buy.get("conditions"):
+        errors = validate({"buy": buy, "sell": {"conditions": []}}, lang)
+    else:
+        errors = ["market: no sell conditions"]
     for block in (sell, buy):
         for c in block.get("conditions") or []:
             for s in (c.get("left") or {}, c.get("right") or {}):
@@ -330,7 +355,9 @@ class SelectionStrategy(bt.Strategy):
     params = (("schedule", None), ("position_pct", 95), ("lot_size", 100), ("cash_buffer", 0.01),
               ("dividends", None),        # 现金分红模式：{日期: [(代码, 每股现金, 每股送股, 每股转增)]}
               ("exit_next", ()),          # 下一个开盘必须卖出的代码（模拟盘的明日信号）
-              ("contributions", None))    # 定投：{日期: 追加金额}
+              ("contributions", None),    # 定投：{日期: 追加金额}
+              ("max_drawdown", 0.0),      # 回撤停手阈值（小数，如 0.15 = 15%，0 为不启用）
+              ("recovery_hit", None))     # 大盘恢复命中日历字典 {pd.Timestamp: bool}
 
     def __init__(self):
         self.by_name = {d._name: d for d in self.datas}
@@ -351,13 +378,39 @@ class SelectionStrategy(bt.Strategy):
         self.top_up = bool(self.flows)  # 定投：调仓日把现金补到继续入选的持仓上
         self.contributed = 0.0
         self.new_cash = 0.0            # 本次开盘前刚到账的追加资金（还没算进 getvalue()）
+        self.max_drawdown = float(self.p.max_drawdown or 0.0)
+        self.recovery_hit = self.p.recovery_hit or {}
+        self.peak_val = 0.0
+        self.dd_stopped = False
 
     def log(self, key, **kw):
         self.logs.append((self.datas[0].datetime.datetime(0), key, kw))
 
     def next(self):
         d = pd.Timestamp(self.datas[0].datetime.date(0))
-        if d in self.picks:
+        val = self.broker.getvalue()
+
+        if self.max_drawdown > 0:
+            if self.peak_val <= 0:
+                self.peak_val = val
+            elif val > self.peak_val and not self.dd_stopped:
+                self.peak_val = val
+
+            dd = (self.peak_val - val) / self.peak_val if self.peak_val > 0 else 0.0
+
+            if not self.dd_stopped:
+                if dd >= self.max_drawdown:
+                    self.dd_stopped = True
+                    self.target = []
+                    self.log("sel.dd_stop", dd=f"{dd * 100:.1f}%", peak=f"{self.peak_val:,.2f}", val=f"{val:,.2f}")
+                    return
+            else:
+                if self.recovery_hit.get(d, False):
+                    self.dd_stopped = False
+                    self.peak_val = val
+                    self.log("sel.dd_resume", date=str(d.date()), val=f"{val:,.2f}")
+
+        if not self.dd_stopped and d in self.picks:
             self.target = self.picks[d]
 
     def _held(self):
@@ -619,10 +672,13 @@ def run_selection(panel, spec: dict, broker: BrokerConfig | None = None, schedul
     dtnums = [bt.date2num(t.to_pydatetime()) for t in panel.calendar]
     for c in codes:
         cerebro.adddata(SelectionFeed(dataname=_feed_frame(panel, c, c in div_codes), name=c, dtnums=dtnums))
+    max_dd = drawdown_stop_threshold(spec)
+    rec_hit = drawdown_recovery_hit(panel, spec) if max_dd > 0 else None
     cerebro.addstrategy(SelectionStrategy, schedule=schedule, position_pct=spec.get("position_pct", 95),
                         lot_size=getattr(panel, "lot_size", 100), exit_next=_exit_next(panel, next_days),
                         dividends=_dividend_events(panel, div_codes) if cash_div else None,
-                        contributions={pd.Timestamp(d): float(a) for d, a in flows.items()} or None)
+                        contributions={pd.Timestamp(d): float(a) for d, a in flows.items()} or None,
+                        max_drawdown=max_dd, recovery_hit=rec_hit)
     cerebro.addanalyzer(EquityRecorder, _name="equity")
     strat = cerebro.run()[0]
 
@@ -712,9 +768,10 @@ def _selection_pending(strat) -> list[dict]:
     if strat.target is None:
         return out
     target = [strat.by_name[c] for c in strat.target]
+    reason_key = "sel.reason_dd_stop" if getattr(strat, "dd_stopped", False) and not target else "sel.reason_dropped"
     for d in sorted(held - set(target) - strat.retry_sell - exiting, key=lambda x: x._name):
         out.append({"symbol": d._name, "side": "sell", "size": shares(d),
-                    "ref_price": float(d.close[0] * d.ratio[0]), "reason": ("sel.reason_dropped", {})})
+                    "ref_price": float(d.close[0] * d.ratio[0]), "reason": (reason_key, {})})
     if not target:                     # 空仓月份、大盘空仓：只卖不买
         return out
     per_name = strat.broker.getvalue() * strat.p.position_pct / 100 / len(target)

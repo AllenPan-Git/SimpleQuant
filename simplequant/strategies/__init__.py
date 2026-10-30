@@ -85,6 +85,10 @@ def describe_selection(spec: dict, lang: str = "zh") -> str:
             text += f"\n【{tr(key, lang)}】" + joiner.join(describe_condition(c, lang) for c in block["conditions"])
     if (market.get("sell") or {}).get("conditions") and not (market.get("buy") or {}).get("conditions"):
         text += f"\n【{tr('sel.market_back', lang)}】" + tr("sel.market_back_auto", lang)
+    from ..stocks.selection import uses_drawdown_stop, drawdown_stop_threshold
+    if uses_drawdown_stop(spec):
+        dd_pct = drawdown_stop_threshold(spec) * 100
+        text += f"\n【{tr('sel.dd_stop_title', lang)}】" + tr("sel.dd_stop_desc", lang, dd=f"{dd_pct:g}")
     if UNIVERSES[spec["universe"]].get("kind") == "cb":          # 可转债：价格上限等条件
         from ..bonds.panel import CB_FILTERS, cb_filters
         flt = cb_filters(spec.get("filters"))

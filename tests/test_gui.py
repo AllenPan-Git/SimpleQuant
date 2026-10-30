@@ -931,6 +931,31 @@ async def test_selection_market_condition(user: User):
 
 
 @needs_stocks
+async def test_selection_drawdown_stop_ui(user: User):
+    """回撤停手：在选股页添加回撤停手（15%），写进策略并在策略描述中展示，亦可删除"""
+    from gui.pages.selection import current_spec
+    SP = await _open_selection(user, "bt")
+    SP["dd_stop"] = 0
+    await settle()
+    assert "drawdown_stop" not in current_spec(SP)
+
+    # 风格对齐：未设置时展示“添加回撤停手”按钮
+    user.find(marker="add:dd_stop").click()
+    await settle()
+
+    user.find(marker="sp_dd_stop").elements.pop().set_value(15)
+    await settle()
+    spec = current_spec(SP)
+    assert spec.get("drawdown_stop") == 15.0
+    await user.should_see("【回撤停手】")
+
+    # 点击删除按钮移除停手条件
+    user.find(marker="del:dd_stop").click()
+    await settle()
+    assert "drawdown_stop" not in current_spec(SP)
+
+
+@needs_stocks
 async def test_selection_risk_screen_needs_data(user: User):
     """排雷条件：填了值才写进策略；本机没有排雷数据时提示先下载、回测报错，不当成不限；数据页估计要下几天"""
     from gui.pages.selection import current_spec

@@ -285,6 +285,32 @@ def sel_output(**kw):
     return {**base, **kw}
 
 
+def test_selection_spec_new_fields_roundtrip():
+    from simplequant.llm import nl
+    out = {
+        "name": "?????", "understood": "...", "unsupported": [], "universe": "hs300",
+        "factors": [{"key": "ep", "direction": "higher", "weight": 1}],
+        "weighting": "manual", "top_n": 10, "keep_n": 15, "rebalance": "monthly",
+        "rebalance_days": 20, "skip_months": [1, 4], "drawdown_stop": 15.0,
+        "exclude_st": True, "min_list_days": 250, "neutralize_industry": False,
+        "neutralize_size": False, "position_pct": 95, "max_price": 30.0,
+        "mcap_rank_min": 50, "mcap_rank_max": 300, "min_mcap_pct": 10.0,
+        "max_debt_ratio": 60.0, "min_current_ratio": 1.5, "min_cfo_np": 0.8
+    }
+    spec = nl.to_selection_spec(out)
+    assert spec["keep_n"] == 15
+    assert spec["skip_months"] == [1, 4]
+    assert spec["drawdown_stop"] == 15.0
+    assert spec["filters"]["max_price"] == 30.0
+    assert spec["filters"]["mcap_rank_min"] == 50.0
+    assert spec["filters"]["min_mcap_pct"] == 10.0
+    assert spec["filters"]["max_debt_ratio"] == 60.0
+    from_spec = nl.from_selection_spec(spec)
+    assert from_spec["keep_n"] == 15
+    assert from_spec["max_price"] == 30.0
+    assert from_spec["min_mcap_pct"] == 10.0
+
+
 def test_selection_schema_is_strict_mode_compatible():
     from simplequant.llm import selection_schema
     from simplequant.stocks import FACTORS

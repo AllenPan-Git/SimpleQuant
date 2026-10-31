@@ -120,6 +120,19 @@ def factor_dir(tmp_path, monkeypatch):
     cf.load_all()
 
 
+def test_selection_plan_v12_buffer_and_stock_filters():
+    from simplequant import plan
+    from simplequant.engine import BrokerConfig
+    spec_buf = {"kind": "selection", "universe": "hs300", "factors": [{"key": "ep", "weight": 1.0}], "top_n": 10, "keep_n": 15}
+    spec_flt = {"kind": "selection", "universe": "hs300", "factors": [{"key": "ep", "weight": 1.0}], "top_n": 10, "filters": {"max_price": 30.0}}
+    assert plan.selection_version(spec_buf) == 12
+    assert plan.selection_version(spec_flt) == 12
+    p = plan.make_selection_plan("test_v12", spec_buf, "2023-01-01", "2023-12-31", "2022-01-01", BrokerConfig())
+    loaded = plan.loads(plan.dumps(p))
+    assert loaded["version"] == 12
+    assert loaded["strategy"]["keep_n"] == 15
+
+
 def test_selection_round_trip_with_custom_factor(factor_dir):
     key = factor_dir.save_factor("简单股息率", DY, desc="过去一年")
     spec = {**SEL, "factors": SEL["factors"] + [{"key": key, "weight": 2.0, "direction": 1}], "name": "x"}

@@ -122,6 +122,7 @@ TEXT = {
     "sel.kind": L("选股", "Stock selection"),
     "sel.factors": L("因子", "Factors"),
     "sel.top_n": L("持有前 {n} 只", "hold top {n}"),
+    "sel.keep_n": L("（保留前 {m} 名）", " (keep top {m})"),
     "sel.every_n": L("每 {n} 个交易日", "every {n} trading days"),
     "sel.skip_months": L("{months} 月空仓", "in cash in months {months}"),
     "sel.market_out": L("大盘空仓条件", "Market exit"),

@@ -53,7 +53,7 @@ def check_selection_exportable(spec: dict, platform: str, follow: bool = False, 
                                 "暂不支持在平台上计算；可以用「按名单调仓」导出",
                                 f"Financial factors ({', '.join(fin)}) differ across platforms and can't be computed "
                                 "there yet; use the 'follow picks' export instead"), lang))
-    from ..stocks.selection import needs_risk, market_errors
+    from ..stocks.selection import needs_risk, market_errors, uses_stock_filters
     if market_errors(spec, lang):
         raise ValueError(pick(L("大盘条件只能用收盘价算的指标（均线、MACD、RSI 等）", "Market conditions can only use "
                                 "close-based indicators (MA, MACD, RSI, ...)"), lang))
@@ -61,6 +61,11 @@ def check_selection_exportable(spec: dict, platform: str, follow: bool = False, 
         raise ValueError(pick(L("用到了排雷因子或排雷条件（资产负债率等），各平台的财务数据口径不同，暂不支持在平台上计算；"
                                 "可以用「按名单调仓」导出",
                                 "Risk factors or screens (debt ratio etc.) differ across platforms and can't be computed "
+                                "there yet; use the 'follow picks' export instead"), lang))
+    if uses_stock_filters(spec):
+        raise ValueError(pick(L("用到了股价上限或市值筛选条件（各平台的前复权价格与总市值口径不同），暂不支持在平台上计算；"
+                                "可以用「按名单调仓」导出",
+                                "Stock price cap or market-cap filters differ across platforms and can't be computed "
                                 "there yet; use the 'follow picks' export instead"), lang))
     if (spec.get("neutralize") or {}).get("industry"):
         raise ValueError(pick(L("行业中性化采用 BaoStock 行业分类，与各平台不同，暂不支持在平台上计算，请使用「按名单调仓」方式导出",
@@ -165,7 +170,7 @@ def _dict_lines(d: dict) -> str:
 
 def _settings(platform, spec, start, end, panel_start, broker, follow, expected) -> str:
     keep = ("cash", "commission", "min_commission", "stamp_duty", "slippage")
-    spec = {k: spec[k] for k in ("kind", "universe", "factors", "top_n", "rebalance", "skip_months", "market", "drawdown_stop",
+    spec = {k: spec[k] for k in ("kind", "universe", "factors", "top_n", "keep_n", "rebalance", "skip_months", "market", "drawdown_stop",
                                  "filters", "position_pct", "weighting", "ic_lookback", "neutralize") if k in spec}
     exp = {str(d)[:10]: [platform_code(c, "stock", platform) for c in codes] for d, codes in (expected or {}).items()}
     return f'''
@@ -605,5 +610,6 @@ def selection_platform_script(platform: str, spec: dict, broker: dict, start: st
     check_selection_exportable(spec, platform, follow, lang)
     return (_header(platform, title, spec, start, end, broker, follow, expected, lang)
             + _settings(platform, spec, start, end, panel_start, broker, follow, expected)
-            + (SIGNAL_TITLE + platforms._core_source() if selection_core.sel_market_on(spec) and not follow else "")
+            + (SIGNAL_TITLE + platforms._core_source()
+               if (selection_core.sel_market_on(spec) or selection_core.uses_drawdown_stop(spec)) and not follow else "")
             + CORE_TITLE + _core_source() + CHUNKS + ADAPTERS[platform])

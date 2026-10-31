@@ -122,6 +122,15 @@ def test_single_asset_daily_progression_equals_full_backtest():
 
 
 
+def test_selection_dca_pending_signals(tmp_paper_root):
+    from simplequant.paper import PaperAccount
+    from simplequant.engine import BrokerConfig
+    broker = BrokerConfig(cash=100_000, contribution=10_000, contribution_freq="monthly")
+    spec = {"kind": "selection", "universe": "hs300", "factors": [{"key": "ep", "weight": 1.0}], "top_n": 5, "rebalance": "monthly", "position_pct": 95}
+    acc = PaperAccount(id="test_dca_id", name="sel_dca", kind="selection", universe="hs300", spec=spec, broker=broker, start="2023-01-01")
+    assert acc.broker.contribution == 10_000
+
+
 def test_dca_account_daily_progression_equals_full_backtest():
     """定投账户：每月追加资金、估值定投的储备利息，逐日推进与一次性回测一致；净值记录带累计投入"""
     df = make_prices(n=400)

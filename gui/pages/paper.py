@@ -161,7 +161,8 @@ def _new_account_form(PP, run_accounts, redraw):
             PP[f"{bkey}_from"] = chosen
             make_broker = broker_settings(bkey, default_preset=preset0, default_cash=cash0, show_t1=single,
                                           show_dividend=single,   # 选股账户的分红处理跟随选股策略
-                                          show_contribution=single)
+                                          show_contribution=True,
+                                          contribution_help=None if single else "sp.contribution_help")
             with ui.row().classes("w-full items-end gap-3"):
                 name = ui.input(t("pp.name"), value=PP["name"], placeholder=t("pp.name_ph")) \
                     .props("outlined dense").classes("grow").mark("pp_name")

@@ -5,6 +5,21 @@
 
 Changes in each release. `tools/release.py` copies the matching section into the GitHub release notes.
 
+## 2.2.0（2026-10-31）
+
+### 更新内容
+- 新增：多因子选股支持「调仓缓冲区（Buffer Rule）」。在选股页「选股与调仓」区域设置「保留前 M 名」（M >= N，默认留空为不设）：已持有的标的只要在下一期综合得分排名前 M 名即继续持有，跌出前 M 名才卖出，空出的名额从前 N 名中按得分依序补齐，有效降低边缘标的调仓磨损与换手率。回测引擎、平台导出（聚宽 / 掘金 / QMT）及独立 Python 脚本均完整支持并逐期名单严格对齐
+- 新增：股票选股支持「最高股价」与「市值排名区间 / 排除微盘百分位」过滤。在选股页新增股票过滤条件：可设置最高股价（按不复权收盘价过滤，避免小资金因买不起高价股整手而闲置资金）、市值排名区间（从最小 = 1 起算）及排除市值最小百分位（如排除后 10% 微盘股）。底层在每日合格掩码计算，支持回测与脚本导出
+- 新增：多因子选股模拟账户支持「定投（每期追加资金）」。新建选股模拟账户时支持设置每期追加金额与频率；底层自动识别追加资金到账日，并在调仓日前夕查看「次日待执行信号」时精准计算定投资金分配与加仓/补买股数
+- 新增：AI 自然语言选股生成器补齐风控与过滤规则。选股 Schema 与提示词支持自动解析与增量修改保留前 M 名（keep_n）、空仓月份（skip_months）、回撤停手（drawdown_stop）、最高股价与市值排名条件
+- 方案文件升级：使用了调仓缓冲区或股价/市值过滤的选股方案，导出为 .sqplan 方案文件时版本升级为 12（旧版软件导入提示更新），避免低版本误读忽略条件
+
+### Changes
+- New: rebalance buffer rule for multi-factor selection. In the Selection & rebalancing section of the Stock selection page, set "Keep within top M" (M >= N, default empty means disabled): existing holdings still ranked within the top M composite scores are kept, only sold when they fall outside top M, and remaining slots are filled from the top N in score order, significantly reducing turnover and trading friction. Supported across backtesting, platform export (JoinQuant / MyQuant / QMT), and standalone Python scripts with strictly aligned periodic lists
+- New: maximum share price and market-cap rank / percentile filters for stock selection. Set maximum unadjusted share price (avoiding idle cash in small portfolios due to 100-share lots of high-priced stocks), market-cap rank ranges, and exclude smallest market-cap percentiles (e.g. skip bottom 10% micro caps). Evaluated daily on eligible masks, fully supported in backtests and script exports
+- New: periodic cash contributions (DCA) for paper trading selection accounts. Create stock selection paper accounts with periodic contribution amounts and frequencies; arrival dates are recognized and next-day pending signal estimation accounts for incoming funds to size new and top-up buy orders
+- New: AI natural language selection generator updated with new risk control and filter fields. Selection schema and prompts support parsing and modifying buffer rules (keep_n), cash months (skip_months), drawdown stop (drawdown_stop), price caps, and market-cap rankings
+- Plan format updated: selection plans using rebalance buffers or stock price/market-cap filters export as version 12 .sqplan files (prompting updates in older software versions) to ensure reproducible backtests
 ## 2.1.0（2026-10-30）
 
 ### 更新内容

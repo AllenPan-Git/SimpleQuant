@@ -22,8 +22,9 @@ from simplequant.stocks import (StockStore, UNIVERSES, FACTORS, GROUPS, REBALANC
 from simplequant.stocks import custom_factors, panel_cache, universe as U, factors_for
 from simplequant.stocks import ml as ML
 from simplequant.stocks import mining as MN
-from simplequant.stocks.selection import panel_warmup_days, ic_history_short, skip_months, needs_risk, MARKET_INDS
-from simplequant.stocks.panel import RISK_FILTERS
+from simplequant.stocks.selection import (panel_warmup_days, ic_history_short, skip_months, needs_fin, needs_risk,
+                                          MARKET_INDS)
+from simplequant.stocks.panel import STOCK_FILTERS, RISK_FILTERS
 from simplequant.bonds.panel import CB_FILTERS, CB_DEFAULT_FILTERS
 from simplequant.stocks.store import DAILY_LIMIT
 from simplequant.system import open_folder
@@ -79,10 +80,12 @@ def sp_state() -> dict:
         "cf": {"key": None, "name": "", "code": "", "direction": 1, "desc": ""}, "cf_trial": None,
     })
     sp.setdefault("cf_ai", {"text": "", "base": False, "result": None})
+    sp.setdefault("keep_n", None)                   # 调仓缓冲区：保留前 M 名（None = 不设）
     sp.setdefault("market", empty_market())         # 大盘条件（界面里的条件带 _id）
     sp.setdefault("dd_stop", 0)                     # 净值回撤停手阈值（%）
     # 可转债的选股条件（价格上限等；None = 不限）；旧版保存的界面状态里没有这两项
     sp.setdefault("cbf", {k: v for k, v in CB_DEFAULT_FILTERS.items() if k in CB_FILTERS})
+    sp.setdefault("stockf", {k: None for k in STOCK_FILTERS})    # 股票的价格/市值条件（None = 不限）
     sp.setdefault("riskf", {k: None for k in RISK_FILTERS})      # 股票的排雷条件（None = 不限）
     sp["dl"].setdefault("with_risk", False)
     sp.setdefault("forms", {})
@@ -1252,10 +1255,14 @@ def current_spec(SP) -> dict:
     filters = {"exclude_st": bool(SP["excl_st"]) and not cb, "min_list_days": int(SP["min_list"])}
     if cb:
         filters.update({k: SP["cbf"].get(k) for k in CB_FILTERS})
-    else:                                   # 只写设了值的，没用排雷条件的策略与原来一字不差
+    else:                                   # 只写设了值的，没用排雷/价格/市值条件的策略与原来一字不差
+        filters.update({k: v for k, v in (SP.get("stockf") or {}).items() if v is not None})
         filters.update({k: v for k, v in (SP.get("riskf") or {}).items() if v is not None})
+    top_n = int(SP["top_n"])
+    keep_n = int(SP["keep_n"]) if SP.get("keep_n") not in (None, "", 0) else 0
     return {"kind": "selection", "universe": SP["universe"],
-            "factors": [dict(f) for f in SP["factors"]], "top_n": int(SP["top_n"]),
+            "factors": [dict(f) for f in SP["factors"]], "top_n": top_n,
+            **({"keep_n": keep_n} if keep_n > top_n else {}),
             "rebalance": SP["reb"] if SP["reb"] != "n" else int(SP["reb_n"]),
             **({"skip_months": sorted(SP["skip"])} if SP.get("skip") else {}),
             **({"market": m} if (m := market_spec(SP)) else {}),
@@ -1277,6 +1284,8 @@ def apply_spec(SP, spec: dict, name: str = ""):
     SP["factors"] = [{"key": f["key"], "weight": float(f.get("weight", 1)), "direction": int(f.get("direction", 1))}
                      for f in spec["factors"] if f["key"] in factors_for(kind)]   # 已删除的自定义因子跳过
     SP["top_n"] = int(spec["top_n"])
+    keep_n = int(spec["keep_n"]) if spec.get("keep_n") not in (None, "", 0) else 0
+    SP["keep_n"] = keep_n if keep_n > SP["top_n"] else None
     reb = spec.get("rebalance", "monthly")
     SP["reb"] = reb if reb in REBALANCE else "n"
     if reb not in REBALANCE:
@@ -1291,6 +1300,7 @@ def apply_spec(SP, spec: dict, name: str = ""):
     if kind == "cb":
         SP["cbf"] = {k: flt.get(k) for k in CB_FILTERS}
     else:
+        SP["stockf"] = {k: flt.get(k) for k in STOCK_FILTERS}
         SP["riskf"] = {k: flt.get(k) for k in RISK_FILTERS}
     SP["pos"] = int(spec.get("position_pct", 95))
     SP["weighting"] = spec.get("weighting", "manual")
@@ -1476,6 +1486,13 @@ def _backtest_form(SP, ctx, rebuild):
                       on_change=lambda e: set_sp("top_n", e.value, int)).props("outlined dense").classes("w-32") \
                 .mark("sp_top_n")
 
+            def on_keep(e):
+                SP["keep_n"] = int(e.value) if e.value not in (None, "") else None
+                changed()
+            ui.number(t("sp.keep_n"), value=SP.get("keep_n"), min=1, max=200, step=1, precision=0,
+                      on_change=on_keep).props("outlined dense clearable").classes("w-36") \
+                .tooltip(t("sp.keep_n_help")).mark("sp_keep_n")
+
             def on_reb(e):
                 SP["reb"] = e.value
                 reb_n.set_enabled(e.value == "n")
@@ -1497,6 +1514,14 @@ def _backtest_form(SP, ctx, rebuild):
                         .props("outlined dense clearable").classes("w-60") \
                         .tooltip(p(m["help"]) + t("cb.empty_no_limit")).mark(f"cb_{k}")
         if panel.kind == "stock":
+            with ui.row().classes("w-full items-center gap-4"):
+                for k, m in STOCK_FILTERS.items():
+                    def on_s(e, k=k):
+                        SP["stockf"][k] = float(e.value) if e.value not in (None, "") else None
+                        changed()
+                    ui.number(p(m["label"]), value=SP["stockf"].get(k), on_change=on_s) \
+                        .props("outlined dense clearable").classes("w-60") \
+                        .tooltip(p(m["help"]) + t("sp.stock_filter_note")).mark(f"sp_{k}")
             with ui.row().classes("w-full items-center gap-4"):
                 for k, m in RISK_FILTERS.items():
                     def on_r(e, k=k):
@@ -1625,7 +1650,7 @@ def _backtest_form(SP, ctx, rebuild):
         run_btn.set_enabled(has)
         exp_btn.set_enabled(has)
         fin_warn.clear()
-        if not panel.has_fin and any(FACTORS[f["key"]].get("requires_fin") for f in SP["factors"]):
+        if not panel.has_fin and needs_fin(spec):
             with fin_warn:
                 notice(t("sp.need_fin"), "warning", "warning")
         if not panel.div_codes and any(FACTORS[f["key"]].get("requires_div") for f in SP["factors"]):

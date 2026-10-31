@@ -417,14 +417,23 @@ def sel_scores(spec, data, mask):
     return total / wsum if wsum else np.full(mask.shape[1], NAN)
 
 
-def sel_pick(spec, data, mask, codes):
+def sel_pick(spec, data, mask, codes, prev_picks=None):
     """信号日 T 选出的股票（得分从高到低）；可选股票不足 top_n 时返回 None（本期不调仓）"""
     score = sel_scores(spec, data, mask)
     top_n = int(spec["top_n"])
+    keep = spec.get("keep_n")
+    keep_n = max(top_n, int(keep)) if keep not in (None, "", 0) else top_n
     valid = [j for j in range(len(codes)) if np.isfinite(score[j])]
     if len(valid) < top_n:
         return None
     valid.sort(key=lambda j: -score[j])
+    if keep_n > top_n and prev_picks:
+        held = set(prev_picks)
+        pool = [codes[j] for j in valid[:keep_n]]
+        kept = [c for c in pool if c in held][:top_n]
+        new = [c for c in pool if c not in held][:top_n - len(kept)]
+        rank_pos = dict((c, i) for i, c in enumerate(pool))
+        return sorted(kept + new, key=lambda c: rank_pos[c])
     return [codes[j] for j in valid[:top_n]]
 
 
@@ -483,7 +492,7 @@ def sel_overlap(picks, expected):
 
 
 # ============================== 取数与选股流程（平台只提供 api） ==============================
-def sel_select(spec, calendar, api, cache):
+def sel_select(spec, calendar, api, cache, prev_picks=None):
     """
     在信号日 T = calendar[-1] 收盘选股。api 由平台对接代码提供：
       api.members(day) -> 当天的指数成分股（平台代码）
@@ -522,7 +531,7 @@ def sel_select(spec, calendar, api, cache):
         is_st = np.asarray(api.st(codes, dates, full), dtype=bool)
     ipo = api.ipo(codes) if int(filters.get("min_list_days", 250)) else [None] * len(codes)
     mask = sel_mask(data, member, is_st, ipo, dates, filters)
-    return sel_pick(spec, data, mask, codes)
+    return sel_pick(spec, data, mask, codes, prev_picks=prev_picks)
 
 
 def sel_target(spec, calendar, today, start, api, cache, expected, follow, log, state=None, total_value=None):
@@ -531,6 +540,7 @@ def sel_target(spec, calendar, today, start, api, cache, expected, follow, log, 
     follow=True：不计算因子，直接按 SimpleQuant 回测的名单（expected）调仓
     """
     t = calendar[-1]
+    st = state if isinstance(state, dict) else {}
     if follow:
         picks = expected.get(t)
         if picks:
@@ -544,6 +554,7 @@ def sel_target(spec, calendar, today, start, api, cache, expected, follow, log, 
         if cash[-1]:
             if was:
                 return None              # 空仓期间不调仓（只重试之前卖不出的）
+            st["last_picks"] = []
             log("%s 满足大盘空仓条件，清仓 / market condition: selling all" % t)
             return []
         back = bool(was)
@@ -554,7 +565,6 @@ def sel_target(spec, calendar, today, start, api, cache, expected, follow, log, 
     if uses_drawdown_stop(spec) and total_value is not None and t >= start:
         ds = spec.get("drawdown_stop")
         max_dd = (float(ds) / 100.0) if not isinstance(ds, dict) else (float(ds.get("max_drawdown", 0)) / 100.0)
-        st = state if isinstance(state, dict) else {}
         peak = st.get("dd_peak", 0.0)
         stopped = st.get("dd_stopped", False)
         if peak <= 0:
@@ -566,6 +576,7 @@ def sel_target(spec, calendar, today, start, api, cache, expected, follow, log, 
         if not stopped:
             if dd >= max_dd:
                 st["dd_stopped"] = True
+                st["last_picks"] = []
                 log("%s 净值回撤达到 %.1f%%，触发回撤停手清仓 / drawdown stop-loss triggered" % (t, dd * 100))
                 return []
         else:
@@ -577,18 +588,20 @@ def sel_target(spec, calendar, today, start, api, cache, expected, follow, log, 
             else:
                 return None              # 停手期间不调仓
 
-    if state and state.get("dd_stopped"):
+    if st.get("dd_stopped"):
         return None                      # 仍处于回撤停手状态，不调仓
 
     if not back and not sel_is_rebalance(spec, calendar, today, start):
         return None
     if int(today[5:7]) in sel_skip_months(spec):
+        st["last_picks"] = []
         log("%s 下个交易日在空仓月份，清仓 / skip month, selling all" % t)
         return []
-    picks = sel_select(spec, calendar, api, cache)
+    picks = sel_select(spec, calendar, api, cache, prev_picks=st.get("last_picks"))
     if picks is None:
         log("%s 可选股票不足 %d 只，本期不调仓 / not enough eligible stocks" % (t, int(spec["top_n"])))
         return None
+    st["last_picks"] = list(picks)
     exp = expected.get(t)
     note = "" if exp is None else "；与 SimpleQuant 重合 %d/%d 只 (overlap)" % (sel_overlap(picks, exp), len(exp))
     log("%s 选股 / picks: %s%s" % (t, ", ".join(picks), note))

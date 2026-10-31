@@ -237,14 +237,23 @@ def selection_schema() -> dict:
         "factors": {"type": "array", "items": factor},
         "weighting": {"type": "string", "enum": list(WEIGHTING)},
         "top_n": {"type": "number"},
+        "keep_n": {"type": "number"},
         "rebalance": {"type": "string", "enum": ["monthly", "weekly", "days"]},
         "rebalance_days": {"type": "number"},
+        "skip_months": {"type": "array", "items": {"type": "integer"}},
+        "drawdown_stop": {"type": "number"},
         "exclude_st": {"type": "boolean"},
         "min_list_days": {"type": "number"},
         "neutralize_industry": {"type": "boolean"},
         "neutralize_size": {"type": "boolean"},
         "position_pct": {"type": "number"},
         "max_price": {"type": "number"},
+        "mcap_rank_min": {"type": "number"},
+        "mcap_rank_max": {"type": "number"},
+        "min_mcap_pct": {"type": "number"},
+        "max_debt_ratio": {"type": "number"},
+        "min_current_ratio": {"type": "number"},
+        "min_cfo_np": {"type": "number"},
     }
     return {"type": "object", "properties": props, "required": list(props), "additionalProperties": False}
 
@@ -272,18 +281,28 @@ Factor catalog (key: English / Chinese name):
 {cat}
 
 Conventions:
-- "cheap / low valuation / 低估值" → ep higher (and/or bp higher). "high ROE / quality / 高质量" → roe higher. "profitable growth / 成长" → np_yoy and/or rev_yoy higher.
-- "small caps / 小盘" → size lower; "large caps / 大盘" → size higher. "low volatility / 低波动" → vol60 lower. "low turnover / 冷门" → turn20 lower.
-- "short-term reversal / 超跌反弹" → ret20 lower (or ret5 lower). "momentum / 强者恒强" → mom_120_20 higher.
+- "cheap / low valuation / ???" ? ep higher (and/or bp higher). "high ROE / quality / ???" ? roe higher. "profitable growth / ??" ? np_yoy and/or rev_yoy higher.
+- "small caps / ??" ? size lower; "large caps / ??" ? size higher. "low volatility / ???" ? vol60 lower. "low turnover / ??" ? turn20 lower.
+- "short-term reversal / ????" ? ret20 lower (or ret5 lower). "momentum / ????" ? mom_120_20 higher.
 - direction is "higher" or "lower" (higher/lower factor values are better). weight defaults to 1; use larger weights only when the user stresses a factor.
-- weighting: "manual" unless the user asks to let the data decide weights ("按 IC 加权" → "ic", "按 ICIR" → "icir", "机器学习 / 模型合成 / 随机森林 / 梯度提升 / 岭回归 / K 近邻" → "ml"). With ic/icir/ml the directions are learned from past data. For "ml" the model is set in the form, not here.
+- weighting: "manual" unless the user asks to let the data decide weights ("? IC ??" ? "ic", "? ICIR" ? "icir", "???? / ???? / ???? / ???? / ??? / K ??" ? "ml"). With ic/icir/ml the directions are learned from past data. For "ml" the model is set in the form, not here.
 - rebalance: "monthly" by default; "weekly"; or "days" with rebalance_days = N for "every N trading days" (otherwise set rebalance_days to 20).
-- top_n default 10; "hold 20 stocks / 持有20只" → 20. exclude_st default true. min_list_days default 250 ("exclude new listings under a year").
-- "industry neutral / 行业中性 / 各行业分散" → neutralize_industry true. "size neutral / 市值中性" → neutralize_size true. Default false.
+- top_n default 10; "hold 20 stocks / ??20?" ? 20. keep_n: rebalance buffer ("???M? / ???M???? / ?????"); existing holdings still in the top keep_n (keep_n > top_n) are kept and only sold when they fall outside top keep_n; 0 if not requested.
+- skip_months: calendar months (1-12) to stay in cash ("1??4???" ? [1, 4]); [] if none.
+- drawdown_stop: portfolio max-drawdown stop-loss in % ("????15%???? / ??????15%" ? 15); 0 if none.
+- exclude_st default true. min_list_days default 250 ("exclude new listings under a year").
+- Stock filters (for stock universes; set to 0 when not requested):
+  - max_price: maximum unadjusted share price in CNY ("?????30? / ????30?" ? 30).
+  - mcap_rank_min, mcap_rank_max: market-cap rank range from smallest = 1 ("????50?300?" ? mcap_rank_min 50, mcap_rank_max 300; "?????100???" ? mcap_rank_max 100).
+  - min_mcap_pct: exclude the smallest N% of stocks by market cap ("??????10% / ??????10%" ? 10).
+  - max_debt_ratio: maximum debt-to-assets ratio in % ("???????60%" ? 60).
+  - min_current_ratio: minimum current ratio ("???????1.5" ? 1.5).
+  - min_cfo_np: minimum operating cash flow / net profit ("?????/??????0.8" ? 0.8).
+- "industry neutral / ???? / ?????" ? neutralize_industry true. "size neutral / ????" ? neutralize_size true. Default false.
 - position_pct default 95.
-- Convertible bonds ("可转债 / 转债 / convertible bonds") → universe cb, and only factors marked for convertible bonds. "双低 / double-low" → cb_double_low lower. "低价转债" → cb_price lower. "低溢价 / 低转股溢价率" → cb_premium lower. "接近债底 / 纯债溢价率低" → cb_bond_premium lower. "小规模转债" → cb_issue_size lower. "避开强赎 / 临近强赎" → cb_call_days lower. For cb set exclude_st false and min_list_days 0 unless asked. max_price: the price cap for cb ("价格低于 130 元" → 130); 0 keeps the default (130). For stock universes set max_price to 0.
+- Convertible bonds ("??? / ?? / convertible bonds") ? universe cb, and only factors marked for convertible bonds. "?? / double-low" ? cb_double_low lower. "????" ? cb_price lower. "??? / ??????" ? cb_premium lower. "???? / ??????" ? cb_bond_premium lower. "?????" ? cb_issue_size lower. "???? / ????" ? cb_call_days lower. For cb set exclude_st false and min_list_days 0 unless asked. max_price: the price cap for cb ("???? 130 ?" ? 130); 0 keeps the default (130).
 
-Be honest about limits: anything not expressible with this catalog and these settings (e.g. factors not listed such as dividend yield, analyst ratings, specific industries to include/exclude, stop-losses, market-timing overlays, universes other than those listed) goes into "unsupported" as short phrases written in {language} and is left out. Do not use a different factor as a stand-in for an unsupported one (e.g. never use ep in place of dividend yield); the user decides whether to add something else. If none of what the user asked for can be expressed (or the text is not a stock-picking idea at all), return an empty factors list and explain in "unsupported".
+Be honest about limits: anything not expressible with this catalog and these settings (e.g. factors not listed, analyst ratings, specific industries to include/exclude, per-stock stop-losses, universes other than those listed) goes into "unsupported" as short phrases written in {language} and is left out. Do not use a different factor as a stand-in for an unsupported one (e.g. never use ep in place of dividend yield); the user decides whether to add something else. If none of what the user asked for can be expressed (or the text is not a stock-picking idea at all), return an empty factors list and explain in "unsupported".
 Editing an existing strategy: if the message starts with "Current strategy", the text after "Change request" asks for changes to that strategy (e.g. "add low volatility", "hold 30 instead"). Start from the current strategy and change only what is asked; copy every other field unchanged, including factor weights and directions. Removing all factors is allowed only if the user asks for it.
 
 understood: one short paragraph in {language} restating the strategy you built (when editing, begin with what you changed). name: short name in {language}."""
@@ -296,12 +315,20 @@ def to_selection_spec(out: dict) -> dict:
                for f in out.get("factors") or [] if f.get("key") in FACTORS]
     reb = out.get("rebalance", "monthly")
     rebalance = int(out.get("rebalance_days") or 20) if reb == "days" else (reb if reb in ("monthly", "weekly") else "monthly")
+    top_n = int(round(out.get("top_n") or 10))
+    keep_n = min(200, int(round(out.get("keep_n") or 0)))
+    skip = sorted({int(m) for m in (out.get("skip_months") or [])
+                   if isinstance(m, (int, float)) and not isinstance(m, bool) and 1 <= int(m) <= 12})
+    dd_stop = float(out.get("drawdown_stop") or 0)
     return {
         "kind": "selection",
         "universe": out.get("universe") if out.get("universe") in UNIVERSES else "hs300",
         "factors": factors,
-        "top_n": int(round(out.get("top_n") or 10)),
+        "top_n": top_n,
+        **({"keep_n": keep_n} if keep_n > top_n else {}),
         "rebalance": rebalance,
+        **({"skip_months": skip} if skip else {}),
+        **({"drawdown_stop": dd_stop} if dd_stop > 0 else {}),
         "filters": _filters(out),
         "position_pct": float(out.get("position_pct") or 95),
         "weighting": out.get("weighting") if out.get("weighting") in WEIGHTING else "manual",
@@ -311,42 +338,59 @@ def to_selection_spec(out: dict) -> dict:
 
 def _filters(out: dict) -> dict:
     from ..stocks import universe as U
+    from ..stocks.panel import STOCK_FILTERS, RISK_FILTERS
     if U.kind(out.get("universe") or "") == "cb":
         from ..bonds.panel import cb_filters
         f = cb_filters({"min_list_days": int(out.get("min_list_days") or 0)})
         if out.get("max_price"):
             f["max_price"] = float(out["max_price"])
         return f
-    return {"exclude_st": bool(out.get("exclude_st", True)), "min_list_days": int(out.get("min_list_days") or 0)}
+    f = {"exclude_st": bool(out.get("exclude_st", True)), "min_list_days": int(out.get("min_list_days") or 0)}
+    for k in (*STOCK_FILTERS, *RISK_FILTERS):
+        v = out.get(k)
+        if v not in (None, "", 0, 0.0) and float(v) > 0:
+            f[k] = float(int(round(v)) if k in ("mcap_rank_min", "mcap_rank_max") else v)
+    return f
 
 
 def from_selection_spec(spec: dict) -> dict:
-    """选股策略描述 → 大模型输出格式（to_selection_spec 的逆）；用于「在当前方案基础上修改」"""
+    """?????? ? ????????to_selection_spec ??????????????????"""
     from ..stocks import FACTORS, universe as U
+    from ..stocks.panel import STOCK_FILTERS, RISK_FILTERS
+    from ..stocks.selection import keep_top_n, skip_months, uses_buffer
     reb = spec.get("rebalance", "monthly")
     flt = spec.get("filters") or {}
     neutral = spec.get("neutralize") or {}
+    is_cb = U.kind(spec.get("universe") or "") == "cb"
     return {
         "universe": spec.get("universe", "hs300"),
         "factors": [{"key": f["key"], "direction": "higher" if f.get("direction", 1) > 0 else "lower",
                      "weight": float(f.get("weight", 1))} for f in spec.get("factors") or [] if f["key"] in FACTORS],
         "weighting": spec.get("weighting", "manual"),
         "top_n": int(spec.get("top_n", 10)),
+        "keep_n": keep_top_n(spec) if uses_buffer(spec) else 0,
         "rebalance": reb if isinstance(reb, str) else "days",
         "rebalance_days": 20 if isinstance(reb, str) else int(reb),
+        "skip_months": skip_months(spec),
+        "drawdown_stop": float(spec.get("drawdown_stop") or 0),
         "exclude_st": bool(flt.get("exclude_st", True)),
         "min_list_days": int(flt.get("min_list_days") or 0),
         "neutralize_industry": bool(neutral.get("industry")),
         "neutralize_size": bool(neutral.get("size")),
         "position_pct": float(spec.get("position_pct", 95)),
-        "max_price": float(flt.get("max_price") or 0) if U.kind(spec.get("universe") or "") == "cb" else 0,
+        "max_price": float(flt.get("max_price") or 0),
+        **{k: (0 if is_cb else float(flt.get(k) or 0)) for k in (*STOCK_FILTERS, *RISK_FILTERS) if k != "max_price"},
     }
 
 
 def _merge_base(base: dict, spec: dict, out: dict) -> dict:
-    """修改模式：模型管不到的设置（IC 回看期、分红方式、可转债成交额下限等）沿用原方案"""
+    """??????????????IC ????????????????????????"""
     from ..stocks import universe as U
+    from ..stocks.panel import STOCK_FILTERS, RISK_FILTERS
     merged = {**base, **spec}
+    for k in ("keep_n", "skip_months", "drawdown_stop"):
+        if k in out and k not in spec:
+            merged.pop(k, None)
     if U.kind(base.get("universe") or "") == U.kind(spec["universe"]):
         flt = {**(base.get("filters") or {}), "min_list_days": spec["filters"]["min_list_days"]}
         if U.kind(spec["universe"]) == "cb":
@@ -354,9 +398,13 @@ def _merge_base(base: dict, spec: dict, out: dict) -> dict:
                 flt["max_price"] = float(out["max_price"])
         else:
             flt["exclude_st"] = spec["filters"]["exclude_st"]
+            for k in (*STOCK_FILTERS, *RISK_FILTERS):
+                if k in spec["filters"]:
+                    flt[k] = spec["filters"][k]
+                elif k in out:
+                    flt.pop(k, None)
         merged["filters"] = flt
     return merged
-
 
 def validate_selection(spec: dict, lang: str = "zh") -> list[str]:
     from ..i18n import tr

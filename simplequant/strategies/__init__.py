@@ -72,9 +72,12 @@ def describe_selection(spec: dict, lang: str = "zh") -> str:
             how = pick(MODELS[cfg["model"]], lang) + ("，" if lang == "zh" else ", ") +                 ("，" if lang == "zh" else ", ").join(f"{pick(PARAM_LABELS[k], lang)} {v:g}"
                                                      for k, v in cfg.items() if k != "model")
         facs = f"{names}（{how}）" if lang == "zh" else f"{names} ({how})"
+    from ..stocks.selection import keep_top_n, uses_buffer, uses_drawdown_stop, drawdown_stop_threshold
     neutral = [tr(f"sel.neutral_{k}", lang) for k, v in (spec.get("neutralize") or {}).items() if v]
+    top_text = tr("sel.top_n", lang, n=spec["top_n"]) + (
+        tr("sel.keep_n", lang, m=keep_top_n(spec)) if uses_buffer(spec) else "")
     text = (f"【{tr('sel.kind', lang)}】{pick(UNIVERSES[spec['universe']]['label'], lang)} · {reb_text} · "
-            + tr("sel.top_n", lang, n=spec["top_n"]) + f"\n【{tr('sel.factors', lang)}】{facs}")
+            + top_text + f"\n【{tr('sel.factors', lang)}】{facs}")
     if neutral:
         text += f"\n【{tr('sel.neutral', lang)}】" + sep.join(neutral)
     market = spec.get("market") or {}
@@ -85,7 +88,6 @@ def describe_selection(spec: dict, lang: str = "zh") -> str:
             text += f"\n【{tr(key, lang)}】" + joiner.join(describe_condition(c, lang) for c in block["conditions"])
     if (market.get("sell") or {}).get("conditions") and not (market.get("buy") or {}).get("conditions"):
         text += f"\n【{tr('sel.market_back', lang)}】" + tr("sel.market_back_auto", lang)
-    from ..stocks.selection import uses_drawdown_stop, drawdown_stop_threshold
     if uses_drawdown_stop(spec):
         dd_pct = drawdown_stop_threshold(spec) * 100
         text += f"\n【{tr('sel.dd_stop_title', lang)}】" + tr("sel.dd_stop_desc", lang, dd=f"{dd_pct:g}")
@@ -95,10 +97,10 @@ def describe_selection(spec: dict, lang: str = "zh") -> str:
         items = [f"{pick(m['label'], lang)} {flt[k]:g}" for k, m in CB_FILTERS.items() if flt.get(k) is not None]
         if items:
             text += f"\n【{tr('sel.filters', lang)}】" + sep.join(items)
-    else:                                                        # 股票：排雷条件（设了的才写）
-        from ..stocks.panel import RISK_FILTERS
+    else:                                                        # 股票：价格/市值条件与排雷条件（设了的才写）
+        from ..stocks.panel import STOCK_FILTERS, RISK_FILTERS
         flt = spec.get("filters") or {}
-        items = [f"{pick(m['label'], lang)} {float(flt[k]):g}" for k, m in RISK_FILTERS.items()
+        items = [f"{pick(m['label'], lang)} {float(flt[k]):g}" for k, m in {**STOCK_FILTERS, **RISK_FILTERS}.items()
                  if flt.get(k) not in (None, "")]
         if items:
             text += f"\n【{tr('sel.filters', lang)}】" + sep.join(items)

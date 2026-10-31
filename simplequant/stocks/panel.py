@@ -34,6 +34,34 @@ ENDGAME_DAYS = 30             # 没有 ST 记录、推不出整理期起点时�
                               # 新规下多出的 15 天股票本是 *ST，排除不误伤。例：天翔退 2021 年整理期 30 天、BaoStock 无 ST 记录）
 
 
+# 股票价格与市值筛选条件（选股条件里留空 = 不限；市值条件需要财务数据中的总股本计算总市值 mcap）。见 selection.eligible_mask
+STOCK_FILTERS = {
+    "max_price": {
+        "label": L("股价上限（元）", "Max share price (CNY)"),
+        "help": L("不复权收盘价高于该值的不选，避免小资金受 100 股整手限制无法买入高价股而导致资金闲置",
+                  "Skips stocks whose unadjusted close exceeds this, avoiding idle cash on 100-share lots"),
+        "requires_fin": False,
+    },
+    "mcap_rank_min": {
+        "label": L("市值排名起（名）", "Market-cap rank from"),
+        "help": L("按当天可选范围内总市值从大到小排名（1 为最大），排名数值小于该值的股票不选",
+                  "Ranked from largest (1) to smallest market cap among eligible stocks; smaller rank numbers are skipped"),
+        "requires_fin": True,
+    },
+    "mcap_rank_max": {
+        "label": L("市值排名止（名）", "Market-cap rank to"),
+        "help": L("按当天可选范围内总市值从大到小排名（1 为最大），排名数值大于该值的股票不选（例如设置 800 至 1800 可近似中证1000区间）",
+                  "Ranked from largest (1) to smallest market cap among eligible stocks; larger rank numbers are skipped"),
+        "requires_fin": True,
+    },
+    "min_mcap_pct": {
+        "label": L("剔除最小市值比例（%）", "Exclude smallest market-cap (%)"),
+        "help": L("按当天可选范围内总市值从小到大计算百分位，剔除市值最小的指定比例股票（例如填写 10 即剔除市值最小的 10% 股票）",
+                  "Excludes the bottom X% of eligible stocks by market cap on each trading day"),
+        "requires_fin": True,
+    },
+}
+
 # 排雷条件（选股条件里留空 = 不限；没有数据的股票一律不选）。见 selection.eligible_mask
 RISK_FILTERS = {
     "max_debt_ratio": {"label": L("资产负债率上限（%）", "Max debt ratio (%)"),

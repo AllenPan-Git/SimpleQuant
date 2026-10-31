@@ -552,9 +552,8 @@ def selection_script(spec: dict, broker: dict, start: str, project_dir: str, tit
     :param exe: 打包版 SimpleQuant 可执行文件的路径；给出时说明改为用它运行（自带引擎，不需要装 Python）
     """
     from ..stocks import FACTORS
-    from ..stocks.selection import panel_warmup_days, needs_risk
-    needs_fin = any(FACTORS.get(f["key"], {}).get("requires_fin") for f in spec["factors"]) or \
-        bool((spec.get("neutralize") or {}).get("size"))
+    from ..stocks.selection import panel_warmup_days, needs_fin as _needs_fin, needs_risk
+    needs_fin = _needs_fin(spec)
     needs_div = spec.get("dividend") == "cash" or \
         any(FACTORS.get(f["key"], {}).get("requires_div") for f in spec["factors"])
     if exe:

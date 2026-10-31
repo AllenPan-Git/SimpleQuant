@@ -197,6 +197,7 @@ class Schedule:
     scores: dict                    # 调仓日 -> {代码: 得分}
     skipped: list = field(default_factory=list)   # 可选股票不足而跳过的调仓日
     ml: dict | None = None          # 机器学习合成：训练信息与样本外 IC（ml.ml_scores / ml.summary）
+    candidates: dict = field(default_factory=dict)  # 缓冲区模式：调仓日 -> [(代码, 得分)]（前 keep_n 名）
 
 
 def effective_filters(panel, spec: dict) -> dict:
@@ -205,6 +206,43 @@ def effective_filters(panel, spec: dict) -> dict:
         from ..bonds.panel import cb_filters
         return cb_filters(spec.get("filters"))
     return {**DEFAULT_FILTERS, **(spec.get("filters") or {})}
+
+
+def keep_top_n(spec: dict) -> int:
+    """调仓保留名次 M（缓冲区：前 N 名买入，跌出前 M 名才卖出；未设置或 M <= N 时等于 top_n）"""
+    top_n = int(spec.get("top_n") or 10)
+    keep = spec.get("keep_n")
+    return max(top_n, int(keep)) if keep not in (None, "", 0) else top_n
+
+
+def uses_buffer(spec: dict) -> bool:
+    """是否启用了调仓缓冲区（keep_n > top_n）"""
+    return keep_top_n(spec) > int(spec.get("top_n") or 10)
+
+
+def uses_stock_filters(spec: dict) -> list[str]:
+    """设了值的股票价格/市值筛选条件（可转债池忽略）"""
+    if spec.get("universe") == "cb":
+        return []
+    from .panel import STOCK_FILTERS
+    flt = spec.get("filters") or {}
+    return [k for k in STOCK_FILTERS if flt.get(k) not in (None, "")]
+
+
+def uses_mcap_filters(spec: dict) -> list[str]:
+    """设了值的股票市值筛选条件（需要财务数据中的总股本计算 mcap）"""
+    if spec.get("universe") == "cb":
+        return []
+    from .panel import STOCK_FILTERS
+    flt = spec.get("filters") or {}
+    return [k for k, m in STOCK_FILTERS.items() if m.get("requires_fin") and flt.get(k) not in (None, "")]
+
+
+def needs_fin(spec: dict) -> bool:
+    """选股策略是否需要财务数据：用到财务因子、市值中性化或市值筛选条件"""
+    return (any(F.FACTORS.get(f["key"], {}).get("requires_fin") for f in spec.get("factors", []))
+            or bool((spec.get("neutralize") or {}).get("size"))
+            or bool(uses_mcap_filters(spec)))
 
 
 def uses_risk_filters(spec: dict) -> list[str]:
@@ -216,12 +254,42 @@ def uses_risk_filters(spec: dict) -> list[str]:
 
 def needs_risk(spec: dict) -> bool:
     """选股策略要不要排雷数据：用到排雷因子（含用到排雷字段的自定义因子）或设了排雷条件"""
-    return bool(uses_risk_filters(spec)) or         any(F.FACTORS.get(f["key"], {}).get("requires_risk") for f in spec.get("factors", []))
+    return bool(uses_risk_filters(spec)) or \
+        any(F.FACTORS.get(f["key"], {}).get("requires_risk") for f in spec.get("factors", []))
+
+
+def apply_stock_filters(panel, mask: pd.DataFrame, filters: dict) -> pd.DataFrame:
+    """在基础可选范围 mask 上应用股票的股价上限与市值排名/百分位过滤（仅按当天基础可选范围内的股票排名）"""
+    if getattr(panel, "kind", "stock") != "stock":
+        return mask
+    from .panel import STOCK_FILTERS
+    has_mcap_flt = any(filters.get(k) not in (None, "") for k, m in STOCK_FILTERS.items() if m.get("requires_fin"))
+    if has_mcap_flt:
+        if not getattr(panel, "has_fin", False) or "mcap" not in panel.fields:
+            raise ValueError(pick(L("用到了市值筛选条件，需要先在「数据」标签页下载财务数据",
+                                    "Market-cap filters need the financial data; download it on the Data tab first")))
+        mcap = panel["mcap"].where(mask)
+        r_min, r_max = filters.get("mcap_rank_min"), filters.get("mcap_rank_max")
+        if r_min not in (None, "") or r_max not in (None, ""):
+            rk = mcap.rank(axis=1, ascending=False, method="min")
+            if r_min not in (None, ""):
+                mask = mask & (rk >= float(r_min)).fillna(False)
+            if r_max not in (None, ""):
+                mask = mask & (rk <= float(r_max)).fillna(False)
+        min_pct = filters.get("min_mcap_pct")
+        if min_pct not in (None, "") and float(min_pct) > 0:
+            pct_rk = mcap.rank(axis=1, ascending=True, pct=True) * 100.0
+            mask = mask & (pct_rk > float(min_pct)).fillna(False)
+    max_p = filters.get("max_price")
+    if max_p not in (None, ""):
+        mask = mask & (panel["raw_close"] <= float(max_p)).fillna(False)
+    return mask
 
 
 def eligible_mask(panel, filters: dict) -> pd.DataFrame:
     """可选范围：成分股、正常交易、非 ST、上市天数，加上品种自己的条件（可转债的价格上限等；值为空表示不限）"""
     mask = panel.eligible(bool(filters.get("exclude_st")), int(filters.get("min_list_days") or 0))
+    mask = apply_stock_filters(panel, mask, filters)
     from .panel import RISK_FILTERS
     extra = getattr(panel, "extra_filters", None) or {}
     lacking = [k for k in RISK_FILTERS if filters.get(k) not in (None, "") and k not in extra]
@@ -275,18 +343,36 @@ def build_schedule(panel, spec: dict, start=None, next_days=None, cache: dict | 
         score = F.composite(panel, spec["factors"], mask, weighting=spec.get("weighting", "manual"),
                             neutral=spec.get("neutralize"), horizon=horizon,
                             lookback=int(spec.get("ic_lookback", 252)), cache=sub)
+    keep_n = keep_top_n(spec)
+    prev_picks = set()
+    candidates = {}
     for d in dates:
         if d in to_cash or (cash is not None and cash[d]):
             picks[d] = []
+            prev_picks = set()
             continue
         row = score.loc[d].dropna()
         if len(row) < top_n:
             skipped.append(d)
             continue
-        best = row.sort_values(ascending=False).head(top_n)
+        ordered = row.sort_values(ascending=False)
+        if keep_n > top_n:
+            pool = list(ordered.head(keep_n).index)
+            candidates[d] = list(ordered.head(keep_n).items())
+            if prev_picks:
+                kept = [c for c in pool if c in prev_picks][:top_n]
+                new = [c for c in pool if c not in prev_picks][:top_n - len(kept)]
+                rank_pos = {c: i for i, c in enumerate(pool)}
+                chosen = sorted(kept + new, key=lambda c: rank_pos[c])
+                best = row.loc[chosen]
+            else:
+                best = ordered.head(top_n)
+        else:
+            best = ordered.head(top_n)
         picks[d] = list(best.index)
         scores[d] = best.to_dict()
-    return Schedule(picks=picks, scores=scores, skipped=skipped, ml=ml_info)
+        prev_picks = set(picks[d])
+    return Schedule(picks=picks, scores=scores, skipped=skipped, ml=ml_info, candidates=candidates)
 
 
 def pick_details(panel, spec: dict, date, codes: list[str], cache: dict | None = None) -> dict:
@@ -356,6 +442,8 @@ class SelectionStrategy(bt.Strategy):
               ("dividends", None),        # 现金分红模式：{日期: [(代码, 每股现金, 每股送股, 每股转增)]}
               ("exit_next", ()),          # 下一个开盘必须卖出的代码（模拟盘的明日信号）
               ("contributions", None),    # 定投：{日期: 追加金额}
+              ("top_up", False),          # 定投模式开关（含刚开户尚未跨月已有设定追加金额的情况）
+              ("top_n", 10),
               ("max_drawdown", 0.0),      # 回撤停手阈值（小数，如 0.15 = 15%，0 为不启用）
               ("recovery_hit", None))     # 大盘恢复命中日历字典 {pd.Timestamp: bool}
 
@@ -368,6 +456,7 @@ class SelectionStrategy(bt.Strategy):
         self.raw_shares = {}
         self.order_records, self.trade_records, self.logs = [], [], []
         self.picks = self.p.schedule.picks
+        self.candidates = getattr(self.p.schedule, "candidates", None) or {}
         self.div_events = {dte: [(self.by_name[c], *v) for c, *v in evs if c in self.by_name]
                            for dte, evs in (self.p.dividends or {}).items()}
         self.buy_date = {}             # 持仓的买入日期（算红利税的持股期限）
@@ -375,7 +464,7 @@ class SelectionStrategy(bt.Strategy):
         self.div_cash = self.div_tax = 0.0
         self.div_applied = set()       # (代码, 日期)：实际碰上了的除权除息
         self.flows = dict(self.p.contributions or {})
-        self.top_up = bool(self.flows)  # 定投：调仓日把现金补到继续入选的持仓上
+        self.top_up = bool(self.flows) or bool(self.p.top_up)  # 定投：调仓日把现金补到继续入选的持仓上
         self.contributed = 0.0
         self.new_cash = 0.0            # 本次开盘前刚到账的追加资金（还没算进 getvalue()）
         self.max_drawdown = float(self.p.max_drawdown or 0.0)
@@ -411,6 +500,18 @@ class SelectionStrategy(bt.Strategy):
                     self.log("sel.dd_resume", date=str(d.date()), val=f"{val:,.2f}")
 
         if not self.dd_stopped and d in self.picks:
+            if self.max_drawdown > 0 and d in self.candidates and self.picks[d]:
+                top_n = int(self.p.top_n)
+                cands = self.candidates[d]
+                pool = [c for c, _ in cands]
+                held_codes = {x._name for x in self._held() - self.retry_sell}
+                kept = [c for c in pool if c in held_codes][:top_n]
+                new = [c for c in pool if c not in held_codes][:top_n - len(kept)]
+                rank_pos = {c: i for i, c in enumerate(pool)}
+                chosen = sorted(kept + new, key=lambda c: rank_pos[c])
+                score_map = dict(cands)
+                self.picks[d] = chosen
+                self.p.schedule.scores[d] = {c: float(score_map[c]) for c in chosen}
             self.target = self.picks[d]
 
     def _held(self):
@@ -657,10 +758,17 @@ def run_selection(panel, spec: dict, broker: BrokerConfig | None = None, schedul
         if allow_empty:            # 模拟盘刚开户、还没到第一个调仓日（或只碰上空仓月份）：资产不变，没有信号
             return _flat_result(panel, broker, start, schedule)
         raise ValueError("no rebalance date had enough eligible stocks / 没有任何调仓日有足够的可选股票")
-    codes = sorted({c for p in schedule.picks.values() for c in p})
+    top_n = int(spec["top_n"])
+    codes = sorted({c for p in schedule.picks.values() for c in p}
+                   | {c for items in (getattr(schedule, "candidates", None) or {}).values() for c, _ in items[:top_n]})
     cash_div = spec.get("dividend") == "cash"
     div_codes = {c for c in codes if c in panel.div_codes} if cash_div else set()
     flows = contribution_on_days(panel.calendar, broker, start)
+    next_cash = 0.0
+    if broker.contribution > 0 and next_days is not None and len(next_days):
+        nxt = pd.DatetimeIndex(next_days)[0]
+        all_flows = contribution_on_days(panel.calendar.union(pd.DatetimeIndex([nxt])), broker, start)
+        next_cash = float(all_flows.get(nxt, 0.0))
 
     cerebro = bt.Cerebro(stdstats=False, cheat_on_open=True)
     cerebro.broker.set_checksubmit(False)          # 先卖后买：资金在成交时检查
@@ -678,6 +786,7 @@ def run_selection(panel, spec: dict, broker: BrokerConfig | None = None, schedul
                         lot_size=getattr(panel, "lot_size", 100), exit_next=_exit_next(panel, next_days),
                         dividends=_dividend_events(panel, div_codes) if cash_div else None,
                         contributions={pd.Timestamp(d): float(a) for d, a in flows.items()} or None,
+                        top_up=bool(broker.contribution > 0), top_n=top_n,
                         max_drawdown=max_dd, recovery_hit=rec_hit)
     cerebro.addanalyzer(EquityRecorder, _name="equity")
     strat = cerebro.run()[0]
@@ -701,7 +810,7 @@ def run_selection(panel, spec: dict, broker: BrokerConfig | None = None, schedul
         metrics["dividend_cash"], metrics["dividend_tax"] = strat.div_cash, strat.div_tax
     return SelectionResult(equity=equity, orders=orders, trades=trades, metrics=metrics, logs=strat.logs,
                            prices={}, schedule=schedule, names=panel.names,
-                           pending=_selection_pending(strat), positions=_selection_positions(strat),
+                           pending=_selection_pending(strat, next_cash), positions=_selection_positions(strat),
                            div_missing=sorted(set(codes) - div_codes) if cash_div else [],
                            div_patched=_patched_in(panel.div_patched, strat.div_applied) if cash_div else None)
 
@@ -749,9 +858,9 @@ def _selection_positions(strat) -> list[dict]:
     return out
 
 
-def _selection_pending(strat) -> list[dict]:
+def _selection_pending(strat, next_cash: float = 0.0) -> list[dict]:
     """
-    最后一天收盘后要在下一个开盘执行的交易：卖出落选（及此前卖不出的）持仓，等额买入新入选的股票。
+    最后一天收盘后要在下一个开盘执行的交易：卖出落选（及此前卖不出的）持仓，等额买入新入选的股票（定投时含对留存持仓补仓）。
     买入股数按最新收盘价估算，实际以开盘价计算（与回测一致）。
     """
     held = {d for d in strat.datas if strat.getposition(d).size > 0}
@@ -769,10 +878,33 @@ def _selection_pending(strat) -> list[dict]:
         return out
     target = [strat.by_name[c] for c in strat.target]
     reason_key = "sel.reason_dd_stop" if getattr(strat, "dd_stopped", False) and not target else "sel.reason_dropped"
+    freed = 0.0
     for d in sorted(held - set(target) - strat.retry_sell - exiting, key=lambda x: x._name):
+        freed += strat.getposition(d).size * d.close[0]
         out.append({"symbol": d._name, "side": "sell", "size": shares(d),
                     "ref_price": float(d.close[0] * d.ratio[0]), "reason": (reason_key, {})})
     if not target:                     # 空仓月份、大盘空仓：只卖不买
+        return out
+    if getattr(strat, "top_up", False):
+        per_name = (strat.broker.getvalue() + next_cash) * strat.p.position_pct / 100 / len(target)
+        gaps = {}
+        for d in target:
+            if d in strat.retry_sell or d._name in strat.p.exit_next:
+                continue
+            gap = per_name - (strat.getposition(d).size * d.close[0] if d in held else 0.0)
+            if gap > 0:
+                gaps[d] = gap
+        total = sum(gaps.values())
+        if not total:
+            return out
+        scale = min(1.0, (strat.broker.getcash() + next_cash + freed) / (1 + strat.p.cash_buffer) / total)
+        for d, gap in gaps.items():
+            raw_price = d.close[0] * d.ratio[0]
+            lots = int(gap * scale / (raw_price * (1 + strat.p.cash_buffer)) / strat.p.lot_size)
+            if lots < 1 and d in held:
+                continue
+            out.append({"symbol": d._name, "side": "buy", "size": float(lots * strat.p.lot_size),
+                        "ref_price": float(raw_price), "reason": ("sel.reason_picked", {})})
         return out
     per_name = strat.broker.getvalue() * strat.p.position_pct / 100 / len(target)
     for d in target:

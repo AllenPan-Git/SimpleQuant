@@ -492,3 +492,35 @@ def test_fast_feed_matches_backtrader_pandas_feed(panel, monkeypatch):
     assert fast.equity.equals(slow.equity) and fast.orders.equals(slow.orders) and fast.trades.equals(slow.trades)
     assert fast.logs == slow.logs and fast.positions == slow.positions and fast.pending == slow.pending
     assert any(k == "sel.sell_blocked" for _, k, _ in fast.logs)
+
+
+def test_selection_buffer_rule_and_stock_filters(panel):
+    from simplequant.stocks.selection import build_schedule, uses_buffer, keep_top_n, uses_stock_filters
+    spec_buf = {
+        "kind": "selection", "universe": "hs300",
+        "factors": [{"key": "ep", "weight": 1.0, "direction": 1}],
+        "top_n": 5, "keep_n": 8, "rebalance": 20, "position_pct": 95,
+    }
+    assert uses_buffer(spec_buf)
+    assert keep_top_n(spec_buf) == 8
+    start = str(panel.calendar[100].date())
+    sch_buf = build_schedule(panel, spec_buf, start=start)
+    assert len(sch_buf.picks) > 0
+    # Every pick list must have at most top_n items
+    for d, picks in sch_buf.picks.items():
+        assert len(picks) <= 5
+
+    panel.has_fin = True
+    panel.fields["mcap"] = panel["close"] * 1e8
+    spec_flt = {
+        "kind": "selection", "universe": "hs300",
+        "factors": [{"key": "ep", "weight": 1.0, "direction": 1}],
+        "top_n": 5, "rebalance": 20, "position_pct": 95,
+        "filters": {"max_price": 40.0, "min_mcap_pct": 10.0}
+    }
+    assert uses_stock_filters(spec_flt)
+    sch_flt = build_schedule(panel, spec_flt, start=start)
+    for d, picks in sch_flt.picks.items():
+        if picks:
+            prices = panel["raw_close"].loc[d, picks]
+            assert (prices <= 40.0).all()

@@ -109,7 +109,14 @@ def core_schedule(panel, ipo, spec, start):
         data["volume"] = np.where(panel.tradable.iloc[lo:i + 1].values, data["volume"], 0)
         mask = core.sel_mask(data, panel.member.iloc[lo:i + 1].values, panel.is_st.iloc[lo:i + 1].values,
                              [str(ipo[c].date()) for c in codes], days[lo:i + 1], filters)
-        picks = core.sel_pick(spec, data, mask, codes)
+        prev_picks = out.get(cal[i - 1], []) if i > 0 else []
+        # Find last non-empty rebalance picks
+        last_picks = None
+        for prev_d in reversed(list(out.keys())):
+            if out[prev_d]:
+                last_picks = out[prev_d]
+                break
+        picks = core.sel_pick(spec, data, mask, codes, prev_picks=last_picks)
         if picks is not None:
             out[cal[i]] = picks
     return out
@@ -142,6 +149,7 @@ SPECS = {
                   "market": {"sell": {"logic": "all", "conditions": [
                       {"left": {"ind": "close"}, "op": "<", "right": {"ind": "sma", "params": {"period": 20}},
                        "days": 2}]}}},
+    "buffer_rule": {"factors": [{"key": "ep", "weight": 1}], "top_n": 5, "keep_n": 8, "rebalance": 20},
     "market_cross": {"factors": [{"key": "ep", "weight": 1}, {"key": "ret5", "weight": 1, "direction": -1}],
                      "rebalance": "weekly", "skip_months": [4],
                      "market": {"sell": {"logic": "any", "conditions": [

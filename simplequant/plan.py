@@ -20,7 +20,7 @@ from . import __version__
 from .engine.runner import BrokerConfig
 
 FORMAT = "simplequant-plan"
-VERSION = 11                    # 能读取的最高版本
+VERSION = 12                    # 能读取的最高版本
 TIMING_VERSION = 1              # 择时方案仍写 1，旧版软件也能导入
 SELECTION_VERSION = 2           # 选股方案：0.2.4 及以前的版本会提示「请先更新软件」
 ML_VERSION = 3                  # 用机器学习合成因子的选股方案：0.3.0 及以前的版本会提示「请先更新软件」
@@ -32,6 +32,7 @@ RISK_VERSION = 8                # 选股用了排雷因子或排雷条件：1.6.
 MARKET_VERSION = 9              # 选股设了大盘条件（空仓 / 恢复）：1.6.2 及以前的版本会提示「请先更新软件」
 SEL_DCA_VERSION = 10            # 选股设了每期追加资金：1.7.0 及以前的版本会提示「请先更新软件」（它们读得到追加金额，但选股回测不用）
 DRAWDOWN_STOP_VERSION = 11      # 选股设了回撤停手：2.0.0 及以前的版本会提示「请先更新软件」
+BUFFER_FILTER_VERSION = 12      # 选股设了调仓缓冲区或最高股价 / 市值排名条件：2.1.0 及以前的版本会提示「请先更新软件」
 SUFFIX = ".sqplan"
 DOWNLOADABLE = ("akshare", "baostock")          # 导入时可以自动下载的数据源
 RESULT_KEYS = ("total_return", "benchmark_return", "max_drawdown", "trades")
@@ -88,7 +89,9 @@ def make_plan(name: str, spec: dict, metas: list, start, end, broker: BrokerConf
 
 def selection_version(spec: dict, broker: BrokerConfig | None = None) -> int:
     """旧版软件会忽略不认识的条件（结果悄悄不同），所以用到新功能就写更高的版本号"""
-    from .stocks.selection import needs_risk, sel_market_on, uses_drawdown_stop
+    from .stocks.selection import needs_risk, sel_market_on, uses_buffer, uses_drawdown_stop, uses_stock_filters
+    if uses_buffer(spec) or uses_stock_filters(spec):
+        return BUFFER_FILTER_VERSION
     if uses_drawdown_stop(spec):
         return DRAWDOWN_STOP_VERSION
     if broker is not None and broker.contribution:
@@ -212,7 +215,11 @@ def _check_selection(plan: dict):
             raise PlanError("plan.err_factor", name=k)
     plan["custom_factors"] = {k: custom[k] for k in (f["key"] for f in factors) if k in custom}
     try:
-        int(spec.get("top_n", 0))
+        top_n = int(spec.get("top_n", 0))
+        if spec.get("keep_n") not in (None, "", 0):
+            keep_n = int(spec["keep_n"])
+            if keep_n < top_n or keep_n > 200:
+                raise ValueError
         if not all(1 <= int(m) <= 12 for m in spec.get("skip_months") or ()):
             raise ValueError
     except (TypeError, ValueError):
@@ -319,14 +326,15 @@ def needs(plan: dict) -> dict:
     spec = plan["strategy"]
     if U.kind(spec["universe"]) == "cb":
         return {"fin": False, "div": False, "industry": False, "risk": False}
-    from .stocks.selection import uses_risk_filters
+    from .stocks.selection import uses_mcap_filters, uses_risk_filters
     custom = plan.get("custom_factors") or {}
 
     def flag(f, name, uses):
         d = custom.get(f["key"])
         return uses(d["code"]) if d else bool(FACTORS.get(f["key"], {}).get(name))
     neutral = spec.get("neutralize") or {}
-    return {"fin": any(flag(f, "requires_fin", cf.uses_fin) for f in spec["factors"]) or bool(neutral.get("size")),
+    return {"fin": any(flag(f, "requires_fin", cf.uses_fin) for f in spec["factors"]) or bool(neutral.get("size"))
+            or bool(uses_mcap_filters(spec)),
             "div": spec.get("dividend") == "cash" or any(flag(f, "requires_div", cf.uses_div) for f in spec["factors"]),
             "industry": bool(neutral.get("industry")),
             "risk": bool(uses_risk_filters(spec)) or any(flag(f, "requires_risk", cf.uses_risk) for f in spec["factors"])}

@@ -103,7 +103,7 @@ def refresh_selection_data(acc: PaperAccount, store, done: set | None = None, wo
                            calendar: pd.DatetimeIndex | None = None) -> None:
     """选股账户：增量更新股票池数据（同一次运行中同一个股票池只更新一次）"""
     from ..stocks import UNIVERSES, FACTORS, universe
-    from ..stocks.selection import panel_warmup_days, needs_risk
+    from ..stocks.selection import panel_warmup_days, needs_fin, needs_risk
     done = done if done is not None else set()
     if acc.universe in done:
         return
@@ -114,14 +114,13 @@ def refresh_selection_data(acc: PaperAccount, store, done: set | None = None, wo
         universe.update(acc.universe, first, today, workers=workers)
         done.add(acc.universe)
         return
-    first =store.load_index(UNIVERSES[acc.universe]["index"]).index[0].date().isoformat() \
+    first = store.load_index(UNIVERSES[acc.universe]["index"]).index[0].date().isoformat() \
         if (store.root / "index" / f"{UNIVERSES[acc.universe]['index']}.parquet").exists() else acc.start
     uni = store.update_universe(acc.universe, first, today)
     store.update_index(UNIVERSES[acc.universe]["index"], first, today)
     codes = sorted(uni["code"].unique())
     store.update(codes, first, today, workers=workers)
-    if any(FACTORS.get(f["key"], {}).get("requires_fin") for f in acc.spec["factors"]) or \
-            (acc.spec.get("neutralize") or {}).get("size"):
+    if needs_fin(acc.spec):
         store.update_fundamentals(codes, int(first[:4]) - 1, workers=workers)
     if (acc.spec.get("neutralize") or {}).get("industry"):
         store.update_industry()

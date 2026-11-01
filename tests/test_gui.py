@@ -1008,6 +1008,9 @@ async def test_selection_risk_screen_needs_data(user: User):
         pytest.skip("本机已有排雷数据")
     SP = await _open_selection(user)
     assert "max_debt_ratio" not in current_spec(SP)["filters"]
+    user.find(marker="sp_add_filter").click()           # 先打开菜单
+    user.find(marker="sp_add_filter:max_debt_ratio").click()
+    await settle()
     user.find(marker="sp_max_debt_ratio").elements.pop().set_value(60)
     await settle()
     assert current_spec(SP)["filters"]["max_debt_ratio"] == 60
@@ -1023,6 +1026,27 @@ async def test_selection_risk_screen_needs_data(user: User):
     user.find(marker="sp_with_risk").elements.pop().set_value(True)
     await settle()
     await user.should_see("排雷数据还需约")
+
+
+@needs_stocks
+async def test_selection_filter_add_edit_delete(user: User):
+    """过滤条件：没设的不画输入框；从「添加条件」菜单加上（填建议值）→ 改值 → 删除后策略里没有这一项"""
+    from gui.pages.selection import current_spec, sp_state
+    sp_state()["stockf"]["max_price"] = None
+    SP = await _open_selection(user, "bt")
+    await user.should_not_see(marker="sp_max_price")
+    user.find(marker="sp_add_filter").click()           # 先打开菜单
+    user.find(marker="sp_add_filter:max_price").click()
+    await settle()
+    assert current_spec(SP)["filters"]["max_price"] == 50
+    user.find(marker="sp_max_price").elements.pop().set_value(30)
+    await settle()
+    assert SP["stockf"]["max_price"] == 30 and current_spec(SP)["filters"]["max_price"] == 30
+    await user.should_not_see(marker="sp_add_filter:max_price")       # 已设的条件不再出现在菜单里
+    user.find(marker="sp_del_filter:max_price").click()
+    await settle()
+    assert "max_price" not in current_spec(SP)["filters"]
+    await user.should_not_see(marker="sp_max_price")
 
 
 @needs_stocks

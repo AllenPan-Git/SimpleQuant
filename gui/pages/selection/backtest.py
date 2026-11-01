@@ -35,6 +35,79 @@ from .broker import broker_default, broker_key
 
 
 # ================= 选股回测 =================
+# 过滤条件分组：(SP 里的键, 条件表, 组名, 提示后缀)。值为 None = 不限，只为设了值的条件画一行
+FILTER_GROUPS = {
+    "stock": [("stockf", STOCK_FILTERS, "sp.filter_group_stock", "sp.stock_filter_note"),
+              ("riskf", RISK_FILTERS, "sp.filter_group_risk", "sp.risk_filter_note")],
+    "cb": [("cbf", CB_FILTERS, "cb.filter_group", None)],
+}
+# 「添加条件」时先填的建议值，用户再改
+FILTER_SUGGEST = {
+    "stockf": {"max_price": 50.0, "mcap_rank_min": 800.0, "mcap_rank_max": 1800.0, "min_mcap_pct": 10.0},
+    "riskf": {"max_debt_ratio": 70.0, "min_current_ratio": 1.0, "min_cfo_np": 0.5},
+    "cbf": {"max_price": 130.0, "min_amount": 1000.0, "min_remain_years": 0.5, "max_premium": 30.0,
+            "max_call_days": 10.0},
+}
+
+
+def filter_editor(SP, kind: str, changed):
+    """过滤条件：设了值的条件各占一行（可删除），其余从「＋添加条件」菜单里加"""
+    groups = FILTER_GROUPS.get(kind, [])
+    mark_prefix = "cb_" if kind == "cb" else "sp_"
+    box = ui.column().classes("w-full gap-1")
+
+    def draw():
+        box.clear()
+        with box:
+            ui.label(t("sp.filters")).classes("text-xs sq-muted")
+            any_set = False
+            for sk, table, _, note in groups:
+                vals = SP[sk]
+                for k, m in table.items():
+                    if vals.get(k) is None:
+                        continue
+                    any_set = True
+                    with ui.row().classes("items-center gap-2 no-wrap"):
+                        ui.label(p(m["label"])).classes("text-sm w-64")
+
+                        def on_val(e, vals=vals, k=k):
+                            # 清空输入框 = 不限；这一行先留着，下次重画时消失（不在输入中途重画，免得丢焦点）
+                            vals[k] = float(e.value) if e.value not in (None, "") else None
+                            changed()
+                        ui.number(value=vals[k], on_change=on_val).props("outlined dense").classes("w-32") \
+                            .mark(f"{mark_prefix}{k}")
+                        ui.icon("help_outline").classes("sq-muted cursor-help") \
+                            .tooltip(p(m["help"]) + (t(note) if note else ""))
+
+                        def on_del(vals=vals, k=k):
+                            vals[k] = None
+                            draw()
+                            changed()
+                        ui.button(icon="close", on_click=on_del).props("flat round dense size=sm") \
+                            .tooltip(t("sp.del_filter")).mark(f"sp_del_filter:{k}")
+            if not any_set:
+                ui.label(t("sp.filters_empty")).classes("sq-muted text-sm")
+
+            missing = [(sk, gk, [(k, m) for k, m in table.items() if SP[sk].get(k) is None])
+                       for sk, table, gk, _ in groups]
+            missing = [g for g in missing if g[2]]
+            with ui.button(t("sp.add_filter"), icon="add").props("flat no-caps dense color=primary") \
+                    .classes("self-start").mark("sp_add_filter") as add_btn:
+                with ui.menu():
+                    for i, (sk, gk, items) in enumerate(missing):
+                        if i:
+                            ui.separator()
+                        ui.item_label(t(gk)).props("header").classes("text-xs sq-muted")
+                        for k, m in items:
+                            def on_add(sk=sk, k=k):
+                                SP[sk][k] = FILTER_SUGGEST.get(sk, {}).get(k, 0.0)
+                                draw()
+                                changed()
+                            ui.menu_item(p(m["label"]), on_click=on_add).mark(f"sp_add_filter:{k}")
+            add_btn.set_enabled(bool(missing))
+    draw()
+
+
 def current_spec(SP) -> dict:
     cb = U.kind(SP["universe"]) == "cb"
     filters = {"exclude_st": bool(SP["excl_st"]) and not cb, "min_list_days": int(SP["min_list"])}
@@ -316,30 +389,7 @@ def _backtest_form(SP, ctx, rebuild):
                 reb_n.set_enabled(SP["reb"] == "n")
                 ui.select({m: t("sp.month", m=m) for m in range(1, 13)}, label=t("sp.skip_months"), multiple=True,
                           value=SP.get("skip", []), on_change=lambda e: set_sp("skip", sorted(e.value or [])))                 .props(DENSE + " use-chips clearable").classes("w-56").tooltip(t("sp.skip_months_help"))                 .mark("sp_skip")
-            if panel.kind == "cb":
-                with ui.row().classes("w-full items-center gap-4"):
-                    for k, m in CB_FILTERS.items():
-                        def on_f(e, k=k):
-                            SP["cbf"][k] = float(e.value) if e.value not in (None, "") else None
-                            changed()
-                        ui.number(p(m["label"]), value=SP["cbf"].get(k), on_change=on_f) \
-                            .props("outlined dense clearable").classes("w-60") \
-                            .tooltip(p(m["help"]) + t("cb.empty_no_limit")).mark(f"cb_{k}")
-            if panel.kind == "stock":
-                with ui.row().classes("w-full items-center gap-4"):
-                    for k, m in STOCK_FILTERS.items():
-                        def on_s(e, k=k):
-                            SP["stockf"][k] = float(e.value) if e.value not in (None, "") else None
-                            changed()
-                        ui.number(p(m["label"]), value=SP["stockf"].get(k), on_change=on_s) \
-                            .props("outlined dense clearable").classes("w-60") \
-                            .tooltip(p(m["help"]) + t("sp.stock_filter_note")).mark(f"sp_{k}")
-                with ui.row().classes("w-full items-center gap-4"):
-                    for k, m in RISK_FILTERS.items():
-                        def on_r(e, k=k):
-                            SP["riskf"][k] = float(e.value) if e.value not in (None, "") else None
-                            changed()
-                        ui.number(p(m["label"]), value=SP["riskf"].get(k), on_change=on_r)                         .props("outlined dense clearable").classes("w-60")                         .tooltip(p(m["help"]) + t("sp.risk_filter_note")).mark(f"sp_{k}")
+            filter_editor(SP, panel.kind, lambda: changed())
             with ui.row().classes("w-full items-center gap-4"):
                 if panel.kind == "stock":
                     ui.switch(t("sp.exclude_st"), value=SP["excl_st"], on_change=lambda e: set_sp("excl_st", e.value))

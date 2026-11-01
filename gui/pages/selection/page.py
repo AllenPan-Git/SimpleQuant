@@ -13,7 +13,7 @@ from gui.layout import frame, page_title
 from gui.pages.stock_overview import overview_tab
 from gui.pages.holdings_check import diag_tab
 from gui.plan_io import import_button
-from gui.widgets import notice
+from gui.widgets import hint, notice
 from .common import Ctx, DENSE, get_panel, kind_defaults, sp_state, store, switch_kind, universe_ready, WARMUP_DAYS
 from .data_tab import _data_tab
 from .research import _research
@@ -27,7 +27,7 @@ def page():
     SP = sp_state()
     ctx = Ctx()
     with frame("/selection"):
-        page_title("/selection", t("sp.intro"))
+        page_title("/selection", t("sp.intro_short"), t("sp.intro"))
 
         # ---------------- 股票池与区间 ----------------
         with ui.card().classes("w-full"):
@@ -46,7 +46,7 @@ def page():
                     .mark("sp_start")
                 end_in = ui.input(t("data.end")).props("outlined dense type=date").classes("w-44").mark("sp_end")
                 span = ui.label().classes("sq-muted text-sm self-center")
-            warm = ui.label(t("sp.warmup_note")).classes("sq-muted text-xs")
+            warm = hint(t("sp.warmup_note_short"), t("sp.warmup_note"), classes="sq-muted text-xs", mark="sp_warmup")
 
         def set_range_inputs():
             u = SP["universe"]

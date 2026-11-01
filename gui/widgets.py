@@ -61,6 +61,30 @@ def notice(text: str, icon: str = "info", kind: str = "info"):
     return row
 
 
+def hint(short: str, full: str, classes: str = "sq-muted text-sm", mark: str = ""):
+    """长说明收成一行：平时显示 short，点「详细说明」换成 full，再点「收起」换回。
+
+    传的是文字而不是键，带参数的文字（如 t("sp.market_help", index=...)）也能用。
+    返回外层容器，调用方可以对它 set_visibility。
+    """
+    from gui.common import t
+    with ui.element("div").classes(f"sq-hint {classes}") as box:
+        text = ui.label(short).classes("inline")
+        toggle = ui.label(t("hint.more")).classes("inline sq-hint-toggle")
+        if mark:
+            box.mark(mark)
+            text.mark(f"{mark}_text")
+            toggle.mark(f"{mark}_toggle")
+
+    def flip():
+        opened = text.text == short
+        text.text = full if opened else short
+        toggle.text = t("hint.less") if opened else t("hint.more")
+
+    toggle.on("click", flip)
+    return box
+
+
 def folder_btn(label: str, folder):
     """「打开文件夹」小按钮：路径只在鼠标悬停时显示，录屏、截图时不露出本机路径"""
     from simplequant.system import open_folder

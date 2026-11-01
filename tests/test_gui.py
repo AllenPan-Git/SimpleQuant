@@ -883,6 +883,25 @@ async def _open_selection(user: User, tab="bt"):
 
 
 @needs_stocks
+async def test_selection_hints(user: User):
+    """长说明收成一行：默认显示短句，点「详细说明」换成全文，再点「收起」换回"""
+    from gui.common import t, p
+    from simplequant.stocks import UNIVERSES
+    await _open_selection(user, "bt")
+    assert user.find(marker="page_hint_text").elements.pop().text == t("sp.intro_short")
+    index = p(UNIVERSES["hs300"]["label"])
+    text = user.find(marker="sp_market_hint_text").elements.pop()
+    toggle = lambda: user.find(marker="sp_market_hint_toggle")     # 每次重新找：.elements.pop() 会把元素从集合里拿走
+    assert text.text == t("sp.market_help_short", index=index) and toggle().elements.pop().text == t("hint.more")
+    toggle().click()
+    await settle()
+    assert text.text == t("sp.market_help", index=index) and toggle().elements.pop().text == t("hint.less")
+    toggle().click()
+    await settle()
+    assert text.text == t("sp.market_help_short", index=index)
+
+
+@needs_stocks
 async def test_selection_research(user: User):
     SP = await _open_selection(user, "res")
     user.find(marker="sp_res_factor").elements.pop().set_value("ret20")

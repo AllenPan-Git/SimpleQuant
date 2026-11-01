@@ -27,7 +27,7 @@ from gui.components import broker_settings, metric_tiles, metric_tile, credibili
 from gui.pages.stock_overview import picks_dialog
 from gui.plan_io import import_button, export_selection_bytes, plan_filename, plan_check_notice, restore_broker
 from simplequant import plan as plan_mod
-from gui.widgets import section, df_table, fmt_table, plot, notice
+from gui.widgets import section, df_table, fmt_table, plot, notice, hint
 from ui.charts import equity_chart
 from ui.shared import export_filename, num, orders_table, logs_table, with_ids
 from .common import (DENSE, POS_DEFAULT, factor_label, kind_defaults, market_spec, reb_label, spec_panel,
@@ -521,7 +521,7 @@ def _backtest_form(SP, ctx, rebuild):
         with section(t("sp.market"), "show_chart"):
             index_name = t(f"sp.market_index_{SP['universe']}") if SP["universe"] in ("all", "cb") \
                 else p(UNIVERSES[SP["universe"]]["label"])
-            ui.label(t("sp.market_help", index=index_name)).classes("sq-muted text-sm")
+            hint(t("sp.market_help_short", index=index_name), t("sp.market_help", index=index_name), mark="sp_market_hint")
             with ui.card().classes("w-full gap-3"):
                 side_editor(SP, "sell", t("sp.market_out"), "trending_down", lambda: changed(), options=MARKET_INDS,
                             empty_text=t("sp.market_out_empty"), key="market")

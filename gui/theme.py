@@ -220,6 +220,9 @@ body.body--dark .q-btn.bg-primary, body.body--dark .q-btn.bg-primary .q-btn__con
   font-size: 14px; }}
 .sq-adv > .q-expansion-item__container > .q-item:hover {{ background: transparent; }}
 .sq-adv .q-focus-helper {{ display: none; }}
+/* 收成一行的说明（widgets.hint）：「详细说明」紧跟在短句后面 */
+.sq-hint-toggle {{ margin-left: .5em; color: var(--sq-red); cursor: pointer; white-space: nowrap; }}
+.sq-hint-toggle:hover {{ text-decoration: underline; }}
 .q-linear-progress {{ color: var(--sq-red) !important; border-radius: 0; }}
 .sq-code {{ font-family: var(--sq-mono); font-size: 13px; line-height: 1.7; white-space: pre-wrap; padding: 12px 14px;
   border: 1px solid var(--sq-border); background: var(--sq-sunk); }}

@@ -3,6 +3,10 @@
 from simplequant.i18n import TEXT, L
 
 TEXT.update({
+    # ---- 通用小控件 ----
+    "hint.more": L("详细说明", "Details"),
+    "hint.less": L("收起", "Less"),
+
     # ---- 导航 ----
     "nav.home": L("首页", "Home"),
     "nav.data": L("1. 数据", "1. Data"),
@@ -832,6 +836,8 @@ TEXT.update({
     "home.s5_note": L("采用历史成分股，避免幸存者偏差", "Uses historical index constituents to avoid survivorship bias"),
     "sp.intro": L("在指数成分股或全部可转债中按因子评分，定期买入得分最高的一组。建议先在「因子研究」中确认因子有效，再于「选股回测」中组合使用。",
                   "Score index constituents or all convertible bonds on factors and periodically buy the top-scoring group. Validate each factor in Factor research first, then combine factors in Backtest."),
+    "sp.intro_short": L("按因子给股票或可转债打分，定期买入得分最高的一组。",
+                        "Score stocks or convertible bonds on factors and periodically buy the top-scoring group."),
     "sp.universe": L("股票池", "Universe"),
 
     # ---- 可转债（选股页的「可转债（全市场）」股票池） ----
@@ -849,6 +855,8 @@ TEXT.update({
                           "Sources: Eastmoney (bond list, terms, bond floor and conversion value), Sina Finance (daily bars), "
                           "China Securities Index (CSI Convertible Bond Index). The first download covers about 1,000 bonds "
                           "(about 40 MB) and takes 6–10 minutes; later updates fetch only bonds still trading."),
+    "cb.download_note_short": L("首次下载约 1000 只、约 40 MB，需 6–10 分钟；此后仅更新仍在交易的转债。",
+                                "The first download covers about 1,000 bonds (about 40 MB) and takes 6–10 minutes; later updates fetch only bonds still trading."),
     "cb.step_list": L("正在获取转债列表…", "Fetching the bond list…"),
     "cb.step_info": L("条款", "Terms"),
     "cb.step_index": L("正在获取中证转债指数…", "Fetching the CSI Convertible Bond Index…"),
@@ -1080,6 +1088,8 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
                           "the limit. The first CSI 300 download (with financials and dividends) takes about 20,000 requests and "
                           "80 MB; all A-shares take about 220,000, spread over about 5 days. Later updates fetch only the latest "
                           "days. After a stop or interruption, click again to resume."),
+    "sp.download_note_short": L("BaoStock 每天限 5 万次请求，接近上限时自动停止，再次点击即可从断点继续。",
+                                "BaoStock allows 50,000 requests a day; the download stops near the limit and resumes from where it stopped."),
     "sp.download": L("下载 / 更新数据", "Download / update data"),
     "sp.step_universe": L("正在获取历史成分股…", "Fetching historical constituents…"),
     "sp.step_index": L("正在获取指数及股票信息…", "Fetching index and stock information…"),
@@ -1268,6 +1278,8 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
     "sp.dl_start_help": L("建议比计划的回测起点早一年，额外的数据用于因子预热", "Start about one year before the planned backtest start; the extra history is used to warm up the factors"),
     "sp.warmup_note": L("回测自数据首日开始时，前两至三个月将用于积累因子所需的历史数据（如 60 日波动率），期间不会选股。将开始日期后移，或下载更早的数据即可避免。",
                         "When the backtest starts on the first day of data, the first 2–3 months are used to build factor history (e.g. 60-day volatility) and no stocks are selected. Move the start date later or download earlier data to avoid this."),
+    "sp.warmup_note_short": L("回测自数据首日开始时，前两至三个月用于积累因子数据，期间不选股。",
+                              "When starting on the first day of data, the first 2–3 months build factor history and no stocks are selected."),
     "sp.load_saved": L("载入已保存的选股策略", "Load a saved selection strategy"),
     "sp.factor_setup": L("因子与权重", "Factors & weights"),
     "sp.pick_factors": L("选择因子（可多选）", "Factors (multiple selection)"),
@@ -1303,6 +1315,8 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
                         "sell everything at the next open and stop rebalancing; while in cash, when the re-entry "
                         "condition holds, pick stocks that day and buy at the next open. Index data has closes "
                         "only, so only close-based indicators (MA, MACD, RSI, ...) are available. Cash earns no interest"),
+    "sp.market_help_short": L("按{index}指数收盘价逐日判断，满足条件后于下一个交易日开盘卖出或买回。",
+                              "Checked daily on the {index} close; positions are sold or bought back at the next open."),
     "sp.market_index_all": L("上证", "SSE Composite"),
     "sp.market_index_cb": L("中证转债", "CSI Convertible Bond"),
     "sp.market_out": L("空仓条件", "Exit to cash when"),

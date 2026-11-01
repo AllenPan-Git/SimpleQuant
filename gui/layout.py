@@ -148,8 +148,10 @@ def frame(route: str):
         yield
 
 
-def page_title(route: str, subtitle: str | None = None):
-    """页面标题：朱红小字（流程 · 第几步）+ 宋体大标题 + 可选说明"""
+def page_title(route: str, subtitle: str | None = None, subtitle_full: str | None = None):
+    """页面标题：朱红小字（流程 · 第几步）+ 宋体大标题 + 可选说明
+
+    给了 subtitle_full 时，说明只显示 subtitle 一行，点「详细说明」看全文（widgets.hint）"""
     key = next(k for pth, k, _ in PAGES if pth == route)
     flow = app.storage.general.get("flow", "timing")
     steps = FLOWS.get(flow, [])
@@ -158,5 +160,8 @@ def page_title(route: str, subtitle: str | None = None):
     with ui.column().classes("gap-1 pb-1"):
         ui.label(eyebrow).classes("sq-eyebrow")
         ui.label(t(key).split(". ", 1)[-1]).classes("sq-title")
-        if subtitle:
+        if subtitle and subtitle_full:
+            from gui.widgets import hint
+            hint(subtitle, subtitle_full, classes="sq-subtitle", mark="page_hint")
+        elif subtitle:
             ui.label(subtitle).classes("sq-subtitle")

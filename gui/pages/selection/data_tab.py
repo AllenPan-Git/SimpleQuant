@@ -11,7 +11,7 @@ from simplequant.stocks import universe as U
 from simplequant.stocks.store import DAILY_LIMIT
 from gui.common import t, p
 from gui.components import metric_tile
-from gui.widgets import notice, download_btn, Progress
+from gui.widgets import hint, notice, download_btn, Progress
 from .common import store
 
 
@@ -66,7 +66,7 @@ def _data_tab(SP, ctx, reload_all):
         with_risk.on_value_change(lambda _: estimate())
         d_start.on_value_change(lambda _: estimate())
         estimate()
-        ui.label(t("sp.download_note")).classes("sq-muted text-sm")
+        hint(t("sp.download_note_short"), t("sp.download_note"), mark="sp_download_hint")
         prog = Progress()
         out = ui.column().classes("w-full")
 
@@ -185,7 +185,7 @@ def _cb_data_tab(SP, ctx, reload_all):
                 .classes("w-44").tooltip(t("cb.start_help"))
             workers = ui.number(t("sp.workers"), value=min(int(D["workers"]), 3), min=1, max=4, precision=0) \
                 .props("outlined dense").classes("w-32").tooltip(t("cb.workers_help"))
-        ui.label(t("cb.download_note")).classes("sq-muted text-sm")
+        hint(t("cb.download_note_short"), t("cb.download_note"), mark="cb_download_hint")
         prog = Progress()
         out = ui.column().classes("w-full")
         steps = {"list": t("cb.step_list"), "info": t("cb.step_info"), "index": t("cb.step_index"),

@@ -11,11 +11,13 @@ Changes in each release. `tools/release.py` copies the matching section into the
 - 改进：选股页「选股回测」改为与择时回测页一致的设置条布局。「开始回测」「导出策略」「导入方案」移到顶部右侧，设置较长时随页面滚动保持可见；全部设置收进一个折叠区，收起时显示一行摘要（因子 · 持有 · 调仓 · 条件 · 资金与费率），点击即可展开修改。回测完成后设置区自动收起并显示结果，回测出错时保持展开；策略名称与保存按钮移至设置区底部
 - 改进：选股页的过滤条件不再把全部输入框一次排开，只显示已设置的条件，每行可单独删除；其余条件从「添加条件」菜单按组（价格与市值、财务排雷、可转债条件）添加，添加时预填建议值
 - 改进：选股页「选股与调仓」只保留持有数量、调仓频率、排除 ST 股和过滤条件，保留前 M 名、空仓月份、最短上市天数、买入资金比例、分红处理收进「高级设置」；「因子与权重」的行业中性、市值中性同样收进「高级设置」。折叠区标题后列出改过默认值的项，有改动时自动展开
+- 改进：选股页的页面说明、回测预热提示、大盘条件说明以及数据下载说明收为一行短句，点击「详细说明」可查看全文
 
 ### Changes
 - Improved: the Backtest tab of the Stock selection page now uses the same setup bar as the timing Backtest page. Run backtest, Export and Import plan sit at the top right and stay visible while scrolling through long settings; all settings fold into one section that shows a one-line summary when collapsed (factors · holdings · rebalancing · conditions · capital & costs), and clicking it expands the settings. The section collapses automatically to show the results after a successful run and stays open if the run fails; the strategy name and Save button are now at the bottom of the settings
 - Improved: selection filters no longer list every input at once. Only the filters in use are shown, each with its own remove button; others are added from the Add filter menu, grouped as Price & market cap, Financial risk screen and Convertible bond filters, with a suggested value filled in
 - Improved: Selection & rebalancing now shows only the number of holdings, rebalance frequency, Exclude ST and filters; Keep within top M, months in cash, minimum days listed, capital used per buy and dividend handling move into Advanced settings, as do industry and size neutralization under factors. The section title lists any settings changed from their defaults and opens automatically when there are any
+- Improved: the page introduction, warm-up note, market condition help and data download notes on the Stock selection page are shortened to one line; click Details to read the full text
 
 ## 2.2.0（2026-10-31）
 

@@ -30,7 +30,8 @@ from simplequant import plan as plan_mod
 from gui.widgets import section, df_table, fmt_table, plot, notice
 from ui.charts import equity_chart
 from ui.shared import export_filename, num, orders_table, logs_table, with_ids
-from .common import DENSE, factor_label, market_spec, reb_label, spec_panel, spec_panel_start, switch_kind
+from .common import (DENSE, POS_DEFAULT, factor_label, kind_defaults, market_spec, reb_label, spec_panel,
+                     spec_panel_start, switch_kind)
 from .broker import broker_default, broker_key
 
 
@@ -108,6 +109,49 @@ def filter_editor(SP, kind: str, changed):
     draw()
 
 
+def advanced_box(SP, open_key: str, mark: str, items: list[str]):
+    """内层「高级设置」折叠区：标题后面用小字列出改过默认值的项；有改过的项时默认展开（导入方案后能看到）。
+    返回 (折叠区, 更新标题小字的函数)"""
+    exp = ui.expansion(value=bool(items) or bool(SP.get(open_key))).props("dense") \
+        .classes("w-full sq-adv").mark(mark)
+    with exp.add_slot("header"), ui.row().classes("items-center gap-2 no-wrap min-w-0 py-1"):
+        ui.icon("tune").classes("sq-muted")
+        ui.label(t("sp.advanced")).classes("whitespace-nowrap")
+        summary = ui.label().classes("sq-muted text-xs ellipsis").mark(f"{mark}_summary")
+    exp.on_value_change(lambda e: SP.__setitem__(open_key, bool(e.value)))
+
+    def update(items: list[str]):
+        summary.text = "· " + ("、" if lang() == "zh" else ", ").join(items) if items else ""
+    update(items)
+    return exp, update
+
+
+def _months_text(months, lg: str) -> str:
+    return ("、" if lg == "zh" else ", ").join(str(m) if lg == "zh" else calendar.month_abbr[m] for m in sorted(months))
+
+
+def _adv_rule_items(SP, kind: str, lg: str) -> list[str]:
+    """「选股与调仓」高级设置里改过默认值的项（默认值以 sp_state / kind_defaults 为准）"""
+    d = kind_defaults(kind)
+    out = []
+    if SP.get("keep_n"):
+        out.append(t("sp.chip_keep", m=int(SP["keep_n"])))
+    if SP.get("skip"):
+        out.append(t("sp.chip_skip", months=_months_text(SP["skip"], lg)))
+    if int(SP["min_list"]) != d["min_list"]:
+        out.append(t("sp.adv_min_days", n=int(SP["min_list"])))
+    if int(SP["pos"]) != POS_DEFAULT:
+        out.append(t("sp.adv_pos", v=int(SP["pos"])))
+    if kind == "stock" and SP.get("dividend", "reinvest") != d["dividend"]:
+        out.append(t("sp.adv_dividend_cash"))
+    return out
+
+
+def _adv_factor_items(SP) -> list[str]:
+    """「因子与权重」高级设置里打开了的中性化"""
+    return [t(k) for k, on in (("sp.neutral_industry", SP["ni"]), ("sp.neutral_size", SP["ns"])) if on]
+
+
 def current_spec(SP) -> dict:
     cb = U.kind(SP["universe"]) == "cb"
     filters = {"exclude_st": bool(SP["excl_st"]) and not cb, "min_list_days": int(SP["min_list"])}
@@ -160,7 +204,7 @@ def apply_spec(SP, spec: dict, name: str = ""):
     else:
         SP["stockf"] = {k: flt.get(k) for k in STOCK_FILTERS}
         SP["riskf"] = {k: flt.get(k) for k in RISK_FILTERS}
-    SP["pos"] = int(spec.get("position_pct", 95))
+    SP["pos"] = int(spec.get("position_pct", POS_DEFAULT))
     SP["weighting"] = spec.get("weighting", "manual")
     SP["lookback"] = int(spec.get("ic_lookback", 252))
     if spec.get("weighting") == "ml" and spec.get("ml"):     # AI 生成的策略不带模型设置：沿用表单里的
@@ -356,7 +400,9 @@ def _backtest_form(SP, ctx, rebuild):
                     return t("sp.ml_note")
                 return t("sp.factor_note") + ("" if SP["weighting"] == "manual" else " " + t("sp.ic_fallback_note"))
             factor_note = ui.label(note_text()).classes("sq-muted text-xs")
-            with ui.row().classes("items-center gap-6"):
+            factor_adv, factor_adv_update = advanced_box(SP, "factor_adv_open", "sp_factor_advanced",
+                                                         _adv_factor_items(SP))
+            with factor_adv, ui.row().classes("items-center gap-6 pb-2"):
                 ni = ui.switch(t("sp.neutral_industry"), value=SP["ni"], on_change=lambda e: set_sp("ni", e.value)) \
                     .tooltip(t("sp.neutral_industry_help")).mark("sp_ni")
                 ni.set_enabled(not panel.industry.dropna().empty)
@@ -371,13 +417,6 @@ def _backtest_form(SP, ctx, rebuild):
                           on_change=lambda e: set_sp("top_n", e.value, int)).props("outlined dense").classes("w-32") \
                     .mark("sp_top_n")
 
-                def on_keep(e):
-                    SP["keep_n"] = int(e.value) if e.value not in (None, "") else None
-                    changed()
-                ui.number(t("sp.keep_n"), value=SP.get("keep_n"), min=1, max=200, step=1, precision=0,
-                          on_change=on_keep).props("outlined dense clearable").classes("w-36") \
-                    .tooltip(t("sp.keep_n_help")).mark("sp_keep_n")
-
                 def on_reb(e):
                     SP["reb"] = e.value
                     reb_n.set_enabled(e.value == "n")
@@ -387,35 +426,50 @@ def _backtest_form(SP, ctx, rebuild):
                 reb_n = ui.number(t("sp.every_n_days"), value=SP["reb_n"], min=1, max=250, precision=0,
                                   on_change=lambda e: set_sp("reb_n", e.value, int)).props("outlined dense").classes("w-36")
                 reb_n.set_enabled(SP["reb"] == "n")
-                ui.select({m: t("sp.month", m=m) for m in range(1, 13)}, label=t("sp.skip_months"), multiple=True,
-                          value=SP.get("skip", []), on_change=lambda e: set_sp("skip", sorted(e.value or [])))                 .props(DENSE + " use-chips clearable").classes("w-56").tooltip(t("sp.skip_months_help"))                 .mark("sp_skip")
-            filter_editor(SP, panel.kind, lambda: changed())
-            with ui.row().classes("w-full items-center gap-4"):
                 if panel.kind == "stock":
                     ui.switch(t("sp.exclude_st"), value=SP["excl_st"], on_change=lambda e: set_sp("excl_st", e.value))
-                ui.number(t("sp.min_days"), value=SP["min_list"], min=0, max=2000, step=50, precision=0,
-                          on_change=lambda e: set_sp("min_list", e.value, int)).props("outlined dense").classes("w-36") \
-                    .tooltip(t("sp.min_days_help"))
-                with ui.column().classes("gap-0 w-64"):
-                    with ui.row().classes("w-full justify-between"):
-                        ui.label(t("strat.position")).classes("text-xs sq-muted")
-                        pos_lbl = ui.label(f"{SP['pos']}%").classes("sq-num text-xs text-primary")
-
-                    def on_pos(e):
-                        pos_lbl.text = f"{int(e.value)}%"
-                        set_sp("pos", e.value, int)
-                    ui.slider(min=10, max=100, step=5, value=SP["pos"], on_change=on_pos)
+            filter_editor(SP, panel.kind, lambda: changed())
             if panel.kind == "cb":
                 ui.label(t("cb.coupon_note")).classes("sq-muted text-sm")
-            with ui.row().classes("w-full items-center gap-4") as div_row:
-                with ui.column().classes("gap-0"):
-                    ui.label(t("sp.dividend")).classes("text-xs sq-muted").tooltip(t("sp.dividend_help"))
-                    div_radio = ui.radio({k: p(v) for k, v in DIVIDEND.items()}, value=SP.get("dividend", "reinvest"),
-                                         on_change=lambda e: set_sp("dividend", e.value)) \
-                        .props("inline dense").mark("sp_dividend")
-                    div_radio.tooltip(t("sp.dividend_help"))
+
+            # 次要选项：保留前 M 名、空仓月份、最短上市天数、买入资金比例、分红处理
+            rules_adv, rules_adv_update = advanced_box(SP, "rules_adv_open", "sp_advanced",
+                                                       _adv_rule_items(SP, panel.kind, lg))
+            with rules_adv, ui.column().classes("w-full gap-3 pb-2"):
+                with ui.row().classes("w-full items-center gap-4"):
+                    def on_keep(e):
+                        SP["keep_n"] = int(e.value) if e.value not in (None, "") else None
+                        changed()
+                    ui.number(t("sp.keep_n"), value=SP.get("keep_n"), min=1, max=200, step=1, precision=0,
+                              on_change=on_keep).props("outlined dense clearable").classes("w-36") \
+                        .tooltip(t("sp.keep_n_help")).mark("sp_keep_n")
+                    ui.select({m: t("sp.month", m=m) for m in range(1, 13)}, label=t("sp.skip_months"), multiple=True,
+                              value=SP.get("skip", []), on_change=lambda e: set_sp("skip", sorted(e.value or []))) \
+                        .props(DENSE + " use-chips clearable").classes("w-56").tooltip(t("sp.skip_months_help")) \
+                        .mark("sp_skip")
+                    ui.number(t("sp.min_days"), value=SP["min_list"], min=0, max=2000, step=50, precision=0,
+                              on_change=lambda e: set_sp("min_list", e.value, int)).props("outlined dense") \
+                        .classes("w-36").tooltip(t("sp.min_days_help"))
+                with ui.row().classes("w-full items-center gap-8"):
+                    with ui.column().classes("gap-0 w-64"):
+                        with ui.row().classes("w-full justify-between"):
+                            ui.label(t("strat.position")).classes("text-xs sq-muted")
+                            pos_lbl = ui.label(f"{SP['pos']}%").classes("sq-num text-xs text-primary")
+
+                        def on_pos(e):
+                            pos_lbl.text = f"{int(e.value)}%"
+                            set_sp("pos", e.value, int)
+                        ui.slider(min=10, max=100, step=5, value=SP["pos"], on_change=on_pos)
+                    with ui.row().classes("items-center gap-4") as div_row:
+                        with ui.column().classes("gap-0"):
+                            ui.label(t("sp.dividend")).classes("text-xs sq-muted").tooltip(t("sp.dividend_help"))
+                            div_radio = ui.radio({k: p(v) for k, v in DIVIDEND.items()},
+                                                 value=SP.get("dividend", "reinvest"),
+                                                 on_change=lambda e: set_sp("dividend", e.value)) \
+                                .props("inline dense").mark("sp_dividend")
+                            div_radio.tooltip(t("sp.dividend_help"))
+                    div_row.set_visibility(panel.kind == "stock")
                 div_warn = ui.column()
-            div_row.set_visibility(panel.kind == "stock")
 
         # ---- 大盘条件 ----
         from gui.pages.strategy import side_editor      # 与择时策略页共用条件积木
@@ -528,6 +582,8 @@ def _backtest_form(SP, ctx, rebuild):
         if SP.get("dividend") == "cash" and not panel.div_codes and panel.kind == "stock":
             with div_warn:
                 notice(t("sp.need_div"), "warning", "warning")
+        rules_adv_update(_adv_rule_items(SP, panel.kind, lg))
+        factor_adv_update(_adv_factor_items(SP))
         draw_chips()
 
     def save():
@@ -665,9 +721,7 @@ def _chip_items(SP, kind: str, lg: str) -> list[tuple[str, str, str]]:
 
     reb = reb_label(SP["reb"] if SP["reb"] != "n" else int(SP["reb_n"]))
     if SP.get("skip"):
-        months = sorted(SP["skip"])
-        reb += " · " + t("sp.chip_skip", months=sep.join(str(m) if lg == "zh" else calendar.month_abbr[m]
-                                                         for m in months))
+        reb += " · " + t("sp.chip_skip", months=_months_text(SP["skip"], lg))
 
     # 条件：设了值的过滤条件 + 实际生效的大盘条件 + 回撤停手（排除 ST、上市天数是常设项，不计）
     if kind == "cb":

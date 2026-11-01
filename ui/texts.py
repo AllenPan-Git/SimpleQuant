@@ -1291,6 +1291,10 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
     "sp.every_n_days": L("N", "N"),
     "sp.exclude_st": L("排除 ST 股", "Exclude ST stocks"),
     "sp.skip_months": L("空仓月份", "Months in cash"),
+    "sp.advanced": L("高级设置", "Advanced settings"),
+    "sp.adv_min_days": L("上市满 {n} 天", "listed ≥ {n} days"),
+    "sp.adv_pos": L("买入资金 {v}%", "capital used {v}%"),
+    "sp.adv_dividend_cash": L("现金分红", "cash dividends"),
     "sp.market": L("大盘条件", "Market conditions"),
     "sp.market_help": L("用{index}指数的收盘价逐日判断：收盘满足空仓条件，下一个交易日开盘全部卖出，之后不调仓；"
                         "空仓时收盘满足恢复条件，当天选股、下一个交易日开盘买回。指数数据只有收盘价，"

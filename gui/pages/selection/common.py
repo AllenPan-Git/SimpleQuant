@@ -23,6 +23,7 @@ SEL_DEFAULT = [{"key": "ep", "weight": 1.0, "direction": 1}, {"key": "ret20", "w
 CB_SEL_DEFAULT = [{"key": "cb_double_low", "weight": 1.0, "direction": -1}]       # 可转债「双低」
 # 股票与可转债各自记住的表单项（切换股票池时互换）
 KIND_KEYS = ("factors", "excl_st", "min_list", "dividend", "ni", "ns")
+POS_DEFAULT = 95           # 买入资金比例（%）的默认值
 
 _PANELS: OrderedDict = OrderedDict()    # (股票池, 起, 止, 数据版本) → 面板；最多留 3 个
 _TR_TRIED: set = set()                  # 本次启动已尝试补下载全收益指数的股票池
@@ -38,7 +39,7 @@ def sp_state() -> dict:
         # 选股回测表单
         "factors": [dict(f) for f in SEL_DEFAULT], "weighting": "manual", "lookback": 252, "ni": False, "ns": False,
         "top_n": 10, "reb": "monthly", "reb_n": 20, "skip": [], "excl_st": True,
-        "min_list": DEFAULT_FILTERS["min_list_days"], "pos": 95, "name": "", "follow": False, "dividend": "reinvest",
+        "min_list": DEFAULT_FILTERS["min_list_days"], "pos": POS_DEFAULT, "name": "", "follow": False, "dividend": "reinvest",
         "ai_text": "", "ai": None, "ai_base": False, "result": None, "explanation": None,
         # 因子研究
         "res": {"fkey": "ep", "horizon": 20, "groups": 5, "min_days": DEFAULT_FILTERS["min_list_days"],

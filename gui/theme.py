@@ -215,6 +215,11 @@ body.body--dark .q-btn.bg-primary, body.body--dark .q-btn.bg-primary .q-btn__con
 /* 折叠面板、进度条、提示条 */
 .q-expansion-item {{ border-radius: 2px; overflow: hidden; }}
 .q-expansion-item__container > .q-item {{ font-family: var(--sq-serif); font-weight: 600; font-size: 15.5px; }}
+/* 表单里的「高级设置」：内层折叠区，标题用正文字体，不加底色 */
+.sq-adv > .q-expansion-item__container > .q-item {{ padding: 0; min-height: 0; font-family: var(--sq-sans); font-weight: 500;
+  font-size: 14px; }}
+.sq-adv > .q-expansion-item__container > .q-item:hover {{ background: transparent; }}
+.sq-adv .q-focus-helper {{ display: none; }}
 .q-linear-progress {{ color: var(--sq-red) !important; border-radius: 0; }}
 .sq-code {{ font-family: var(--sq-mono); font-size: 13px; line-height: 1.7; white-space: pre-wrap; padding: 12px 14px;
   border: 1px solid var(--sq-border); background: var(--sq-sunk); }}

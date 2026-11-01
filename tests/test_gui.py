@@ -1050,6 +1050,39 @@ async def test_selection_filter_add_edit_delete(user: User):
 
 
 @needs_stocks
+async def test_selection_advanced_settings(user: User):
+    """高级设置：都是默认值时收起、标题无小字；载入改过空仓月份等的已保存策略后自动展开，标题列出改过的项；
+    在表单里改回默认值，小字随之消失"""
+    from gui.pages.selection import current_spec
+    SP = await _open_selection(user, "bt")
+    adv = user.find(marker="sp_advanced").elements.pop()
+    fadv = user.find(marker="sp_factor_advanced").elements.pop()
+    assert adv.value is False and fadv.value is False
+    assert user.find(marker="sp_advanced_summary").elements.pop().text == ""
+
+    spec = {**current_spec(SP), "skip_months": [1, 4], "keep_n": 15, "position_pct": 80,
+            "neutralize": {"industry": True, "size": False}}
+    strategies.save_strategy("空仓1和4月", spec)
+    state.STATE["sp_panel_key"] = None
+    await user.open("/selection")                       # 重新打开页面，「载入已保存的策略」才列出它
+    assert await _wait(lambda: state.STATE.get("sp_panel_key") is not None, n=2400)
+    await settle()
+    user.find(marker="sp_load_saved").click()
+    await settle()
+    adv = user.find(marker="sp_advanced").elements.pop()
+    assert adv.value is True
+    assert user.find(marker="sp_advanced_summary").elements.pop().text == "· 保留前 15 名、空仓 1、4 月、买入资金 80%"
+    assert user.find(marker="sp_factor_advanced").elements.pop().value is True
+    assert user.find(marker="sp_factor_advanced_summary").elements.pop().text == "· 行业中性"
+
+    user.find(marker="sp_skip").elements.pop().set_value([])
+    user.find(marker="sp_keep_n").elements.pop().set_value(None)
+    await settle()
+    assert user.find(marker="sp_advanced_summary").elements.pop().text == "· 买入资金 80%"
+    assert "skip_months" not in current_spec(SP) and "keep_n" not in current_spec(SP)
+
+
+@needs_stocks
 async def test_selection_phase_check(user: User):
     """选股：点按钮做调仓日检验（每 3 天调仓 → 2 个相位）"""
     from gui.pages.selection import sp_state

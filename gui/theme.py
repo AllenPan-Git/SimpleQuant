@@ -169,6 +169,15 @@ code, pre {{ font-family: var(--sq-mono); }}
 .sq-chip .k {{ display: block; font-size: 12px; color: var(--sq-muted); }}
 .sq-chip .v {{ font-size: 14px; border-bottom: 1px dotted var(--sq-faint); }}
 .sq-chip:hover .v {{ border-bottom: 1px solid var(--sq-red); color: var(--sq-red); }}
+.sq-chip-row-wrap {{ flex-wrap: wrap; }}
+.sq-setup-row {{ scroll-margin-top: 12px; }}
+
+/* 设置区右侧的操作按钮：设置展开、表单很长时吸在报头下面（报头高度由 HEAD_JS 写进 --sq-header-h，窄窗口会换行变高） */
+.sq-setup-actions {{ position: sticky; top: calc(var(--sq-header-h, 64px) + 12px); z-index: 5; flex-shrink: 0; }}
+/* 标签页里的吸顶：Quasar 的标签页容器 .q-panel-parent 是 overflow: hidden，每页外面的 .q-panel.scroll 是 overflow: auto，
+   都会让吸顶失效。容器改 clip（同样裁掉切换动画，但不算滚动容器）；.q-panel 高度随内容，本来就不出滚动条，改 visible */
+.q-panel-parent:has(.sq-setup-actions) {{ overflow: clip; }}
+.q-panel-parent:has(.sq-setup-actions) > .q-panel {{ overflow: visible; }}
 
 /* 按钮：直角；主按钮墨色实底 */
 .q-btn {{ border-radius: 2px; letter-spacing: 0; }}
@@ -245,6 +254,10 @@ body.body--dark .q-btn.bg-primary, body.body--dark .q-btn.bg-primary .q-btn__con
   .sq-starts .sq-start:nth-child(3) {{ padding-left: 0; border-left: 0; }}
   .sq-starts .sq-start:nth-child(n+3) {{ border-top: 1px solid var(--sq-border); }}
   .sq-chip-row {{ flex-wrap: wrap; }}
+  /* 吸顶按钮换到设置区上方，整行铺底色（吸顶时免得和下面的表单叠在一起），表单不再被按钮列挤窄 */
+  .sq-setup-sticky {{ flex-wrap: wrap; }}
+  .sq-setup-sticky > .sq-setup-actions {{ order: -1; width: 100%; top: var(--sq-header-h, 64px); padding-bottom: 8px;
+    background: var(--sq-page); }}
 }}
 @media (max-width: 860px) {{
   .sq-step small {{ display: none; }}
@@ -265,11 +278,28 @@ body.body--dark .q-btn.bg-primary, body.body--dark .q-btn.bg-primary .q-btn__con
 }}
 """
 
+# 报头高度写进 CSS 变量 --sq-header-h（吸顶元素用）。报头在窄窗口会换行变高，所以用 ResizeObserver 跟着改；
+# 报头由 Vue 挂载，脚本运行时可能还没有，先每 0.1 秒找一次
+HEAD_JS = """<script>
+(function () {
+  var seen = null;
+  function sync() {
+    var h = document.querySelector('.sq-header');
+    if (!h) return;
+    document.documentElement.style.setProperty('--sq-header-h', h.offsetHeight + 'px');
+    if (h !== seen && window.ResizeObserver) { seen = h; new ResizeObserver(sync).observe(h); }
+  }
+  var tries = 0, timer = setInterval(function () { sync(); if (seen || ++tries > 100) clearInterval(timer); }, 100);
+  window.addEventListener('resize', sync);
+})();
+</script>"""
+
 
 def install():
     """程序启动时调用一次：字体等静态文件 + 全局样式"""
     app.add_static_files("/static", STATIC)
     ui.add_css(CSS, shared=True)
+    ui.add_head_html(HEAD_JS, shared=True)
 
 
 def apply(dark: bool | None):

@@ -1,5 +1,6 @@
 """选股页「选股回测」标签页，以及运行导出的选股脚本"""
 
+import calendar
 import subprocess
 import sys
 import time
@@ -10,6 +11,7 @@ import pandas as pd
 from nicegui import run, ui
 
 from simplequant import llm, strategies
+from simplequant.engine import COST_PRESETS
 from simplequant.engine.credibility import check_backtest, check_ml, check_phase
 from simplequant.engine.phase import run_selection_phases, selection_cycle, phases
 from simplequant.stocks import UNIVERSES, FACTORS, REBALANCE, WEIGHTING, DIVIDEND, DEFAULT_FILTERS, run_selection
@@ -28,7 +30,7 @@ from simplequant import plan as plan_mod
 from gui.widgets import section, df_table, fmt_table, plot, notice
 from ui.charts import equity_chart
 from ui.shared import export_filename, num, orders_table, logs_table, with_ids
-from .common import DENSE, factor_label, market_spec, spec_panel, spec_panel_start, switch_kind
+from .common import DENSE, factor_label, market_spec, reb_label, spec_panel, spec_panel_start, switch_kind
 from .broker import broker_default, broker_key
 
 
@@ -118,306 +120,336 @@ def _backtest_form(SP, ctx, rebuild):
     lg = lang()
     panel = ctx.panel
 
-    # ---- 用一句话描述（AI） ----
-    cfg = llm.load_config()
-    ready = bool(cfg and cfg.ready)
-    with ui.expansion(t("sp.ai"), icon="auto_awesome", value=bool(SP.get("ai"))).classes("w-full q-card"):
-        if not ready:
-            with ui.row().classes("w-full items-center gap-3 no-wrap"):
-                notice(t("ai.need_config"), "key")
-                ui.button(t("nav.go_settings"), on_click=lambda: ui.navigate.to("/settings")) \
-                    .props("flat no-caps dense color=primary icon-right=arrow_forward")
-        def placeholder():
-            return t("sp.ai_base_placeholder") if SP["ai_base"] else t("sp.ai_placeholder")
-        ai_text = ui.textarea(t("ai.describe"), value=SP["ai_text"], placeholder=placeholder()) \
-            .props("outlined autogrow").classes("w-full").mark("sp_ai_text")
+    # ---- 顶行：设置折叠区（标题行是一行摘要标签）+ 右侧操作按钮（表单很长，按钮吸顶） ----
+    # 没有结果时总是展开；有结果时沿用上次的展开 / 收起（SP["setup_open"]，回测成功后收起）
+    with ui.row().classes("sq-setup-row sq-setup-sticky w-full items-start gap-3 no-wrap") as setup_row:
+        setup = ui.expansion(value=SP.get("setup_open", True) if SP.get("result") else True) \
+            .classes("grow min-w-0 sq-setup").mark("sp_setup")
+        with setup.add_slot("header"):
+            chips = ui.row().classes("sq-chip-row sq-chip-row-wrap w-full items-stretch gap-0")
+        with ui.column().classes("sq-setup-actions gap-2 pt-2"):
+            with ui.row().classes("items-center gap-2 no-wrap"):
+                run_btn = ui.button(t("bt.run"), icon="play_arrow", on_click=lambda: do_run()) \
+                    .props("unelevated no-caps").mark("sp_run")
+                with ui.button(t("exp.menu"), icon="ios_share").props("outline no-caps") as exp_btn:
+                    exp_menu = ui.menu()
+                exp_menu.on("before-show", lambda: build_export_menu())
+                import_button()
+            running = ui.row().classes("items-center gap-2 no-wrap")
+            with running:
+                ui.spinner(size="sm")
+                ui.label(t("sp.running")).classes("sq-muted text-sm")
+            running.set_visibility(False)
 
-        def on_base(e):
-            SP["ai_base"] = bool(e.value)
-            ai_text.props(f'placeholder="{placeholder()}"')
+    def on_setup(e):
+        SP["setup_open"] = bool(e.value)
+        draw_chips()
+    setup.on_value_change(on_setup)
 
-        async def ai_go():
-            SP["ai_text"] = ai_text.value or ""
-            ai_btn.disable()
-            try:
-                SP["ai"] = await run.io_bound(llm.translate_selection, SP["ai_text"], llm.get_provider(cfg), lg,
-                                              base=current_spec(SP) if SP["ai_base"] else None)
-            except llm.LLMError as e:
-                SP["ai"] = None
-                ui.notify(str(e), type="negative", multi_line=True)
-            except Exception as e:  # noqa: BLE001
-                SP["ai"] = None
-                ui.notify(f"{type(e).__name__}: {e}", type="negative", multi_line=True)
-            finally:
-                ai_btn.enable()
-            ai_result.refresh()
-        with ui.row().classes("items-center gap-4"):
-            ai_btn = ui.button(t("ai.generate"), icon="auto_awesome", on_click=ai_go).props("outline no-caps") \
-                .mark("sp_ai_go")
-            ui.checkbox(t("sp.ai_base"), value=SP["ai_base"], on_change=on_base).tooltip(t("sp.ai_base_help")) \
-                .mark("sp_ai_base")
-        ai_btn.set_enabled(ready and bool(SP["ai_text"].strip()))
-        ai_text.on_value_change(lambda e: ai_btn.set_enabled(ready and bool((e.value or "").strip())))
+    with setup, ui.column().classes("w-full gap-4 pt-3"):
+        # ---- 用一句话描述（AI） ----
+        cfg = llm.load_config()
+        ready = bool(cfg and cfg.ready)
+        with ui.expansion(t("sp.ai"), icon="auto_awesome", value=bool(SP.get("ai"))).classes("w-full q-card"):
+            if not ready:
+                with ui.row().classes("w-full items-center gap-3 no-wrap"):
+                    notice(t("ai.need_config"), "key")
+                    ui.button(t("nav.go_settings"), on_click=lambda: ui.navigate.to("/settings")) \
+                        .props("flat no-caps dense color=primary icon-right=arrow_forward")
+            def placeholder():
+                return t("sp.ai_base_placeholder") if SP["ai_base"] else t("sp.ai_placeholder")
+            ai_text = ui.textarea(t("ai.describe"), value=SP["ai_text"], placeholder=placeholder()) \
+                .props("outlined autogrow").classes("w-full").mark("sp_ai_text")
 
-        @ui.refreshable
-        def ai_result():
-            res = SP.get("ai")
-            if not res:
-                return
-            notice(res.understood or "—", "psychology")
-            if res.unsupported:
-                notice(t("ai.unsupported") + "\n\n" + "\n".join(f"- {u}" for u in res.unsupported), "block",
-                       "warning")
-            for e in res.errors:
-                notice(e, "error", "error")
-            if res.ok:
-                ui.label(strategies.describe(res.spec, lg)).classes("sq-code w-full")
+            def on_base(e):
+                SP["ai_base"] = bool(e.value)
+                ai_text.props(f'placeholder="{placeholder()}"')
 
-                def apply_ai():
-                    apply_spec(SP, res.spec, res.name)
+            async def ai_go():
+                SP["ai_text"] = ai_text.value or ""
+                ai_btn.disable()
+                try:
+                    SP["ai"] = await run.io_bound(llm.translate_selection, SP["ai_text"], llm.get_provider(cfg), lg,
+                                                  base=current_spec(SP) if SP["ai_base"] else None)
+                except llm.LLMError as e:
+                    SP["ai"] = None
+                    ui.notify(str(e), type="negative", multi_line=True)
+                except Exception as e:  # noqa: BLE001
+                    SP["ai"] = None
+                    ui.notify(f"{type(e).__name__}: {e}", type="negative", multi_line=True)
+                finally:
+                    ai_btn.enable()
+                ai_result.refresh()
+            with ui.row().classes("items-center gap-4"):
+                ai_btn = ui.button(t("ai.generate"), icon="auto_awesome", on_click=ai_go).props("outline no-caps") \
+                    .mark("sp_ai_go")
+                ui.checkbox(t("sp.ai_base"), value=SP["ai_base"], on_change=on_base).tooltip(t("sp.ai_base_help")) \
+                    .mark("sp_ai_base")
+            ai_btn.set_enabled(ready and bool(SP["ai_text"].strip()))
+            ai_text.on_value_change(lambda e: ai_btn.set_enabled(ready and bool((e.value or "").strip())))
+
+            @ui.refreshable
+            def ai_result():
+                res = SP.get("ai")
+                if not res:
+                    return
+                notice(res.understood or "—", "psychology")
+                if res.unsupported:
+                    notice(t("ai.unsupported") + "\n\n" + "\n".join(f"- {u}" for u in res.unsupported), "block",
+                           "warning")
+                for e in res.errors:
+                    notice(e, "error", "error")
+                if res.ok:
+                    ui.label(strategies.describe(res.spec, lg)).classes("sq-code w-full")
+
+                    def apply_ai():
+                        apply_spec(SP, res.spec, res.name)
+                        rebuild()
+                    ui.button(t("sp.ai_apply"), icon="check", on_click=apply_ai).props("unelevated no-caps") \
+                        .classes("self-start").mark("sp_ai_apply")
+            ai_result()
+
+        saved = {n: s for n, s in strategies.list_strategies().items() if s.get("kind") == "selection"}
+        if saved:
+            with ui.row().classes("w-full items-end gap-3"):
+                pick_saved = ui.select(list(saved), label=t("sp.load_saved"), value=next(iter(saved))) \
+                    .props(DENSE).classes("grow")
+
+                def load_saved():
+                    name = pick_saved.value
+                    apply_spec(SP, saved[name], name)
+                    broker = strategies.strategy_brokers().get(name)
+                    if broker:                      # 较早保存的策略没记资金与费率：保持当前设置
+                        kind = U.kind(SP["universe"])
+                        restore_broker(broker_key(kind), {"broker": broker}, broker_default(kind))
                     rebuild()
-                ui.button(t("sp.ai_apply"), icon="check", on_click=apply_ai).props("unelevated no-caps") \
-                    .classes("self-start").mark("sp_ai_apply")
-        ai_result()
+                ui.button(t("strat.load"), on_click=load_saved).props("outline no-caps").mark("sp_load_saved")
 
-    saved = {n: s for n, s in strategies.list_strategies().items() if s.get("kind") == "selection"}
-    if saved:
-        with ui.row().classes("w-full items-end gap-3"):
-            pick_saved = ui.select(list(saved), label=t("sp.load_saved"), value=next(iter(saved))) \
-                .props(DENSE).classes("grow")
-
-            def load_saved():
-                name = pick_saved.value
-                apply_spec(SP, saved[name], name)
-                broker = strategies.strategy_brokers().get(name)
-                if broker:                      # 较早保存的策略没记资金与费率：保持当前设置
-                    kind = U.kind(SP["universe"])
-                    restore_broker(broker_key(kind), {"broker": broker}, broker_default(kind))
-                rebuild()
-            ui.button(t("strat.load"), on_click=load_saved).props("outline no-caps").mark("sp_load_saved")
-
-    # ---- 因子 ----
-    with section(t("sp.factor_setup"), "functions"):
-        def on_factors(e):
-            keys = list(e.value or [])
-            old = {f["key"]: f for f in SP["factors"]}
-            SP["factors"] = [old.get(k) or {"key": k, "weight": 1.0, "direction": FACTORS[k]["direction"]}
-                             for k in keys]
-            factor_rows.refresh()
-            changed()
-        ui.select({k: factor_label(k) for k in factors_for(panel.kind)}, label=t("sp.pick_factors"),
-                  value=[f["key"] for f in SP["factors"]], multiple=True, with_input=True, on_change=on_factors) \
-            .props(DENSE + " use-chips").classes("w-full").mark("sp_factors")
-        fin_warn = ui.column().classes("w-full")
-        with ui.row().classes("w-full items-center gap-4"):
-            def on_weighting(e):
-                SP["weighting"] = e.value
-                lookback.set_enabled(e.value in ("ic", "icir"))
-                ml_box.set_visibility(e.value == "ml")
-                factor_note.text = note_text()
+        # ---- 因子 ----
+        with section(t("sp.factor_setup"), "functions"):
+            def on_factors(e):
+                keys = list(e.value or [])
+                old = {f["key"]: f for f in SP["factors"]}
+                SP["factors"] = [old.get(k) or {"key": k, "weight": 1.0, "direction": FACTORS[k]["direction"]}
+                                 for k in keys]
+                factor_rows.refresh()
                 changed()
-            with ui.column().classes("gap-0"):
-                ui.label(t("sp.weighting")).classes("text-xs sq-muted").tooltip(t("sp.weighting_help"))
-                ui.radio({w: p(WEIGHTING[w]) for w in WEIGHTING}, value=SP["weighting"], on_change=on_weighting) \
-                    .props("inline dense").mark("sp_weighting")
-            lookback = ui.number(t("sp.lookback"), value=SP["lookback"], min=60, max=1000, step=21, precision=0,
-                                 on_change=lambda e: set_sp("lookback", e.value, int)) \
-                .props("outlined dense").classes("w-36").tooltip(t("sp.lookback_help"))
-            lookback.set_enabled(SP["weighting"] in ("ic", "icir"))
-        ml_box = ui.column().classes("w-full gap-1").mark("sp_ml_box")
-        with ml_box:
-            _ml_form(SP, lambda: changed())
-        ml_box.set_visibility(SP["weighting"] == "ml")
+            ui.select({k: factor_label(k) for k in factors_for(panel.kind)}, label=t("sp.pick_factors"),
+                      value=[f["key"] for f in SP["factors"]], multiple=True, with_input=True, on_change=on_factors) \
+                .props(DENSE + " use-chips").classes("w-full").mark("sp_factors")
+            fin_warn = ui.column().classes("w-full")
+            with ui.row().classes("w-full items-center gap-4"):
+                def on_weighting(e):
+                    SP["weighting"] = e.value
+                    lookback.set_enabled(e.value in ("ic", "icir"))
+                    ml_box.set_visibility(e.value == "ml")
+                    factor_note.text = note_text()
+                    changed()
+                with ui.column().classes("gap-0"):
+                    ui.label(t("sp.weighting")).classes("text-xs sq-muted").tooltip(t("sp.weighting_help"))
+                    ui.radio({w: p(WEIGHTING[w]) for w in WEIGHTING}, value=SP["weighting"], on_change=on_weighting) \
+                        .props("inline dense").mark("sp_weighting")
+                lookback = ui.number(t("sp.lookback"), value=SP["lookback"], min=60, max=1000, step=21, precision=0,
+                                     on_change=lambda e: set_sp("lookback", e.value, int)) \
+                    .props("outlined dense").classes("w-36").tooltip(t("sp.lookback_help"))
+                lookback.set_enabled(SP["weighting"] in ("ic", "icir"))
+            ml_box = ui.column().classes("w-full gap-1").mark("sp_ml_box")
+            with ml_box:
+                _ml_form(SP, lambda: changed())
+            ml_box.set_visibility(SP["weighting"] == "ml")
 
-        @ui.refreshable
-        def factor_rows():
-            for f in SP["factors"]:
-                with ui.row().classes("w-full items-center gap-4 no-wrap"):
-                    ui.label(factor_label(f["key"])).classes("grow font-medium")
+            @ui.refreshable
+            def factor_rows():
+                for f in SP["factors"]:
+                    with ui.row().classes("w-full items-center gap-4 no-wrap"):
+                        ui.label(factor_label(f["key"])).classes("grow font-medium")
 
-                    def on_w(e, f=f):
-                        if e.value is not None:
-                            f["weight"] = float(e.value)
+                        def on_w(e, f=f):
+                            if e.value is not None:
+                                f["weight"] = float(e.value)
+                                changed()
+
+                        def on_d(e, f=f):
+                            f["direction"] = int(e.value)
                             changed()
+                        ui.number(t("sp.weight"), value=f["weight"], min=0, max=10, step=0.5, on_change=on_w) \
+                            .props("outlined dense").classes("w-28")
+                        ui.toggle({1: t("sel.dir_up"), -1: t("sel.dir_down")}, value=int(f["direction"]),
+                                  on_change=on_d).props("dense no-caps unelevated toggle-color=primary")
+            factor_rows()
 
-                    def on_d(e, f=f):
-                        f["direction"] = int(e.value)
-                        changed()
-                    ui.number(t("sp.weight"), value=f["weight"], min=0, max=10, step=0.5, on_change=on_w) \
-                        .props("outlined dense").classes("w-28")
-                    ui.toggle({1: t("sel.dir_up"), -1: t("sel.dir_down")}, value=int(f["direction"]),
-                              on_change=on_d).props("dense no-caps unelevated toggle-color=primary")
-        factor_rows()
+            def note_text():
+                if SP["weighting"] == "ml":
+                    return t("sp.ml_note")
+                return t("sp.factor_note") + ("" if SP["weighting"] == "manual" else " " + t("sp.ic_fallback_note"))
+            factor_note = ui.label(note_text()).classes("sq-muted text-xs")
+            with ui.row().classes("items-center gap-6"):
+                ni = ui.switch(t("sp.neutral_industry"), value=SP["ni"], on_change=lambda e: set_sp("ni", e.value)) \
+                    .tooltip(t("sp.neutral_industry_help")).mark("sp_ni")
+                ni.set_enabled(not panel.industry.dropna().empty)
+                ns = ui.switch(t("sp.neutral_size"), value=SP["ns"], on_change=lambda e: set_sp("ns", e.value)) \
+                    .tooltip(t("cb.neutral_size_help") if panel.kind == "cb" else t("sp.neutral_size_help"))
+                ns.set_enabled(panel.has_fin or panel.kind == "cb")
 
-        def note_text():
-            if SP["weighting"] == "ml":
-                return t("sp.ml_note")
-            return t("sp.factor_note") + ("" if SP["weighting"] == "manual" else " " + t("sp.ic_fallback_note"))
-        factor_note = ui.label(note_text()).classes("sq-muted text-xs")
-        with ui.row().classes("items-center gap-6"):
-            ni = ui.switch(t("sp.neutral_industry"), value=SP["ni"], on_change=lambda e: set_sp("ni", e.value)) \
-                .tooltip(t("sp.neutral_industry_help")).mark("sp_ni")
-            ni.set_enabled(not panel.industry.dropna().empty)
-            ns = ui.switch(t("sp.neutral_size"), value=SP["ns"], on_change=lambda e: set_sp("ns", e.value)) \
-                .tooltip(t("cb.neutral_size_help") if panel.kind == "cb" else t("sp.neutral_size_help"))
-            ns.set_enabled(panel.has_fin or panel.kind == "cb")
-
-    # ---- 选股规则 ----
-    with section(t("sp.rules"), "filter_alt"):
-        with ui.row().classes("w-full items-center gap-4"):
-            ui.number(t("cb.top_n" if panel.kind == "cb" else "sp.top_n"), value=SP["top_n"], min=1, max=100, step=1, precision=0,
-                      on_change=lambda e: set_sp("top_n", e.value, int)).props("outlined dense").classes("w-32") \
-                .mark("sp_top_n")
-
-            def on_keep(e):
-                SP["keep_n"] = int(e.value) if e.value not in (None, "") else None
-                changed()
-            ui.number(t("sp.keep_n"), value=SP.get("keep_n"), min=1, max=200, step=1, precision=0,
-                      on_change=on_keep).props("outlined dense clearable").classes("w-36") \
-                .tooltip(t("sp.keep_n_help")).mark("sp_keep_n")
-
-            def on_reb(e):
-                SP["reb"] = e.value
-                reb_n.set_enabled(e.value == "n")
-                changed()
-            ui.select({**{r: p(REBALANCE[r]) for r in REBALANCE}, "n": t("sp.every_n")}, label=t("sp.rebalance"),
-                      value=SP["reb"], on_change=on_reb).props(DENSE).classes("w-40")
-            reb_n = ui.number(t("sp.every_n_days"), value=SP["reb_n"], min=1, max=250, precision=0,
-                              on_change=lambda e: set_sp("reb_n", e.value, int)).props("outlined dense").classes("w-36")
-            reb_n.set_enabled(SP["reb"] == "n")
-            ui.select({m: t("sp.month", m=m) for m in range(1, 13)}, label=t("sp.skip_months"), multiple=True,
-                      value=SP.get("skip", []), on_change=lambda e: set_sp("skip", sorted(e.value or [])))                 .props(DENSE + " use-chips clearable").classes("w-56").tooltip(t("sp.skip_months_help"))                 .mark("sp_skip")
-        if panel.kind == "cb":
+        # ---- 选股规则 ----
+        with section(t("sp.rules"), "filter_alt"):
             with ui.row().classes("w-full items-center gap-4"):
-                for k, m in CB_FILTERS.items():
-                    def on_f(e, k=k):
-                        SP["cbf"][k] = float(e.value) if e.value not in (None, "") else None
-                        changed()
-                    ui.number(p(m["label"]), value=SP["cbf"].get(k), on_change=on_f) \
-                        .props("outlined dense clearable").classes("w-60") \
-                        .tooltip(p(m["help"]) + t("cb.empty_no_limit")).mark(f"cb_{k}")
-        if panel.kind == "stock":
-            with ui.row().classes("w-full items-center gap-4"):
-                for k, m in STOCK_FILTERS.items():
-                    def on_s(e, k=k):
-                        SP["stockf"][k] = float(e.value) if e.value not in (None, "") else None
-                        changed()
-                    ui.number(p(m["label"]), value=SP["stockf"].get(k), on_change=on_s) \
-                        .props("outlined dense clearable").classes("w-60") \
-                        .tooltip(p(m["help"]) + t("sp.stock_filter_note")).mark(f"sp_{k}")
-            with ui.row().classes("w-full items-center gap-4"):
-                for k, m in RISK_FILTERS.items():
-                    def on_r(e, k=k):
-                        SP["riskf"][k] = float(e.value) if e.value not in (None, "") else None
-                        changed()
-                    ui.number(p(m["label"]), value=SP["riskf"].get(k), on_change=on_r)                         .props("outlined dense clearable").classes("w-60")                         .tooltip(p(m["help"]) + t("sp.risk_filter_note")).mark(f"sp_{k}")
-        with ui.row().classes("w-full items-center gap-4"):
+                ui.number(t("cb.top_n" if panel.kind == "cb" else "sp.top_n"), value=SP["top_n"], min=1, max=100, step=1, precision=0,
+                          on_change=lambda e: set_sp("top_n", e.value, int)).props("outlined dense").classes("w-32") \
+                    .mark("sp_top_n")
+
+                def on_keep(e):
+                    SP["keep_n"] = int(e.value) if e.value not in (None, "") else None
+                    changed()
+                ui.number(t("sp.keep_n"), value=SP.get("keep_n"), min=1, max=200, step=1, precision=0,
+                          on_change=on_keep).props("outlined dense clearable").classes("w-36") \
+                    .tooltip(t("sp.keep_n_help")).mark("sp_keep_n")
+
+                def on_reb(e):
+                    SP["reb"] = e.value
+                    reb_n.set_enabled(e.value == "n")
+                    changed()
+                ui.select({**{r: p(REBALANCE[r]) for r in REBALANCE}, "n": t("sp.every_n")}, label=t("sp.rebalance"),
+                          value=SP["reb"], on_change=on_reb).props(DENSE).classes("w-40")
+                reb_n = ui.number(t("sp.every_n_days"), value=SP["reb_n"], min=1, max=250, precision=0,
+                                  on_change=lambda e: set_sp("reb_n", e.value, int)).props("outlined dense").classes("w-36")
+                reb_n.set_enabled(SP["reb"] == "n")
+                ui.select({m: t("sp.month", m=m) for m in range(1, 13)}, label=t("sp.skip_months"), multiple=True,
+                          value=SP.get("skip", []), on_change=lambda e: set_sp("skip", sorted(e.value or [])))                 .props(DENSE + " use-chips clearable").classes("w-56").tooltip(t("sp.skip_months_help"))                 .mark("sp_skip")
+            if panel.kind == "cb":
+                with ui.row().classes("w-full items-center gap-4"):
+                    for k, m in CB_FILTERS.items():
+                        def on_f(e, k=k):
+                            SP["cbf"][k] = float(e.value) if e.value not in (None, "") else None
+                            changed()
+                        ui.number(p(m["label"]), value=SP["cbf"].get(k), on_change=on_f) \
+                            .props("outlined dense clearable").classes("w-60") \
+                            .tooltip(p(m["help"]) + t("cb.empty_no_limit")).mark(f"cb_{k}")
             if panel.kind == "stock":
-                ui.switch(t("sp.exclude_st"), value=SP["excl_st"], on_change=lambda e: set_sp("excl_st", e.value))
-            ui.number(t("sp.min_days"), value=SP["min_list"], min=0, max=2000, step=50, precision=0,
-                      on_change=lambda e: set_sp("min_list", e.value, int)).props("outlined dense").classes("w-36") \
-                .tooltip(t("sp.min_days_help"))
-            with ui.column().classes("gap-0 w-64"):
-                with ui.row().classes("w-full justify-between"):
-                    ui.label(t("strat.position")).classes("text-xs sq-muted")
-                    pos_lbl = ui.label(f"{SP['pos']}%").classes("sq-num text-xs text-primary")
+                with ui.row().classes("w-full items-center gap-4"):
+                    for k, m in STOCK_FILTERS.items():
+                        def on_s(e, k=k):
+                            SP["stockf"][k] = float(e.value) if e.value not in (None, "") else None
+                            changed()
+                        ui.number(p(m["label"]), value=SP["stockf"].get(k), on_change=on_s) \
+                            .props("outlined dense clearable").classes("w-60") \
+                            .tooltip(p(m["help"]) + t("sp.stock_filter_note")).mark(f"sp_{k}")
+                with ui.row().classes("w-full items-center gap-4"):
+                    for k, m in RISK_FILTERS.items():
+                        def on_r(e, k=k):
+                            SP["riskf"][k] = float(e.value) if e.value not in (None, "") else None
+                            changed()
+                        ui.number(p(m["label"]), value=SP["riskf"].get(k), on_change=on_r)                         .props("outlined dense clearable").classes("w-60")                         .tooltip(p(m["help"]) + t("sp.risk_filter_note")).mark(f"sp_{k}")
+            with ui.row().classes("w-full items-center gap-4"):
+                if panel.kind == "stock":
+                    ui.switch(t("sp.exclude_st"), value=SP["excl_st"], on_change=lambda e: set_sp("excl_st", e.value))
+                ui.number(t("sp.min_days"), value=SP["min_list"], min=0, max=2000, step=50, precision=0,
+                          on_change=lambda e: set_sp("min_list", e.value, int)).props("outlined dense").classes("w-36") \
+                    .tooltip(t("sp.min_days_help"))
+                with ui.column().classes("gap-0 w-64"):
+                    with ui.row().classes("w-full justify-between"):
+                        ui.label(t("strat.position")).classes("text-xs sq-muted")
+                        pos_lbl = ui.label(f"{SP['pos']}%").classes("sq-num text-xs text-primary")
 
-                def on_pos(e):
-                    pos_lbl.text = f"{int(e.value)}%"
-                    set_sp("pos", e.value, int)
-                ui.slider(min=10, max=100, step=5, value=SP["pos"], on_change=on_pos)
-        if panel.kind == "cb":
-            ui.label(t("cb.coupon_note")).classes("sq-muted text-sm")
-        with ui.row().classes("w-full items-center gap-4") as div_row:
-            with ui.column().classes("gap-0"):
-                ui.label(t("sp.dividend")).classes("text-xs sq-muted").tooltip(t("sp.dividend_help"))
-                div_radio = ui.radio({k: p(v) for k, v in DIVIDEND.items()}, value=SP.get("dividend", "reinvest"),
-                                     on_change=lambda e: set_sp("dividend", e.value)) \
-                    .props("inline dense").mark("sp_dividend")
-                div_radio.tooltip(t("sp.dividend_help"))
-            div_warn = ui.column()
-        div_row.set_visibility(panel.kind == "stock")
+                    def on_pos(e):
+                        pos_lbl.text = f"{int(e.value)}%"
+                        set_sp("pos", e.value, int)
+                    ui.slider(min=10, max=100, step=5, value=SP["pos"], on_change=on_pos)
+            if panel.kind == "cb":
+                ui.label(t("cb.coupon_note")).classes("sq-muted text-sm")
+            with ui.row().classes("w-full items-center gap-4") as div_row:
+                with ui.column().classes("gap-0"):
+                    ui.label(t("sp.dividend")).classes("text-xs sq-muted").tooltip(t("sp.dividend_help"))
+                    div_radio = ui.radio({k: p(v) for k, v in DIVIDEND.items()}, value=SP.get("dividend", "reinvest"),
+                                         on_change=lambda e: set_sp("dividend", e.value)) \
+                        .props("inline dense").mark("sp_dividend")
+                    div_radio.tooltip(t("sp.dividend_help"))
+                div_warn = ui.column()
+            div_row.set_visibility(panel.kind == "stock")
 
-    # ---- 大盘条件 ----
-    from gui.pages.strategy import side_editor      # 与择时策略页共用条件积木
+        # ---- 大盘条件 ----
+        from gui.pages.strategy import side_editor      # 与择时策略页共用条件积木
 
-    def dd_stop_editor(SP, on_changed):
-        box = ui.column().classes("w-full gap-3")
+        def dd_stop_editor(SP, on_changed):
+            box = ui.column().classes("w-full gap-3")
 
-        def draw():
-            box.clear()
-            val = float(SP.get("dd_stop") or 0)
-            with box:
-                with ui.row().classes("w-full items-center justify-between"):
-                    with ui.row().classes("items-center gap-2"):
-                        with ui.element("div").classes("sq-icon-chip"):
-                            ui.icon("shield")
-                        ui.label(t("sp.dd_stop_title")).classes("text-lg font-semibold")
+            def draw():
+                box.clear()
+                val = float(SP.get("dd_stop") or 0)
+                with box:
+                    with ui.row().classes("w-full items-center justify-between"):
+                        with ui.row().classes("items-center gap-2"):
+                            with ui.element("div").classes("sq-icon-chip"):
+                                ui.icon("shield")
+                            ui.label(t("sp.dd_stop_title")).classes("text-lg font-semibold")
 
-                if val > 0:
-                    with ui.card().classes("w-full p-3").props("flat"):
-                        with ui.row().classes("w-full items-center justify-between gap-3"):
-                            with ui.row().classes("items-center gap-2"):
-                                ui.label(t("sp.dd_stop_cond_prefix")).classes("text-sm")
-                                def on_val(e):
-                                    if e.value is not None:
-                                        SP["dd_stop"] = max(0.0, float(e.value))
-                                        on_changed()
-                                ui.number(value=val, min=1, max=90, step=1,
-                                          on_change=on_val) \
-                                    .props("outlined dense suffix=%").classes("w-28").mark("sp_dd_stop")
-                                ui.label(t("sp.dd_stop_cond_suffix")).classes("text-sm")
-                            def on_del():
-                                SP["dd_stop"] = 0
-                                draw()
-                                on_changed()
-                            ui.button(icon="delete", on_click=on_del) \
-                                .props("flat round dense color=negative").tooltip(t("sp.dd_stop_del")).mark("del:dd_stop")
-                    ui.label(t("sp.dd_stop_help")).classes("sq-muted text-sm")
-                else:
-                    ui.label(t("sp.dd_stop_empty")).classes("sq-muted text-sm")
-                    def on_add():
-                        SP["dd_stop"] = 15
-                        draw()
-                        on_changed()
-                    ui.button(t("sp.dd_stop_add"), icon="add", on_click=on_add) \
-                        .props("flat no-caps dense color=primary").mark("add:dd_stop")
+                    if val > 0:
+                        with ui.card().classes("w-full p-3").props("flat"):
+                            with ui.row().classes("w-full items-center justify-between gap-3"):
+                                with ui.row().classes("items-center gap-2"):
+                                    ui.label(t("sp.dd_stop_cond_prefix")).classes("text-sm")
+                                    def on_val(e):
+                                        if e.value is not None:
+                                            SP["dd_stop"] = max(0.0, float(e.value))
+                                            on_changed()
+                                    ui.number(value=val, min=1, max=90, step=1,
+                                              on_change=on_val) \
+                                        .props("outlined dense suffix=%").classes("w-28").mark("sp_dd_stop")
+                                    ui.label(t("sp.dd_stop_cond_suffix")).classes("text-sm")
+                                def on_del():
+                                    SP["dd_stop"] = 0
+                                    draw()
+                                    on_changed()
+                                ui.button(icon="delete", on_click=on_del) \
+                                    .props("flat round dense color=negative").tooltip(t("sp.dd_stop_del")).mark("del:dd_stop")
+                        ui.label(t("sp.dd_stop_help")).classes("sq-muted text-sm")
+                    else:
+                        ui.label(t("sp.dd_stop_empty")).classes("sq-muted text-sm")
+                        def on_add():
+                            SP["dd_stop"] = 15
+                            draw()
+                            on_changed()
+                        ui.button(t("sp.dd_stop_add"), icon="add", on_click=on_add) \
+                            .props("flat no-caps dense color=primary").mark("add:dd_stop")
 
-        draw()
+            draw()
 
-    with section(t("sp.market"), "show_chart"):
-        index_name = t(f"sp.market_index_{SP['universe']}") if SP["universe"] in ("all", "cb") \
-            else p(UNIVERSES[SP["universe"]]["label"])
-        ui.label(t("sp.market_help", index=index_name)).classes("sq-muted text-sm")
-        with ui.card().classes("w-full gap-3"):
-            side_editor(SP, "sell", t("sp.market_out"), "trending_down", lambda: changed(), options=MARKET_INDS,
-                        empty_text=t("sp.market_out_empty"), key="market")
-        with ui.card().classes("w-full gap-3"):
-            dd_stop_editor(SP, lambda: changed())
-        with ui.card().classes("w-full gap-3"):
-            side_editor(SP, "buy", t("sp.market_back"), "trending_up", lambda: changed(), options=MARKET_INDS,
-                        empty_text=t("sp.market_back_empty"), key="market")
+        with section(t("sp.market"), "show_chart"):
+            index_name = t(f"sp.market_index_{SP['universe']}") if SP["universe"] in ("all", "cb") \
+                else p(UNIVERSES[SP["universe"]]["label"])
+            ui.label(t("sp.market_help", index=index_name)).classes("sq-muted text-sm")
+            with ui.card().classes("w-full gap-3"):
+                side_editor(SP, "sell", t("sp.market_out"), "trending_down", lambda: changed(), options=MARKET_INDS,
+                            empty_text=t("sp.market_out_empty"), key="market")
+            with ui.card().classes("w-full gap-3"):
+                dd_stop_editor(SP, lambda: changed())
+            with ui.card().classes("w-full gap-3"):
+                side_editor(SP, "buy", t("sp.market_back"), "trending_up", lambda: changed(), options=MARKET_INDS,
+                            empty_text=t("sp.market_back_empty"), key="market")
 
-    make_broker = broker_settings(broker_key(panel.kind), default_preset="bond" if panel.kind == "cb" else "stock",
-                                  default_cash=1_000_000, show_t1=False, show_contribution=True,
-                                  contribution_help="sp.contribution_help")
+        make_broker = broker_settings(broker_key(panel.kind), default_preset="bond" if panel.kind == "cb" else "stock",
+                                      default_cash=1_000_000, show_t1=False, show_contribution=True,
+                                      contribution_help="sp.contribution_help", on_change=lambda: draw_chips())
 
-    preview = ui.label().classes("sq-code w-full")
-    with ui.row().classes("w-full items-end gap-3"):
-        ui.input(t("strat.name"), value=SP["name"], placeholder=t("sp.name_ph"),
-                        on_change=lambda e: set_sp("name", e.value or "")).props("outlined dense").classes("grow")             .mark("sp_name")
-        save_btn = ui.button(t("strat.save"), icon="save", on_click=lambda: save()).props("outline no-caps")             .mark("sp_save")
-        run_btn = ui.button(t("bt.run"), icon="play_arrow", on_click=lambda: do_run()).props("unelevated no-caps") \
-            .mark("sp_run")
-        with ui.button(t("exp.menu"), icon="ios_share").props("outline no-caps") as exp_btn:
-            exp_menu = ui.menu()
-        exp_menu.on("before-show", lambda: build_export_menu())
-        import_button()
-    running = ui.row().classes("items-center gap-2")
-    with running:
-        ui.spinner(size="sm")
-        ui.label(t("sp.running")).classes("sq-muted text-sm")
-    running.set_visibility(False)
+        # ---- 策略预览、名称与保存（与择时回测页一样放在设置区最下面） ----
+        preview = ui.label().classes("sq-code w-full")
+        with ui.row().classes("w-full items-end gap-3"):
+            ui.input(t("strat.name"), value=SP["name"], placeholder=t("sp.name_ph"),
+                     on_change=lambda e: set_sp("name", e.value or "")).props("outlined dense").classes("grow") \
+                .mark("sp_name")
+            save_btn = ui.button(t("strat.save"), icon="save", on_click=lambda: save()).props("outline no-caps") \
+                .mark("sp_save")
+
+    def draw_chips():
+        """设置区的标题行：因子 · 持有 · 调仓 · 条件 · 资金与费率（点任一处展开设置区）"""
+        chips.clear()
+        with chips:
+            for k, label, v in _chip_items(SP, panel.kind, lg):
+                with ui.element("div").classes("sq-chip").mark(f"sp_chip:{k}"):
+                    ui.label(label).classes("k")
+                    ui.label(v).classes("v")
+            ui.space()
+            ui.label(t("bt.edit_setup")).classes("sq-muted text-xs self-center pr-2 whitespace-nowrap")
 
     def set_sp(k, v, cast=None):
         if v is None:
@@ -446,6 +478,7 @@ def _backtest_form(SP, ctx, rebuild):
         if SP.get("dividend") == "cash" and not panel.div_codes and panel.kind == "stock":
             with div_warn:
                 notice(t("sp.need_div"), "warning", "warning")
+        draw_chips()
 
     def save():
         strategies.save_strategy(SP["name"].strip(), {**current_spec(SP), "broker": asdict(make_broker())})
@@ -456,6 +489,7 @@ def _backtest_form(SP, ctx, rebuild):
         plan_ctx = SP.pop("autorun", None)         # 刚导入的方案：回测后与其中记录的结果核对
         run_btn.disable()
         running.set_visibility(True)
+        ok = False
         try:
             t0 = time.time()
             run_panel, ps = await spec_panel(SP, ctx, spec)
@@ -470,14 +504,26 @@ def _backtest_form(SP, ctx, rebuild):
             title = SP["name"].strip() or t("sel.kind")
             history.add("sel", title, f"{uni} · {ctx.start} ~ {ctx.end}", res.metrics, data=uni, strategy=title)
             support.after_run()
+            ok = True
         except Exception as ex:  # noqa: BLE001
             SP["result"] = None
             ui.notify(t("bt.failed", e=ex), type="negative", multi_line=True)
         finally:
             run_btn.enable()
             running.set_visibility(False)
+        if setup.is_deleted:                # 回测期间表单被重画（换了股票池 / 载入了策略）
+            return
+        setup.value = not ok                # 成功：收起设置看结果；出错：展开，方便改设置
         results.refresh()
         build_export_menu()                 # 导出方案时附带刚得到的结果
+        if ok:      # 等折叠动画（0.3 秒）结束；摘要条不在视野上半部分时滚过去：摘要条在顶部，结果紧接在下面
+            ui.run_javascript(f"""setTimeout(() => {{
+                const el = getHtmlElement({setup_row.id});
+                if (!el) return;
+                const top = el.getBoundingClientRect().top;
+                const head = document.querySelector('.sq-header')?.offsetHeight || 0;
+                if (top < head || top > window.innerHeight * 0.5) el.scrollIntoView({{behavior: 'smooth', block: 'start'}});
+            }}, 400)""")
 
     def build_export_menu():
         """每次打开菜单时按当前设置生成（刚跑完的回测名单才能写进文件）"""
@@ -554,6 +600,52 @@ def _backtest_form(SP, ctx, rebuild):
     results()
     if SP.get("autorun") and SP["factors"]:          # 导入方案后自动回测一次
         ui.timer(0.1, do_run, once=True)
+
+
+def _chip_items(SP, kind: str, lg: str) -> list[tuple[str, str, str]]:
+    """设置摘要：[(marker 后缀, 标签, 值)]——因子 · 持有 · 调仓 · 条件 · 资金与费率"""
+    sep = "、" if lg == "zh" else ", "
+    fs = SP["factors"]
+    factors = sep.join(p(FACTORS[f["key"]]["label"]) for f in fs) if len(fs) <= 2 \
+        else t("sp.chip_n_factors", n=len(fs))
+
+    hold = t("sp.chip_top", n=int(SP["top_n"]))
+    if SP.get("keep_n") and int(SP["keep_n"]) > int(SP["top_n"]):
+        hold += " · " + t("sp.chip_keep", m=int(SP["keep_n"]))
+
+    reb = reb_label(SP["reb"] if SP["reb"] != "n" else int(SP["reb_n"]))
+    if SP.get("skip"):
+        months = sorted(SP["skip"])
+        reb += " · " + t("sp.chip_skip", months=sep.join(str(m) if lg == "zh" else calendar.month_abbr[m]
+                                                         for m in months))
+
+    # 条件：设了值的过滤条件 + 实际生效的大盘条件 + 回撤停手（排除 ST、上市天数是常设项，不计）
+    if kind == "cb":
+        n_filters = sum(SP["cbf"].get(k) is not None for k in CB_FILTERS)
+    else:
+        n_filters = sum(v is not None for d in (SP.get("stockf") or {}, SP.get("riskf") or {}) for v in d.values())
+    market = market_spec(SP) or {}
+    n_market = sum(len((market.get(s) or {}).get("conditions") or []) for s in ("sell", "buy"))
+    dd = float(SP.get("dd_stop") or 0)
+    parts = []
+    if n_filters:
+        parts.append(t("sp.chip_filters", n=n_filters))
+    if n_market:
+        parts.append(t("sp.chip_market", n=n_market))
+    if dd > 0:
+        parts.append(t("sp.chip_dd", v=f"{dd:g}"))
+    cond = " · ".join(parts) or t("sp.chip_none")
+
+    b = state.STATE.get(f"{broker_key(kind)}_broker") or {}
+    preset = COST_PRESETS.get(b.get("preset"))
+    money = t("bt.cash_wan", v=f"{(b.get('cash') or 0) / 1e4:g}") + (" · " + p(preset["label"]) if preset else "")
+    if b.get("contribution"):
+        money += " · " + t("bt.chip_contribution", v=f"{b['contribution']:,.0f}",
+                           freq=t("bt.contrib_weekly") if b.get("contribution_freq") == "weekly"
+                           else t("bt.contrib_monthly"))
+    return [("factors", t("sp.chip_factors"), factors or "—"), ("hold", t("sp.chip_hold"), hold),
+            ("reb", t("sp.chip_reb"), reb), ("cond", t("sp.chip_cond"), cond),
+            ("broker", t("bt.chip_broker"), money)]
 
 
 def _sel_checks(SP, base: list[dict]):

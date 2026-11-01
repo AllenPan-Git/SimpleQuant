@@ -259,8 +259,9 @@ def strategy_selector(key: str, on_change, on_broker=None) -> dict:
 # ---------------- 资金与费率 ----------------
 def broker_settings(key: str, default_preset: str = "etf", default_cash: int = 100_000, show_t1: bool = True,
                     show_dividend: bool = False, show_contribution: bool = False,
-                    contribution_help: str = "bt.contribution_help"):
-    """返回一个函数，调用时按当前控件值生成 BrokerConfig；show_contribution：显示定投的每期追加资金"""
+                    contribution_help: str = "bt.contribution_help", on_change=None):
+    """返回一个函数，调用时按当前控件值生成 BrokerConfig；show_contribution：显示定投的每期追加资金；
+    on_change：任一控件改了之后调用（页面上的设置摘要跟着变）"""
     saved = state.STATE.setdefault(f"{key}_broker", {"cash": default_cash, "preset": default_preset, "t1": True,
                                                     "slippage": 5.0, "custom": {}})
     saved.setdefault("dividend", "reinvest")
@@ -315,6 +316,8 @@ def broker_settings(key: str, default_preset: str = "etf", default_cash: int = 1
             saved.update(contribution=add.value or 0, contribution_freq=freq.value)
         saved["custom"][preset.value] = {"commission": comm.value or 0, "min_commission": minc.value or 0,
                                          "stamp_duty": stamp.value or 0}
+        if on_change:
+            on_change()
 
     fill_costs()
     preset.on_value_change(lambda e: (fill_costs(), remember()))

@@ -908,6 +908,50 @@ async def test_selection_backtest(user: User):
 
 
 @needs_stocks
+async def test_selection_setup_bar(user: User, monkeypatch):
+    """选股回测设置条：摘要标签跟着设置变；回测成功后收起，重新打开页面仍收起；回测出错时展开"""
+    def chip(name):                                               # 摘要标签的值（标签下面第二个文字）
+        return user.find(marker=f"sp_chip:{name}").elements.pop().default_slot.children[1].text
+
+    SP = await _open_selection(user)
+    setup = user.find(marker="sp_setup").elements.pop()
+    assert setup.value is True                                    # 还没有结果：展开
+    assert chip("hold") == "前 10 只" and chip("reb") == "每月" and chip("cond") == "无"
+    assert chip("factors") == "盈利收益率 EP (1/PE)、20日收益" and chip("broker") == "100 万元 · A股股票"
+    user.find(marker="sp_top_n").elements.pop().set_value(15)
+    user.find(marker="sp_keep_n").elements.pop().set_value(20)
+    user.find(marker="sp_skip").elements.pop().set_value([4, 1])
+    user.find(marker="add:dd_stop").click()
+    await settle()
+    assert chip("hold") == "前 15 只 · 保留前 20 名"
+    assert chip("reb") == "每月 · 空仓 1、4 月"
+    assert chip("cond") == "回撤停手 15%"
+
+    user.find(marker="sp_run").click()
+    assert await _wait(lambda: SP.get("result"), n=1200)
+    await settle()
+    assert setup.value is False and SP["setup_open"] is False      # 成功：收起
+    await user.should_see("回测结果")
+
+    state.STATE["sp_panel_key"] = None                             # 离开再回来：表单重画，仍是收起的
+    await user.open("/selection")
+    assert await _wait(lambda: state.STATE.get("sp_panel_key") is not None, n=2400)
+    await settle()
+    setup = user.find(marker="sp_setup").elements.pop()
+    assert setup.value is False
+
+    def boom(*a, **k):
+        raise RuntimeError("测试用的错误")
+    # run_selection 在选股回测子模块里用；页面模块会被测试工具重新导入，所以从页面函数一路找到它实际用的那份
+    sel_globals = routes()["/selection"].__globals__["_backtest"].__globals__
+    monkeypatch.setitem(sel_globals, "run_selection", boom)
+    user.find(marker="sp_run").click()
+    assert await _wait(lambda: SP.get("result") is None, n=600)
+    await settle()
+    assert setup.value is True and SP["setup_open"] is True        # 出错：展开，方便改设置
+
+
+@needs_stocks
 async def test_selection_market_condition(user: User):
     """大盘条件：加一条空仓条件（默认「收盘价 小于 均线 MA(20)」）后写进策略，回测里空仓日名单为空"""
     from gui.pages.selection import current_spec
@@ -1322,6 +1366,8 @@ async def test_selection_cb_backtest(user: User):
     SP = await _open_cb(user)
     assert [f["key"] for f in SP["factors"]] == ["cb_double_low"]      # 切换后默认「双低」
     assert SP["excl_st"] is False and SP["min_list"] == 0
+    cond = user.find(marker="sp_chip:cond").elements.pop().default_slot.children[1].text
+    assert cond == "过滤 3 项"                                   # 默认的价格上限、成交额下限、剩余期限下限
     user.find(marker="cb_max_price").elements.pop().set_value(125)
     await settle()
     assert SP["cbf"]["max_price"] == 125

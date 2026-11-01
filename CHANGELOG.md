@@ -5,6 +5,14 @@
 
 Changes in each release. `tools/release.py` copies the matching section into the GitHub release notes.
 
+## 未发布
+
+### 更新内容
+- 改进：选股页「选股回测」改为与择时回测页一致的设置条布局。「开始回测」「导出策略」「导入方案」移到顶部右侧，设置较长时随页面滚动保持可见；全部设置收进一个折叠区，收起时显示一行摘要（因子 · 持有 · 调仓 · 条件 · 资金与费率），点击即可展开修改。回测完成后设置区自动收起并显示结果，回测出错时保持展开；策略名称与保存按钮移至设置区底部
+
+### Changes
+- Improved: the Backtest tab of the Stock selection page now uses the same setup bar as the timing Backtest page. Run backtest, Export and Import plan sit at the top right and stay visible while scrolling through long settings; all settings fold into one section that shows a one-line summary when collapsed (factors · holdings · rebalancing · conditions · capital & costs), and clicking it expands the settings. The section collapses automatically to show the results after a successful run and stays open if the run fails; the strategy name and Save button are now at the bottom of the settings
+
 ## 2.2.0（2026-10-31）
 
 ### 更新内容

@@ -99,7 +99,8 @@ def page():
         # 过渡提示（2.4.0 起，保留两个版本）：个股概览、持仓诊断移到了工具页
         ui.label(t("sp.moved_tools")).classes("sq-muted text-xs cursor-pointer") \
             .on("click", lambda: ui.navigate.to("/tools")).mark("sp_moved_tools")
-        with ui.tab_panels(tabs, value=state.STATE.get("sp_tab", "bt")).classes("w-full bg-transparent") as panels:
+        with ui.tab_panels(tabs, value=state.STATE.get("sp_tab", "bt")).classes("w-full bg-transparent") \
+                .mark("sp_tabs") as panels:
             with ui.tab_panel(tab_data).classes("px-0 gap-4"):
                 data_box = ui.column().classes("w-full gap-4")
             with ui.tab_panel(tab_res).classes("px-0 gap-4"):

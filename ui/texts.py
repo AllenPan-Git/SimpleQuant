@@ -1928,6 +1928,8 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
     "step.not_started": L("未开始", "Not started"),
     "step.done": L("已完成", "Done"),
     "step.n_data": L("{n} 份数据", "{n} dataset(s)"),
+    "step.uni_ready": L("{u} 已下载", "{u} downloaded"),
+    "step.uni_missing": L("{u} 未下载", "{u} not downloaded"),
     "step.n_saved": L("已保存 {n} 个", "{n} saved"),
     "step.n_accounts": L("{n} 个账户", "{n} account(s)"),
     "step.eyebrow": L("{flow} · 第 {n} 步", "{flow} · Step {n}"),

@@ -161,6 +161,40 @@ async def test_flow_switch_changes_steps(user: User):
     await user.should_see(marker="nav:/optimize")
 
 
+async def test_selection_flow_data_step(user: User):
+    """选股流程的「01 数据」：小字为当前股票池的下载状态；点击到选股页的数据标签（已在选股页时也切过去）；
+    择时流程的「01 数据」仍到数据页"""
+    from gui.common import t, p
+    from simplequant.stocks import UNIVERSES, universe as U
+
+    def tab_value():
+        try:
+            return user.find(marker="sp_tabs").elements.pop().value
+        except AssertionError:          # 页面正在切换
+            return None
+
+    async def on_data_tab():            # 跳转是后台任务：等新页面画出来
+        assert await _wait(lambda: tab_value() == "data")
+        assert state.STATE["sp_tab"] == "data"
+    await user.open("/")
+    user.find(marker="flow:selection").click()
+    await user.should_see(marker="sp_tabs")
+    ok = U.ready("hs300")
+    await user.should_see(t("step.uni_ready" if ok else "step.uni_missing", u=p(UNIVERSES["hs300"]["label"])))
+    user.find(marker="nav:/paper").click()
+    await user.should_see(marker="pp_kind")
+    user.find(marker="nav:/data").click()               # 从模拟盘页（沿用选股流程）
+    await on_data_tab()
+    state.STATE["sp_tab"] = "bt"
+    await user.open("/selection")
+    user.find(marker="nav:/data").click()               # 已在选股页
+    await on_data_tab()
+    user.find(marker="flow:timing").click()
+    await user.should_see(marker="nav:/optimize")
+    user.find(marker="nav:/data").click()
+    await user.should_see("在线下载")
+
+
 # ---------------- 数据页 ----------------
 async def test_data_empty_library(user: User, lib_dir):
     await user.open("/data")

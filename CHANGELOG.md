@@ -9,9 +9,11 @@ Changes in each release. `tools/release.py` copies the matching section into the
 
 ### 更新内容
 - 改进：「个股概览」「持仓诊断」从选股页移至新的「工具」页（报头右上角「设置」左侧，首页「开始新的工作」下方也有入口）。两项沿用原有的输入与结果，持仓诊断与选股页共用已载入的数据，不会重复载入；选股回测结果中点击入选股票打开个股概览的方式不变
+- 改进：「多因子选股」流程顶部步骤条的「01 数据」改为打开选股页的「数据」标签页（选股所需的成分股、财务与排雷数据在此下载），下方小字显示当前股票池的数据是否已下载
 
 ### Changes
 - Improved: Stock overview and Holdings check have moved from the Stock selection page to a new Tools page, reached from the header next to Settings or from below "Start something new" on the home page. Earlier inputs and results carry over, and Holdings check reuses the data the Stock selection page has already loaded instead of loading it again; clicking a pick in selection results still opens its stock overview
+- Improved: in the Stock selection flow, step 01 Data in the header now opens the Data tab of the Stock selection page, where constituent, fundamental and risk-screen data are downloaded; the note under it shows whether data for the current universe has been downloaded
 
 ## 2.3.0（2026-11-02）
 

@@ -7,7 +7,7 @@ from nicegui import app, ui
 
 from simplequant.i18n import LANGS, tr
 from gui import theme, state, update
-from gui.common import t, lang, set_lang, dark, set_dark
+from gui.common import t, p, lang, set_lang, dark, set_dark
 
 # (路由, 文字键, 图标)：全部页面（注册路由、页面标题用）
 PAGES = [
@@ -51,7 +51,7 @@ def flow_of(route: str) -> str:
     return flow
 
 
-def step_info(route: str) -> tuple[bool, str]:
+def step_info(route: str, flow: str | None = None) -> tuple[bool, str]:
     """(是否已完成, 步骤下方的小字)"""
     from simplequant import strategies
     from simplequant.data import library
@@ -59,6 +59,11 @@ def step_info(route: str) -> tuple[bool, str]:
     from ui.shared import pct
     S = state.STATE
     try:
+        if route == "/data" and flow == "selection":      # 选股流程：当前股票池的选股数据是否已下载
+            from simplequant.stocks import UNIVERSES, universe as U
+            u = (S.get("sp") or {}).get("universe", "hs300")
+            ok = U.ready(u)
+            return ok, t("step.uni_ready" if ok else "step.uni_missing", u=p(UNIVERSES[u]["label"]))
         if route == "/data":
             n = len(library.list_datasets())
             return n > 0, t("step.n_data", n=n) if n else t("step.not_started")
@@ -90,13 +95,22 @@ def step_info(route: str) -> tuple[bool, str]:
     return False, ""
 
 
+def _go_step(route: str, flow: str):
+    """选股流程的「数据」指向选股页的数据标签（数据页下载不了选股数据）；过渡做法，3.0 的数据中心会取代它。
+    已在选股页时也重新打开一次：页面重画，面板取缓存（gui/sel_panel.py），不会重新载入"""
+    if flow == "selection" and route == "/data":
+        state.STATE["sp_tab"] = "data"
+        route = "/selection"
+    ui.navigate.to(route)
+
+
 def _steps(route: str, flow: str):
     routes = FLOWS[flow]
     with ui.row().classes("sq-steps items-center gap-0 no-wrap mx-auto"):
         for i, r in enumerate(routes, 1):
-            done, sub = step_info(r)
+            done, sub = step_info(r, flow)
             cls = "sq-step" + (" sq-step-cur" if r == route else " sq-step-done" if done else "")
-            with ui.element("div").classes(cls).on("click", lambda r=r: ui.navigate.to(r)).mark(f"nav:{r}"):
+            with ui.element("div").classes(cls).on("click", lambda r=r: _go_step(r, flow)).mark(f"nav:{r}"):
                 ui.html(f"<span class='n'>{i:02d}</span>")
                 ui.html(f"<div class='t'><span>{escape(t(STEP_KEY[r]))}</span>"
                         + (f"<small>{escape(sub)}</small>" if sub else "") + "</div>")

@@ -1746,11 +1746,13 @@ async def test_paper_single_account_flow(user: User, lib_dir, paper_dir, monkeyp
     assert await _wait(lambda: len(runs) >= 2), (len(runs), user.notify.messages)
     assert not any(runs[-1].values())                    # 没有失败的账户
     assert len(list_accounts()[0].fills()) == n and not list_accounts()[0].state()["divergence"]
-    # 暂停、删除（先确认）
+    # 暂停、删除（先确认）：都在「⋯」菜单里
     await settle()
+    user.find(marker="pp_more").click()
     user.find(marker="pp_pause").click()
     await settle()
     assert list_accounts()[0].status == "paused"
+    user.find(marker="pp_more").click()
     user.find(marker="pp_delete").click()
     await user.should_see(marker="pp_delete_yes")
     user.find(marker="pp_delete_yes").click()
@@ -1839,8 +1841,76 @@ async def test_home_accounts_table(user: User, paper_dir, monkeypatch):
     assert order == [f"acct:{busy.id}", f"acct:{quiet.id}"]
     await user.should_see("2 笔 · 01-21 开盘")
     user.find(marker=f"acct:{quiet.id}").click()
-    await user.should_see(marker="pp_account")
-    assert user.find(marker="pp_account").elements.pop().value == quiet.id
+    await user.should_see(marker="pp_detail_name")
+    assert user.find(marker="pp_detail_name").elements.pop().text == "没有信号"
+    assert state.STATE["pp"]["account"] == quiet.id
+
+
+async def test_paper_accounts_overview(user: User, paper_dir, monkeypatch):
+    """模拟盘页：顶部列出全部账户，默认显示最需要处理的那个；点一行换成该账户的详情并高亮该行；
+    暂停、删除收在「⋯」菜单里，暂停后「更新并运行」变灰、显示暂停说明，删除后改选剩下的账户"""
+    from simplequant.engine import BrokerConfig
+    from simplequant.paper import create_account, health, list_accounts
+    spec = {"kind": "template", "template": "buy_hold", "params": {}}
+    asset = [{"source": "akshare", "symbol": "510300", "asset": "etf", "name": "510300"}]
+    cal = pd.bdate_range("2026-01-01", "2026-01-31")
+    monkeypatch.setattr(health, "latest_expected_day", lambda c, now=None: pd.Timestamp("2026-01-20"))
+    patch_page(monkeypatch, "/paper", "load_calendar", lambda refresh_if_stale=True: cal)
+    patch_page(monkeypatch, "/paper", "latest_expected_day", lambda c, now=None: pd.Timestamp("2026-01-20"))
+
+    def make(name, signals):
+        acc = create_account(name, spec, BrokerConfig(), "2026-01-05", assets=asset)
+        acc.data_through = "2026-01-20"
+        acc.save()
+        acc.save_state({"as_of": "2026-01-20", "execute_on": "2026-01-21", "value": 105_000.0, "positions": [],
+                        "cash": 105_000.0, "metrics": {}, "divergence": None, "started": True,
+                        "signals": [{"symbol": "510300", "name": "510300", "side": "buy", "size": 100,
+                                     "ref_price": 4.0, "est_value": 400.0, "reason": ""}] * signals})
+        return acc
+
+    quiet, busy = make("没有信号", 0), make("有一笔", 1)
+
+    def detail_name():
+        return user.find(marker="pp_detail_name").elements.pop().text
+
+    def selected_rows():
+        table = user.find(marker="acct_table").elements.pop()
+        return [m for row in table.default_slot.children if "sq-acct-sel" in row.classes
+                for m in row._markers if m.startswith("acct:")]
+
+    await user.open("/paper")
+    await user.should_see(marker="pp_run_all")
+    assert detail_name() == "有一笔"                      # 有待执行交易的排在第一行，默认显示它
+    assert selected_rows() == [f"acct:{busy.id}"]
+
+    user.find(marker=f"acct:{quiet.id}").click()
+    await settle()
+    assert state.STATE["pp"]["account"] == quiet.id and detail_name() == "没有信号"
+    assert selected_rows() == [f"acct:{quiet.id}"]
+    await user.should_not_see(marker="pp_paused_note")
+
+    user.find(marker="pp_more").click()
+    user.find(marker="pp_pause").click()
+    await settle()
+    assert next(a for a in list_accounts() if a.id == quiet.id).status == "paused"
+    await user.should_see(marker="pp_paused_note")
+    assert not user.find(marker="pp_run_this").elements.pop().enabled
+    assert selected_rows() == [f"acct:{quiet.id}"]        # 暂停的账户排到最后，仍是选中的那个
+    await user.should_see("已暂停")
+
+    user.find(marker="pp_more").click()
+    user.find(marker="pp_pause").click()                  # 再点一次是「恢复」
+    await settle()
+    assert next(a for a in list_accounts() if a.id == quiet.id).status == "active"
+    assert user.find(marker="pp_run_this").elements.pop().enabled
+
+    user.find(marker="pp_more").click()
+    user.find(marker="pp_delete").click()
+    await user.should_see(marker="pp_delete_yes")
+    user.find(marker="pp_delete_yes").click()
+    assert await _wait(lambda: [a.id for a in list_accounts()] == [busy.id])
+    await settle()
+    assert detail_name() == "有一笔" and state.STATE["pp"]["account"] == busy.id
 
 
 async def test_paper_single_cash_dividend_account(user: User, lib_dir, paper_dir, monkeypatch):

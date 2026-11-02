@@ -19,12 +19,12 @@ from simplequant.strategies import TEMPLATES
 from simplequant.strategies.code_strategy import explain_error
 from gui import state
 from gui.common import t, p, lang
-from gui.components import broker_settings, metric_tile, dividend_notices, bench_label
+from gui.components import accounts_table, broker_settings, metric_tile, dividend_notices, bench_label
 from gui.plan_io import restore_broker
 from gui.layout import frame, page_title
 from gui.widgets import df_table, fmt_table, plot, notice, download_btn, LogBox
 from ui.charts import equity_chart
-from ui.shared import pct, num, lots as _lots
+from ui.shared import pct, num, account_rows, lots as _lots
 
 DENSE = "outlined dense options-dense"
 
@@ -54,19 +54,36 @@ def page():
             finally:
                 logs.stop()
 
+        def redraw():
+            overview.refresh()
+            new_account.refresh()
+            body.refresh()
+
+        def open_account(acc_id):
+            PP["account"] = acc_id
+            overview.refresh()
+            body.refresh()
+
+        # ---------------- 全部账户 ----------------
+        @ui.refreshable
+        def overview():
+            _overview(PP, run_accounts, redraw, open_account)
+        overview()
+
         # ---------------- 新建账户 ----------------
         @ui.refreshable
         def new_account():
             accounts = list_accounts()
             with ui.expansion(t("pp.new"), icon="add_circle", value=not accounts).classes("w-full q-card"):
-                _new_account_form(PP, run_accounts, lambda: (new_account.refresh(), body.refresh()))
+                _new_account_form(PP, run_accounts, redraw)
         new_account()
 
         logs = LogBox()
 
+        # ---------------- 选中账户的详情 ----------------
         @ui.refreshable
         def body():
-            _account_view(PP, run_accounts, lambda: (new_account.refresh(), body.refresh()))
+            _account_view(PP, run_accounts, redraw)
         body()
 
         _schedule_box(PP)
@@ -205,35 +222,50 @@ def _new_account_form(PP, run_accounts, redraw):
     draw()
 
 
+def _overview(PP, run_accounts, redraw, open_account):
+    """页面顶部：全部账户一览（点一行在下面显示该账户）和「更新全部账户」；没有账户时不显示"""
+    accounts = list_accounts()
+    if not accounts:
+        return
+    try:
+        calendar = load_calendar(refresh_if_stale=False)
+    except Exception:  # noqa: BLE001 - 读不到交易日历时不判断数据是否过期
+        calendar = None
+    rows = account_rows(accounts, calendar)
+    if PP["account"] not in {r["id"] for r in rows}:
+        PP["account"] = rows[0]["id"]      # 首次打开或刚删掉选中的账户：选最需要处理的那个
+
+    async def run_every():
+        btn.disable()
+        await run_accounts(list_accounts())
+        redraw()
+
+    with ui.element("div").classes("sq-sec").style("align-items: center"):
+        ui.label(t("pp.accounts_head")).classes("sq-h2")
+        btn = ui.button(t("pp.run_all"), icon="sync", on_click=run_every).props("outline no-caps") \
+            .mark("pp_run_all")
+    accounts_table(accounts, open_account, rows=rows, selected=PP["account"])
+
+
 def _account_view(PP, run_accounts, redraw):
     lg = lang()
     accounts = list_accounts()
     if not accounts:
         return
     ids = [a.id for a in accounts]
-    if PP["account"] not in ids:
+    if PP["account"] not in ids:          # 一般已由 _overview 选好
         PP["account"] = ids[0]
-
-    def acc_label(a):
-        return f"{a.name} · {t('pp.kind_' + a.kind)}" + ("" if a.status == "active" else f" · {t('pp.paused')}")
-    ui.select({a.id: acc_label(a) for a in accounts}, label=t("pp.account"), value=PP["account"],
-              on_change=lambda e: (PP.__setitem__("account", e.value), redraw())) \
-        .props(DENSE).classes("w-full md:w-1/2").mark("pp_account")
     acc = load_account(PP["account"])
     st = acc.state()
     nav = acc.nav()
     calendar = load_calendar(refresh_if_stale=False)
     expected = latest_expected_day(calendar)
     stale = not acc.data_through or pd.Timestamp(acc.data_through) < expected
+    paused = acc.status != "active"
 
     async def run_this():
         b1.disable()
         await run_accounts([acc])
-        redraw()
-
-    async def run_every():
-        b2.disable()
-        await run_accounts(list_accounts())
         redraw()
 
     def toggle_pause():
@@ -255,15 +287,24 @@ def _account_view(PP, run_accounts, redraw):
             PP["account"] = None
             redraw()
 
-    with ui.row().classes("items-center gap-3"):
-        b1 = ui.button(t("pp.run_this"), icon="refresh", on_click=run_this).props("unelevated no-caps") \
-            .mark("pp_run_this")
-        b2 = ui.button(t("pp.run_all"), icon="sync", on_click=run_every).props("outline no-caps")
-        paused = acc.status != "active"
-        ui.button(t("pp.resume") if paused else t("pp.pause"), icon="play_circle" if paused else "pause_circle",
-                  on_click=toggle_pause).props("outline no-caps").mark("pp_pause")
-        ui.button(t("pp.delete"), icon="delete", on_click=ask_delete).props("outline no-caps color=negative") \
-            .mark("pp_delete")
+    # 标题行：账户名 + 类型，右侧只放「更新并运行」；暂停 / 恢复、删除收进「⋯」菜单
+    with ui.element("div").classes("sq-sec flex-wrap gap-x-4 gap-y-2").style("align-items: center"):
+        with ui.row().classes("items-baseline gap-x-3 gap-y-0 min-w-0"):
+            ui.label(acc.name).classes("sq-h2").mark("pp_detail_name")
+            ui.label(t(f"pp.kind_{acc.kind}") + (" · " + t("pp.paused") if paused else "")) \
+                .classes("sq-muted text-sm")
+        with ui.row().classes("items-center gap-2 no-wrap"):
+            b1 = ui.button(t("pp.run_this"), icon="refresh", on_click=run_this).props("unelevated no-caps") \
+                .mark("pp_run_this")
+            b1.set_enabled(not paused)                   # 暂停的账户运行时会被跳过
+            with ui.button(icon="more_horiz").props("outline").tooltip(t("pp.more")).mark("pp_more"):
+                with ui.menu():
+                    ui.menu_item(t("pp.resume") if paused else t("pp.pause"), on_click=toggle_pause) \
+                        .mark("pp_pause")
+                    ui.separator()
+                    ui.menu_item(t("pp.delete"), on_click=ask_delete).classes("text-negative").mark("pp_delete")
+    if paused:
+        notice(t("pp.paused_note"), "pause_circle", "info").mark("pp_paused_note")
 
     err = acc.error()
     if err:

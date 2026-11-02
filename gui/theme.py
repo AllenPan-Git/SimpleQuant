@@ -107,6 +107,9 @@ code, pre {{ font-family: var(--sq-mono); }}
 .sq-plain {{ background: transparent !important; border: 0 !important; }}
 .sq-hover-row {{ cursor: pointer; }}
 .sq-hover-row:hover .sq-hover-title {{ color: var(--sq-red); }}
+/* 模拟盘页：一览表里当前显示详情的账户 */
+.sq-acct-sel {{ background: var(--sq-red-soft); box-shadow: inset 3px 0 0 var(--sq-red); padding-left: 12px; }}
+.sq-acct-sel .sq-hover-title {{ color: var(--sq-red); }}
 .sq-icon-chip {{ width: 30px; height: 30px; display: grid; place-items: center; color: var(--sq-red);
   border: 1px solid var(--sq-border); background: var(--sq-card); }}
 

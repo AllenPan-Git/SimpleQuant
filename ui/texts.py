@@ -1612,8 +1612,11 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
     "pp.name": L("账户名称", "Account name"),
     "pp.name_ph": L("例如：沪深300 低估值 月度调仓", "e.g. CSI 300 value monthly"),
     "pp.create": L("创建模拟账户", "Create paper account"),
-    "pp.account": L("模拟账户", "Account"),
+    "pp.accounts_head": L("全部账户", "All accounts"),
     "pp.paused": L("已暂停", "paused"),
+    "pp.more": L("更多操作", "More actions"),
+    "pp.paused_note": L("该账户已暂停，「更新全部账户」和每日自动运行都会跳过它。如需继续运行，请在右侧「⋯」菜单中选择「恢复」。",
+                        "This account is paused, so \"Update all accounts\" and the daily run skip it. To run it again, choose Resume from the ⋯ menu on the right."),
     # 模拟账户一览表（首页、模拟盘页共用）
     "acct.col_name": L("账户", "Account"),
     "acct.col_value": L("总资产", "Value"),

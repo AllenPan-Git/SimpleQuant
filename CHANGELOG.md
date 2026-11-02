@@ -9,9 +9,11 @@ Changes in each release. `tools/release.py` copies the matching section into the
 
 ### 更新内容
 - 改进：首页的模拟账户区域在有两个及以上账户时改为「今天的模拟盘」摘要，显示全部账户待执行交易的合计笔数与执行日（已暂停的账户不计）；首页新增「模拟账户」一览表，列出各账户的类型、总资产、累计收益、待执行交易与状态（正常、运行失败、落后 n 个交易日、尚未运行、当天数据未发布、已暂停），需要处理的账户排在最前，点击一行打开模拟盘页并选中该账户。只有一个账户时首页显示不变
+- 改进：模拟盘页改为「先列表、后详情」。页面顶部列出全部模拟账户（与首页同一张一览表）及「更新全部账户」按钮，点击一行即在下方显示该账户的详情，当前账户在表中高亮；原账户下拉框已取消。详情标题行只保留「更新并运行」，「暂停 / 恢复」与「删除」收进右侧「⋯」菜单（删除仍需确认）。已暂停的账户「更新并运行」不可点击，并提示恢复方法
 
 ### Changes
 - Improved: with two or more paper accounts, the home page now shows a "Paper trading today" summary with the total number of pending trades across accounts and when they execute (paused accounts are not counted), plus a new Paper accounts table listing each account's type, value, return, pending trades and status (OK, run failed, n trading days behind, not run yet, today's data pending, paused). Accounts that need attention are listed first, and clicking a row opens that account on the Paper page. With a single account the home page is unchanged
+- Improved: the Paper page now lists first and shows details second. The top of the page lists all paper accounts (the same table as on the home page) with an "Update all accounts" button; clicking a row shows that account's details below and highlights it in the table, replacing the old account drop-down. The details header keeps only "Update & run"; Pause / Resume and Delete have moved into the ⋯ menu next to it (Delete still asks for confirmation). For a paused account, "Update & run" is disabled and a note explains how to resume it
 
 ## 2.4.1（2026-11-02）
 

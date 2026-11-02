@@ -11,8 +11,9 @@ from simplequant.paper import list_accounts, load_calendar, health, schedule
 from simplequant.strategies import list_strategies
 from gui import history, state
 from gui.common import t
+from gui.components import accounts_table
 from gui.layout import frame
-from ui.shared import pct, num
+from ui.shared import pct, num, account_rows
 
 
 def page():
@@ -22,6 +23,7 @@ def page():
             _migrate_card(legacy)
         metas = library.list_datasets()
         recent = history.recent()
+        accounts, rows = _paper_rows()
 
         hour = dt.datetime.now().hour
         greet = "home.greet_morning" if hour < 12 else "home.greet_afternoon" if hour < 18 else "home.greet_evening"
@@ -35,7 +37,11 @@ def page():
                 _continue(recent[0])
             else:
                 _hero(bool(metas))
-            _paper_panel()
+            _paper_panel(accounts, rows)
+
+        if len(accounts) >= 2:
+            _section(t("home.accounts"), t("home.accounts_note"))
+            accounts_table(accounts, _open_account, rows=rows)
 
         _section(t("home.new_work"), t("home.new_work_note"))
         with ui.element("div").classes("sq-starts w-full grid").style("grid-template-columns: repeat(4, minmax(0, 1fr))"):
@@ -109,6 +115,11 @@ def _start(key: str, route: str):
     if key in ("template", "ai", "code"):
         state.strategy()["mode"] = key
     ui.navigate.to(route)
+
+
+def _open_account(account_id: str):
+    state.STATE["pp_open"] = account_id
+    ui.navigate.to("/paper")
 
 
 def _open_tool(tab: str):
@@ -201,17 +212,30 @@ def _spark(values: list[float]) -> str:
             f"vector-effect='non-scaling-stroke'/></svg>")
 
 
-def _paper_panel():
-    with ui.column().classes("gap-0 sq-rule-top pt-3 min-w-0"):
-        try:
-            accounts = [a for a in list_accounts() if a.status == "active"] or list_accounts()
-        except Exception:  # noqa: BLE001
-            accounts = []
+def _paper_rows() -> tuple[list, list]:
+    """全部模拟账户及其一览表行（读不出账户列表时都为空，不影响首页）"""
+    try:
+        accounts = list_accounts()
+    except Exception:  # noqa: BLE001
+        return [], []
+    try:
+        calendar = load_calendar(refresh_if_stale=False)
+    except Exception:  # noqa: BLE001
+        calendar = None
+    return accounts, account_rows(accounts, calendar)
+
+
+def _paper_panel(accounts: list, rows: list):
+    """右上角：没有账户时引导新建；一个账户时显示资产和净值小图；两个及以上显示今天的待执行交易合计"""
+    with ui.column().classes("gap-0 sq-rule-top pt-3 min-w-0").mark("home_paper"):
         if not accounts:
             ui.label(t("nav.paper").split(". ", 1)[-1]).classes("sq-muted text-sm")
             ui.label(t("home.paper_none")).classes("text-sm py-3").style("color: var(--sq-text2)")
             ui.label(t("home.paper_create")).classes("sq-red text-sm cursor-pointer") \
                 .on("click", lambda: ui.navigate.to("/paper"))
+            return
+        if len(accounts) >= 2:
+            _paper_today(rows)
             return
         acc = accounts[0]
         ui.label(t("home.paper_title", name=acc.name)).classes("sq-muted text-sm")
@@ -231,10 +255,26 @@ def _paper_panel():
             through = t("home.paper_waiting")
         with ui.row().classes("w-full justify-between items-baseline sq-rule-top pt-2 mt-1 no-wrap") \
                 .style("border-top-color: var(--sq-border)"):
-            ui.label(through + (" · " + t("home.paper_more", n=len(accounts) - 1) if len(accounts) > 1 else "")) \
-                .classes("text-sm").style("color: var(--sq-text2)")
+            ui.label(through).classes("text-sm").style("color: var(--sq-text2)")
             ui.label(t("home.paper_view")).classes("sq-red text-sm cursor-pointer whitespace-nowrap") \
                 .on("click", lambda: ui.navigate.to("/paper"))
+
+
+def _paper_today(rows: list):
+    """两个及以上账户：待执行交易合计（暂停的账户不计）和最早的执行日"""
+    trades = sum(r["trades"] for r in rows)
+    days = sorted(r["execute_on"] for r in rows if r["trades"] and r["execute_on"])
+    ui.label(t("home.paper_today")).classes("sq-muted text-sm")
+    _paper_warnings()
+    with ui.row().classes("items-baseline gap-2 no-wrap"):
+        ui.label(str(trades)).classes("sq-fig").style("font-size: 32px").mark("home_paper_trades")
+        ui.label(t("home.paper_trades")).classes("text-sm").style("color: var(--sq-text2)")
+    foot = t("home.paper_count", n=len(rows)) + (" · " + t("home.paper_exec", d=days[0][5:]) if days else "")
+    with ui.row().classes("w-full justify-between items-baseline sq-rule-top pt-2 mt-3 no-wrap") \
+            .style("border-top-color: var(--sq-border)"):
+        ui.label(foot).classes("text-sm").style("color: var(--sq-text2)")
+        ui.label(t("home.paper_all")).classes("sq-red text-sm cursor-pointer whitespace-nowrap") \
+            .on("click", lambda: ui.navigate.to("/paper"))
 
 
 def _paper_issues() -> list:

@@ -37,7 +37,7 @@ def page():
     PP = state.STATE.setdefault("pp", {"kind": "single", "strategy": None, "assets": [], "sel": None,
                                        "mode": "now", "past": str(dt.date.today() - dt.timedelta(days=180)),
                                        "name": "", "account": None, "task_time": "19:00"})
-    opened = state.STATE.pop("pp_open", None)       # 刚在资产配置页创建的组合账户
+    opened = state.STATE.pop("pp_open", None)       # 资产配置页刚创建的组合账户，或首页账户一览点的那一行
     if opened:
         PP["account"] = opened
     with frame("/paper"):

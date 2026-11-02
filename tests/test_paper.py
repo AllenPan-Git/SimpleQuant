@@ -307,7 +307,7 @@ def test_account_rows_status_and_order():
     assert by["定投"]["ret"] == pytest.approx(0.2)            # 按累计投入 5 万算
     assert by["落后"]["status"] == "stale" and by["落后"]["lag"] == 2
     assert by["失败"]["status"] == "failed" and by["失败"]["error"] == "ValueError: boom"
-    assert by["暂停"]["status"] == "paused"
+    assert by["暂停"]["status"] == "paused" and by["暂停"]["trades"] == 0      # 暂停后不执行上次的信号
     assert by["未运行"]["status"] == "waiting" and by["未运行"]["value"] is None
     assert by["待发布"]["status"] == "data_pending"
     assert by["坏了"]["status"] == "unreadable" and by["坏了"]["value"] is None

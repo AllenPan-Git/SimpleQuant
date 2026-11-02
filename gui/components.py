@@ -432,21 +432,23 @@ _ACCT_STATUS_COLOR = {"failed": "var(--sq-red)", "unreadable": "var(--sq-red)", 
                       "data_pending": "var(--sq-gold)", "paused": "var(--sq-faint)"}
 
 
-def accounts_table(accounts: list, on_open, calendar: pd.DatetimeIndex | None = None):
+def accounts_table(accounts: list, on_open, calendar: pd.DatetimeIndex | None = None, rows: list | None = None):
     """模拟账户一览（首页、模拟盘页共用）：每行一个账户，点一行调用 on_open(账户 id)。
-    calendar 为空时读本地交易日历（不联网）；读不到时不判断数据是否过期"""
-    if calendar is None:
+    已算好 shared.account_rows 时传 rows；calendar 为空时读本地交易日历（不联网），读不到时不判断数据是否过期"""
+    if rows is None and calendar is None:
         try:
             from simplequant.paper import load_calendar
             calendar = load_calendar(refresh_if_stale=False)
         except Exception:  # noqa: BLE001
             calendar = None
-    rows = shared.account_rows(accounts, calendar)
+    if rows is None:
+        rows = shared.account_rows(accounts, calendar)
     with ui.column().classes("w-full gap-0").mark("acct_table"):
         with ui.element("div").classes("sq-acct-row w-full grid items-baseline pb-2 sq-rule-bottom") \
                 .style(f"grid-template-columns: {_ACCT_COLS}"):
             for i, key in enumerate(("name", "value", "ret", "trades", "status")):
-                ui.label(t(f"acct.col_{key}")).classes("sq-muted text-xs" + (" text-right" if i in (1, 2) else ""))
+                ui.label(t(f"acct.col_{key}")).classes("sq-muted text-xs" + (" text-right" if i in (1, 2) else
+                                                                               " pl-4" if i == 3 else ""))
         for r in rows:
             _account_line(r, on_open)
     return rows

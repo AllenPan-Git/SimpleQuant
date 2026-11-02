@@ -5,6 +5,14 @@
 
 Changes in each release. `tools/release.py` copies the matching section into the GitHub release notes.
 
+## 未发布
+
+### 更新内容
+- 改进：首页的模拟账户区域在有两个及以上账户时改为「今天的模拟盘」摘要，显示全部账户待执行交易的合计笔数与执行日（已暂停的账户不计）；首页新增「模拟账户」一览表，列出各账户的类型、总资产、累计收益、待执行交易与状态（正常、运行失败、落后 n 个交易日、尚未运行、当天数据未发布、已暂停），需要处理的账户排在最前，点击一行打开模拟盘页并选中该账户。只有一个账户时首页显示不变
+
+### Changes
+- Improved: with two or more paper accounts, the home page now shows a "Paper trading today" summary with the total number of pending trades across accounts and when they execute (paused accounts are not counted), plus a new Paper accounts table listing each account's type, value, return, pending trades and status (OK, run failed, n trading days behind, not run yet, today's data pending, paused). Accounts that need attention are listed first, and clicking a row opens that account on the Paper page. With a single account the home page is unchanged
+
 ## 2.4.1（2026-11-02）
 
 ### 更新内容

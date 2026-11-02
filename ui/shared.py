@@ -145,7 +145,7 @@ def account_row(acc, calendar: pd.DatetimeIndex | None, now=None) -> dict:
             row["trades"] = len(sig)
             row["execute_on"] = st.get("execute_on", "")
         if acc.status != "active":
-            row["status"] = "paused"
+            row["status"], row["trades"] = "paused", 0     # 暂停的账户不会执行上次留下的信号
         elif err := acc.error():
             row["status"], row["error"] = "failed", err.get("message", "")
         elif not st or "value" not in st:

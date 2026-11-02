@@ -1799,6 +1799,50 @@ async def test_home_paper_warnings(user: User, paper_dir, monkeypatch):
     await user.should_see(marker="pp_failed")
 
 
+async def test_home_accounts_table(user: User, paper_dir, monkeypatch):
+    """首页模拟账户：一个账户时显示资产大数字；两个及以上时右上角显示待执行交易合计，
+    中间列出账户一览（有信号的排前面），点一行跳到模拟盘页并选中该账户"""
+    from simplequant.engine import BrokerConfig
+    from simplequant.paper import create_account, health
+    spec = {"kind": "template", "template": "buy_hold", "params": {}}
+    asset = [{"source": "akshare", "symbol": "510300", "asset": "etf", "name": "510300"}]
+    cal = pd.bdate_range("2026-01-01", "2026-01-31")
+    monkeypatch.setattr(health, "latest_expected_day", lambda c, now=None: pd.Timestamp("2026-01-20"))
+    patch_page(monkeypatch, "/", "load_calendar", lambda refresh_if_stale=True: cal)
+    patch_page(monkeypatch, "/paper", "load_calendar", lambda refresh_if_stale=True: cal)
+
+    def make(name, signals):
+        acc = create_account(name, spec, BrokerConfig(), "2026-01-05", assets=asset)
+        acc.data_through = "2026-01-20"
+        acc.save()
+        acc.save_state({"as_of": "2026-01-20", "execute_on": "2026-01-21", "value": 105_000.0, "positions": [],
+                        "cash": 105_000.0, "metrics": {}, "divergence": None, "started": True,
+                        "signals": [{"symbol": "510300", "name": "510300", "side": "buy", "size": 100 * (i + 1),
+                                     "ref_price": 4.0, "est_value": 400.0 * (i + 1), "reason": ""}
+                                    for i in range(signals)]})
+        return acc
+
+    quiet = make("没有信号", 0)
+    await user.open("/")
+    await user.should_see(marker="home_paper")
+    await user.should_see("模拟账户 · 没有信号")
+    await user.should_not_see(marker="acct_table")          # 只有一个账户：不列一览表
+
+    busy = make("有两笔", 2)
+    await user.open("/")
+    await user.should_see("今天的模拟盘")
+    assert user.find(marker="home_paper_trades").elements.pop().text == "2"
+    await user.should_see("2 个模拟账户 · 01-21 开盘执行")
+    await user.should_see(marker="acct_table")
+    table = user.find(marker="acct_table").elements.pop()
+    order = [m for row in table.default_slot.children for m in row._markers if m.startswith("acct:")]
+    assert order == [f"acct:{busy.id}", f"acct:{quiet.id}"]
+    await user.should_see("2 笔 · 01-21 开盘")
+    user.find(marker=f"acct:{quiet.id}").click()
+    await user.should_see(marker="pp_account")
+    assert user.find(marker="pp_account").elements.pop().value == quiet.id
+
+
 async def test_paper_single_cash_dividend_account(user: User, lib_dir, paper_dir, monkeypatch):
     """单标的模拟账户选「现金分红」：账户记住设置，页面显示累计分红和没能改用现金分红的标的"""
     import json

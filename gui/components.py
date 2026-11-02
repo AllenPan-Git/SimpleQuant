@@ -426,6 +426,52 @@ def missing_factor_warnings(by_id: dict, ids: list, spec: dict) -> list[str]:
     return out
 
 
+# ---------------- 模拟账户一览 ----------------
+_ACCT_COLS = "minmax(0, 1fr) 130px 100px 150px 150px"
+_ACCT_STATUS_COLOR = {"failed": "var(--sq-red)", "unreadable": "var(--sq-red)", "stale": "var(--sq-gold)",
+                      "data_pending": "var(--sq-gold)", "paused": "var(--sq-faint)"}
+
+
+def accounts_table(accounts: list, on_open, calendar: pd.DatetimeIndex | None = None):
+    """模拟账户一览（首页、模拟盘页共用）：每行一个账户，点一行调用 on_open(账户 id)。
+    calendar 为空时读本地交易日历（不联网）；读不到时不判断数据是否过期"""
+    if calendar is None:
+        try:
+            from simplequant.paper import load_calendar
+            calendar = load_calendar(refresh_if_stale=False)
+        except Exception:  # noqa: BLE001
+            calendar = None
+    rows = shared.account_rows(accounts, calendar)
+    with ui.column().classes("w-full gap-0").mark("acct_table"):
+        with ui.element("div").classes("sq-acct-row w-full grid items-baseline pb-2 sq-rule-bottom") \
+                .style(f"grid-template-columns: {_ACCT_COLS}"):
+            for i, key in enumerate(("name", "value", "ret", "trades", "status")):
+                ui.label(t(f"acct.col_{key}")).classes("sq-muted text-xs" + (" text-right" if i in (1, 2) else ""))
+        for r in rows:
+            _account_line(r, on_open)
+    return rows
+
+
+def _account_line(r: dict, on_open):
+    st, ret = r["status"], r["ret"]
+    with ui.element("div").classes("sq-acct-row w-full grid items-baseline py-3 sq-rule-bottom sq-hover-row") \
+            .style(f"grid-template-columns: {_ACCT_COLS}").on("click", lambda: on_open(r["id"])) \
+            .mark(f"acct:{r['id']}"):
+        with ui.column().classes("gap-0 min-w-0"):
+            ui.label(r["name"]).classes("sq-serif text-base sq-hover-title truncate")
+            ui.label(t(f"acct.kind_{r['kind']}") if r["kind"] in ("single", "selection", "portfolio") else "") \
+                .classes("sq-muted text-xs")
+        ui.label(shared.num(r["value"], 0)).classes("sq-fig text-right")
+        ui.label(("+" if ret is not None and ret >= 0 else "") + shared.pct(ret)) \
+            .classes("sq-fig text-right " + ("" if ret is None else "sq-up" if ret >= 0 else "sq-down"))
+        ui.label(t("acct.trades", n=r["trades"], d=r["execute_on"][5:]) if r["trades"] else t("acct.no_trades")) \
+            .classes("text-sm pl-4" + ("" if r["trades"] else " sq-muted"))
+        lbl = ui.label(t(f"acct.st_{st}", n=r["lag"])).classes("text-sm") \
+            .style(f"color: {_ACCT_STATUS_COLOR.get(st, 'var(--sq-text2)')}")
+        if r["error"]:
+            lbl.tooltip(r["error"])
+
+
 # ---------------- 结果 ----------------
 def metric_tile(label: str, value: str, delta: str | None = None, help_text: str | None = None,
                 delta_good: bool | None = None):

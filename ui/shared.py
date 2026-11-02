@@ -115,6 +115,63 @@ def num(v, digits=2) -> str:
     return "—" if v is None or (isinstance(v, float) and math.isnan(v)) else f"{v:,.{digits}f}"
 
 
+def lots(size: float, lot: int) -> int:
+    """按每手股数取整后的成交数量"""
+    return int(round(size / lot)) * lot if lot else int(round(size))
+
+
+# ---------------- 模拟账户一览 ----------------
+# 状态：failed 运行失败 / unreadable 账户文件读不出 / stale 多日未更新 / waiting 尚未运行 /
+#       data_pending 当天数据未发布 / ok 正常 / paused 已暂停
+_ATTENTION = {"failed", "unreadable", "stale"}
+
+
+def account_row(acc, calendar: pd.DatetimeIndex | None, now=None) -> dict:
+    """一个模拟账户在一览表里的一行；读不出时 status 为 unreadable，不抛异常"""
+    from simplequant.paper import health
+    row = {"id": acc.id, "name": acc.name, "kind": getattr(acc, "kind", ""), "value": None, "ret": None,
+           "trades": 0, "execute_on": "", "status": "ok", "lag": 0, "error": ""}
+    try:
+        st = acc.state()
+        if st and "value" in st:
+            nav = acc.nav()
+            # 定投账户按累计投入算收益（与首页、模拟盘页一致）
+            base = float(nav["invested"].iloc[-1]) if "invested" in nav and len(nav) else acc.broker["cash"]
+            row["value"] = float(st["value"])
+            row["ret"] = row["value"] / base - 1 if base else None
+            sig = st.get("signals") or []
+            if acc.kind == "portfolio":   # 组合账户：不足一手的调整不下单，模拟盘页也不列出
+                sig = [s for s in sig if lots(s["size"], s.get("lot", 100))]
+            row["trades"] = len(sig)
+            row["execute_on"] = st.get("execute_on", "")
+        if acc.status != "active":
+            row["status"] = "paused"
+        elif err := acc.error():
+            row["status"], row["error"] = "failed", err.get("message", "")
+        elif not st or "value" not in st:
+            row["status"] = "waiting"
+        elif calendar is not None and (n := health.lag_days(acc, calendar, now)) >= health.STALE_DAYS:
+            row["status"], row["lag"] = "stale", n
+        elif st.get("data_pending"):
+            row["status"] = "data_pending"
+    except Exception as e:  # noqa: BLE001 - 一个账户读坏了不影响整张表
+        row.update(status="unreadable", error=f"{type(e).__name__}: {e}", value=None, ret=None, trades=0)
+    return row
+
+
+def _row_order(r: dict) -> int:
+    if r["status"] in _ATTENTION:
+        return 0
+    if r["status"] == "paused":
+        return 3
+    return 1 if r["trades"] else 2
+
+
+def account_rows(accounts: list, calendar: pd.DatetimeIndex | None, now=None) -> list[dict]:
+    """排序：需要处理的（运行失败、读不出、数据过期）→ 有待执行交易 → 其他 → 暂停；同组保持原顺序"""
+    return sorted((account_row(a, calendar, now) for a in accounts), key=_row_order)
+
+
 PCT_METRICS = {"total_return", "cagr", "volatility", "max_drawdown", "win_rate", "benchmark_return", "excess_return",
                "xirr", "benchmark_xirr", "twr"}
 WHOLE_METRICS = {"final_value", "initial_cash", "trades", "invested", "profit", "contributions"}

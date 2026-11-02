@@ -274,6 +274,10 @@ body.body--dark .q-btn.bg-primary, body.body--dark .q-btn.bg-primary .q-btn__con
   .sq-setup-row {{ flex-wrap: wrap; }}
   .sq-recent-row {{ grid-template-columns: minmax(0, 1fr) 90px !important; }}
   .sq-recent-row > :nth-child(2), .sq-recent-row > :nth-child(3) {{ display: none; }}
+  /* 模拟账户一览：只留账户、待执行交易、状态 */
+  .sq-acct-row {{ grid-template-columns: minmax(0, 1fr) 120px 120px !important; }}
+  .sq-acct-row > :nth-child(2), .sq-acct-row > :nth-child(3) {{ display: none; }}
+  .sq-acct-row > :nth-child(4) {{ padding-left: 0; }}
   .sq-figs .v {{ font-size: 22px; }}
   .sq-figs > div {{ padding-right: 10px; }} .sq-figs > div + div {{ padding-left: 10px; }}
   .sq-pipe .v {{ font-size: 13.5px; }}

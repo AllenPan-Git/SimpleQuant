@@ -269,6 +269,58 @@ def test_health_issues():
     assert health.lag_days(_acc("未运行", ""), cal, holiday) == 0
 
 
+def test_account_rows_status_and_order():
+    """模拟账户一览：状态、待执行交易、定投按累计投入算收益、组合账户不计不足一手的调整；
+    排序为 需要处理 → 有待执行交易 → 其他 → 暂停；一个账户读坏了不影响其它行"""
+    import datetime as dt
+    from ui.shared import account_rows
+    cal = pd.to_datetime(["2026-09-28", "2026-09-29", "2026-09-30", "2026-10-08", "2026-10-09"])
+    now = dt.datetime(2026, 10, 3, 10, 0)
+    sig = {"symbol": "510300", "side": "buy", "size": 1000, "ref_price": 4.0}
+
+    def run(acc, value, signals=(), **extra):
+        acc.save_state({"as_of": acc.data_through, "execute_on": "2026-10-08", "signals": list(signals),
+                        "value": value, **extra})
+        return acc
+
+    quiet = run(_acc("无信号", "2026-09-30"), 110_000)
+    busy = run(_acc("有信号", "2026-09-30"), 90_000, [sig, sig])
+    dca = run(_acc("定投", "2026-09-30"), 60_000)
+    dca.save_nav(pd.DataFrame({"value": [60_000.0], "cash": [0.0], "benchmark": [1.0], "invested": [50_000.0]},
+                              index=pd.to_datetime(["2026-09-30"])))
+    stale = run(_acc("落后", "2026-09-28"), 100_000)
+    failed = run(_acc("失败", "2026-09-30"), 100_000)
+    failed.save_error("ValueError: boom")
+    paused = run(_acc("暂停", "2026-09-30", status="paused"), 100_000, [sig])
+    waiting = _acc("未运行", "")
+    pending = run(_acc("待发布", "2026-09-30"), 100_000, data_pending="2026-10-08")
+    pf = run(_acc("组合", "2026-09-30"), 100_000, [{**sig, "size": 30, "lot": 100}, {**sig, "lot": 100}])
+    pf.kind = "portfolio"
+    broken = _acc("坏了", "2026-09-30")
+    (broken.dir / "state.json").write_text("{not json", encoding="utf-8")
+
+    rows = account_rows(list_accounts(), cal, now)
+    by = {r["name"]: r for r in rows}
+    assert by["无信号"]["status"] == "ok" and by["无信号"]["trades"] == 0
+    assert by["无信号"]["ret"] == pytest.approx(0.1)          # BrokerConfig 默认 10 万
+    assert by["有信号"]["trades"] == 2 and by["有信号"]["execute_on"] == "2026-10-08"
+    assert by["定投"]["ret"] == pytest.approx(0.2)            # 按累计投入 5 万算
+    assert by["落后"]["status"] == "stale" and by["落后"]["lag"] == 2
+    assert by["失败"]["status"] == "failed" and by["失败"]["error"] == "ValueError: boom"
+    assert by["暂停"]["status"] == "paused"
+    assert by["未运行"]["status"] == "waiting" and by["未运行"]["value"] is None
+    assert by["待发布"]["status"] == "data_pending"
+    assert by["坏了"]["status"] == "unreadable" and by["坏了"]["value"] is None
+    order = [r["name"] for r in rows]
+    group = {n: 0 for n in ("落后", "失败", "坏了")} | {"有信号": 1} | {"暂停": 3}
+    ranks = [group.get(n, 2) for n in order]
+    assert ranks == sorted(ranks) and order[-1] == "暂停"
+    # 组合账户：不足一手（30 股）的调整不计入
+    assert account_rows([pf], cal, now)[0]["trades"] == 1
+    # 没有交易日历时不判断是否过期
+    assert account_rows([stale], None)[0]["status"] == "ok"
+
+
 def test_run_all_records_and_clears_error(monkeypatch):
     """运行失败时记下原因；下次成功后清除"""
     from simplequant.paper import runner

@@ -24,7 +24,7 @@ from gui.plan_io import restore_broker
 from gui.layout import frame, page_title
 from gui.widgets import df_table, fmt_table, plot, notice, download_btn, LogBox
 from ui.charts import equity_chart
-from ui.shared import pct, num
+from ui.shared import pct, num, lots as _lots
 
 DENSE = "outlined dense options-dense"
 
@@ -385,10 +385,6 @@ def _contribution_due(st: dict, freq: str | None) -> bool:
         return False
     code = "W" if freq == "weekly" else "M"
     return pd.Timestamp(st["execute_on"]).to_period(code) != pd.Timestamp(st["as_of"]).to_period(code)
-
-
-def _lots(size: float, lot: int) -> int:
-    return int(round(size / lot)) * lot if lot else int(round(size))
 
 
 def _portfolio_tabs(acc, st, nav, lg):

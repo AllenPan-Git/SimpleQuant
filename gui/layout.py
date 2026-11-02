@@ -113,7 +113,7 @@ def _steps(route: str, flow: str):
             with ui.element("div").classes(cls).on("click", lambda r=r: _go_step(r, flow)).mark(f"nav:{r}"):
                 ui.html(f"<span class='n'>{i:02d}</span>")
                 ui.html(f"<div class='t'><span>{escape(t(STEP_KEY[r]))}</span>"
-                        + (f"<small>{escape(sub)}</small>" if sub else "") + "</div>")
+                        + (f"<small title='{escape(sub)}'>{escape(sub)}</small>" if sub else "") + "</div>")
             if i < len(routes):
                 ui.element("div").classes("sq-link" + (" sq-link-done" if done else ""))
 

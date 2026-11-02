@@ -1949,8 +1949,9 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
     "step.not_started": L("未开始", "Not started"),
     "step.done": L("已完成", "Done"),
     "step.n_data": L("{n} 份数据", "{n} dataset(s)"),
-    "step.uni_ready": L("{u} 已下载", "{u} downloaded"),
-    "step.uni_missing": L("{u} 未下载", "{u} not downloaded"),
+    # 步骤条小字最宽约 9 个字，超出截断：状态放前面，截掉的只是股票池名称（悬停可看全文）
+    "step.uni_ready": L("已下载：{u}", "Ready: {u}"),
+    "step.uni_missing": L("未下载：{u}", "No data: {u}"),
     "step.n_saved": L("已保存 {n} 个", "{n} saved"),
     "step.n_accounts": L("{n} 个账户", "{n} account(s)"),
     "step.eyebrow": L("{flow} · 第 {n} 步", "{flow} · Step {n}"),

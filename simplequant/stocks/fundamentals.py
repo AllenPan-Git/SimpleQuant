@@ -32,9 +32,17 @@ def quarters(start_year: int, today: dt.date | None = None) -> list[tuple[int, i
     return [(y, q) for y in range(start_year, end[0] + 1) for q in (1, 2, 3, 4) if (y, q) <= end]
 
 
+def _empty(columns: dict) -> pd.DataFrame:
+    """没有任何财报时的空表：日期列也要是日期类型，否则存盘后再算因子时 .dt 会报错"""
+    df = pd.DataFrame(columns=list(columns.values()), dtype=float)
+    for c in ("stat_date", "pub_date"):
+        df[c] = pd.Series(dtype="datetime64[ns]")
+    return df
+
+
 def process_profit(raw: pd.DataFrame) -> pd.DataFrame:
     if raw.empty:
-        return pd.DataFrame(columns=list(PROFIT_COLUMNS.values()))
+        return _empty(PROFIT_COLUMNS)
     df = raw.rename(columns=PROFIT_COLUMNS)[list(PROFIT_COLUMNS.values())].copy()
     for c in ("stat_date", "pub_date"):
         df[c] = pd.to_datetime(df[c], errors="coerce")
@@ -94,7 +102,7 @@ RISK_REQUESTS_PER_QUARTER = 2
 
 def _tidy(raw: pd.DataFrame, columns: dict) -> pd.DataFrame:
     if raw.empty:
-        return pd.DataFrame(columns=list(columns.values()))
+        return _empty(columns)
     df = raw.rename(columns=columns)[list(columns.values())].copy()
     for c in ("stat_date", "pub_date"):
         df[c] = pd.to_datetime(df[c], errors="coerce")

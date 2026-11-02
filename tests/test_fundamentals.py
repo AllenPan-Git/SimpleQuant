@@ -295,3 +295,14 @@ def test_risk_plan_version_and_platform_export():
     for spec in (risky, {**base, "factors": [{"key": "debt_ratio", "weight": 1, "direction": -1}]}):
         with pytest.raises(ValueError, match="排雷"):
             check_selection_exportable(spec, "joinquant")
+
+
+def test_stock_without_any_report_does_not_break(tmp_path):
+    """没有任何财报的股票（如次新股）：新存的空表和旧版本存的 object 类型空表都要能正常算因子"""
+    empty = process_profit(pd.DataFrame())
+    assert len(derive(empty)) == 0
+    store = StockStore(tmp_path)
+    (tmp_path / "fin").mkdir(parents=True, exist_ok=True)
+    old_style = pd.DataFrame(columns=list(empty.columns))          # 旧版本：日期列是 object
+    old_style.to_parquet(store._fin_path("sh.600000"))
+    assert len(derive(store.load_fin("sh.600000"))) == 0

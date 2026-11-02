@@ -333,7 +333,7 @@ class StockStore:
         return self._fin_path(code).exists()
 
     def load_fin(self, code: str) -> pd.DataFrame:
-        return pd.read_parquet(self._fin_path(code))
+        return _with_dates(pd.read_parquet(self._fin_path(code)))
 
     def plan_fundamentals(self, codes: list[str], start_year: int, today: dt.date | None = None) -> dict:
         """新股票下全部季度；已有的重下最近两个季度（有公司延迟披露）及之后的季度；今天已检查过的跳过"""
@@ -389,7 +389,7 @@ class StockStore:
         return self._risk_path(code).exists()
 
     def load_risk(self, code: str) -> pd.DataFrame:
-        return pd.read_parquet(self._risk_path(code))
+        return _with_dates(pd.read_parquet(self._risk_path(code)))
 
     def _risk_manifest(self) -> dict:
         p = self.root / "risk_manifest.json"
@@ -683,3 +683,13 @@ class StockStore:
 
 def today() -> str:
     return dt.date.today().strftime("%Y-%m-%d")
+
+
+def _with_dates(df: pd.DataFrame) -> pd.DataFrame:
+    """旧版本把「没有任何财报」的股票存成全 object 类型的空表，读入时转回日期 / 数字，免得算因子时报错"""
+    for c in df.columns:
+        if c in ("stat_date", "pub_date"):
+            df[c] = pd.to_datetime(df[c], errors="coerce")
+        elif df[c].dtype == object:
+            df[c] = pd.to_numeric(df[c], errors="coerce").astype(float)
+    return df

@@ -5,6 +5,14 @@
 
 Changes in each release. `tools/release.py` copies the matching section into the GitHub release notes.
 
+## 2.4.1（2026-11-02）
+
+### 更新内容
+- 修复：股票池中有尚未披露任何财报的股票（如新调入的次新股）时，「选股回测」报错「AttributeError: Can only use .dt accessor with datetimelike values」。已下载的数据无需重新下载，升级后即可正常回测
+
+### Changes
+- Fixed: Selection backtests failed with "AttributeError: Can only use .dt accessor with datetimelike values" when the stock pool contained a stock with no financial reports yet (such as a newly added listing). Data you have already downloaded works after the update; there is no need to download it again
+
 ## 2.4.0（2026-11-02）
 
 ### 更新内容

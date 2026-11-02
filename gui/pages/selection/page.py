@@ -10,11 +10,10 @@ from simplequant.stocks import universe as U, factors_for
 from gui import state
 from gui.common import t, p
 from gui.layout import frame, page_title
-from gui.pages.stock_overview import overview_tab
-from gui.pages.holdings_check import diag_tab
 from gui.plan_io import import_button
+from gui.sel_panel import get_panel, store, universe_ready
 from gui.widgets import hint, notice
-from .common import Ctx, DENSE, get_panel, kind_defaults, sp_state, store, switch_kind, universe_ready, WARMUP_DAYS
+from .common import Ctx, DENSE, kind_defaults, sp_state, switch_kind, WARMUP_DAYS
 from .data_tab import _data_tab
 from .research import _research
 from .custom import _custom_factors
@@ -97,8 +96,9 @@ def page():
             tab_mine = ui.tab("mine", t("sp.tab_mine"), icon="auto_awesome")
             tab_bt = ui.tab("bt", t("sp.tab_backtest"), icon="query_stats")
             tab_wf = ui.tab("wf", t("sp.tab_wf"), icon="timeline")
-            tab_ov = ui.tab("ov", t("sp.tab_overview"), icon="manage_search")
-            tab_hd = ui.tab("hd", t("sp.tab_diag"), icon="fact_check")
+        # 过渡提示（2.4.0 起，保留两个版本）：个股概览、持仓诊断移到了工具页
+        ui.label(t("sp.moved_tools")).classes("sq-muted text-xs cursor-pointer") \
+            .on("click", lambda: ui.navigate.to("/tools")).mark("sp_moved_tools")
         with ui.tab_panels(tabs, value=state.STATE.get("sp_tab", "bt")).classes("w-full bg-transparent") as panels:
             with ui.tab_panel(tab_data).classes("px-0 gap-4"):
                 data_box = ui.column().classes("w-full gap-4")
@@ -112,10 +112,6 @@ def page():
                 bt_box = ui.column().classes("w-full gap-4")
             with ui.tab_panel(tab_wf).classes("px-0 gap-4"):
                 wf_box = ui.column().classes("w-full gap-4")
-            with ui.tab_panel(tab_ov).classes("px-0 gap-4"):        # 只读本地数据，不需要面板
-                overview_tab(SP)
-            with ui.tab_panel(tab_hd).classes("px-0 gap-4"):        # 自己按所选股票池取面板
-                diag_tab(SP, get_panel)
         def on_tab(e):
             state.STATE["sp_tab"] = e.value
             if e.value == "wf":          # 滚动优化总是用选股回测标签页里的最新设置

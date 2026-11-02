@@ -5,6 +5,14 @@
 
 Changes in each release. `tools/release.py` copies the matching section into the GitHub release notes.
 
+## 未发布
+
+### 更新内容
+- 改进：「个股概览」「持仓诊断」从选股页移至新的「工具」页（报头右上角「设置」左侧，首页「开始新的工作」下方也有入口）。两项沿用原有的输入与结果，持仓诊断与选股页共用已载入的数据，不会重复载入；选股回测结果中点击入选股票打开个股概览的方式不变
+
+### Changes
+- Improved: Stock overview and Holdings check have moved from the Stock selection page to a new Tools page, reached from the header next to Settings or from below "Start something new" on the home page. Earlier inputs and results carry over, and Holdings check reuses the data the Stock selection page has already loaded instead of loading it again; clicking a pick in selection results still opens its stock overview
+
 ## 2.3.0（2026-11-02）
 
 ### 更新内容

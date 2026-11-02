@@ -127,6 +127,31 @@ async def test_nav_goes_to_page(user: User):
     await user.should_see(marker="llm_preset")
 
 
+async def test_tools_page_entries(user: User, tmp_path, monkeypatch):
+    """工具页的入口：首页「工具」一行直达对应标签；报头「工具」；选股页的过渡提示。切换后标签记住"""
+    from simplequant.stocks import diagnosis as D
+    monkeypatch.setattr(D, "HOLDINGS_FILE", tmp_path / "holdings.json")
+
+    async def on_tab(tab):
+        await user.should_see(marker="tools_tabs")
+        assert user.find(marker="tools_tabs").elements.pop().value == tab
+    await user.open("/")
+    user.find(marker="home_tools:hd").click()
+    await on_tab("hd")
+    await user.open("/selection")
+    await user.should_not_see(marker="hd_query")          # 选股页不再有这两个标签
+    await user.should_not_see(marker="ov_query")
+    user.find(marker="sp_moved_tools").click()
+    await on_tab("hd")
+    await user.open("/")
+    user.find(marker="home_tools:ov").click()
+    await on_tab("ov")
+    user.find(marker="nav:/settings").click()
+    await user.should_see(marker="llm_preset")
+    user.find(marker="nav:/tools").click()
+    await on_tab("ov")                                    # 记住上次的标签
+
+
 async def test_flow_switch_changes_steps(user: User):
     await user.open("/")
     user.find(marker="flow:selection").click()
@@ -1935,12 +1960,22 @@ def _shown(user: User, marker: str) -> bool:
         return False
 
 
+async def _open_tools(user: User, tab: str):
+    """打开工具页的某个标签（个股概览 ov / 持仓诊断 hd）；界面状态与选股页共用"""
+    from gui.pages.selection import sp_state
+    SP = sp_state()
+    state.STATE["tools_tab"] = tab
+    await user.open("/tools")
+    await settle()
+    return SP
+
+
 @needs_stocks
-async def test_selection_stock_overview_tab(user: User):
-    """个股概览标签：按 6 位代码查看本机已下载的股票（只读本地数据）"""
+async def test_tools_stock_overview_tab(user: User):
+    """工具页「个股概览」：按 6 位代码查看本机已下载的股票（只读本地数据）"""
     from simplequant.stocks import StockStore
     code = sorted(f.stem for f in (StockStore().root / "daily").glob("*.parquet"))[0]
-    SP = await _open_selection(user, "ov")
+    SP = await _open_tools(user, "ov")
     user.find(marker="ov_query").type(code.split(".")[-1])
     user.find(marker="ov_show").click()
     assert await _wait(lambda: _shown(user, "ov_title"), n=600)
@@ -1970,15 +2005,16 @@ async def test_selection_picks_dialog_and_overview(user: User):
 
 
 @needs_stocks
-async def test_selection_holdings_check(user: User, tmp_path, monkeypatch):
-    """持仓诊断标签：粘贴持仓 → 与沪深300 对照诊断（持仓文件写到临时目录）"""
+async def test_tools_holdings_check(user: User, tmp_path, monkeypatch):
+    """工具页「持仓诊断」：粘贴持仓 → 与沪深300 对照诊断（持仓文件写到临时目录）；面板放进与选股页共用的缓存"""
+    import sys
     from simplequant.stocks import StockStore
     from simplequant.stocks import diagnosis as D
     monkeypatch.setattr(D, "HOLDINGS_FILE", tmp_path / "holdings.json")
     st = StockStore()
     uni = st.load_universe("hs300")
     codes = [c for c in sorted(uni["code"].unique()) if st.has(c)][:3]
-    SP = await _open_selection(user, "hd")
+    SP = await _open_tools(user, "hd")
     SP["hd"]["holdings"] = []
     user.find(marker="hd_paste").click()
     await settle()
@@ -1995,3 +2031,9 @@ async def test_selection_holdings_check(user: User, tmp_path, monkeypatch):
     assert len(res.holdings) + len(res.missing) + len(res.unpriced) == 3
     assert len(user.find(marker="hd_table").elements.pop().rows) == len(res.holdings)
     await user.should_see("有效持仓数")
+    # 选股页与工具页用的是同一份面板缓存
+    assert routes()["/selection"].__globals__["get_panel"] is routes()["/tools"].__globals__["get_panel"]
+    from simplequant.stocks import universe as U
+    end = U.load_benchmark("hs300", st).index[-1]
+    want = ("hs300", D.panel_start(end), str(end.date()))
+    assert any(k[:3] == want for k in sys.modules["gui.sel_panel"]._PANELS)

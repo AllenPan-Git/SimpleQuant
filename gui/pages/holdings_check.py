@@ -1,4 +1,4 @@
-"""选股页「持仓诊断」：输入持仓（逐只添加、粘贴、读取模拟账户），与所选股票池对照（核心见 simplequant/stocks/diagnosis.py）"""
+"""工具页「持仓诊断」：输入持仓（逐只添加、粘贴、读取模拟账户），与所选股票池对照（核心见 simplequant/stocks/diagnosis.py）"""
 
 import numpy as np
 import pandas as pd
@@ -34,7 +34,7 @@ def _basics():
 
 
 def diag_tab(SP, get_panel):
-    """get_panel(股票池, 起, 止)：选股页共用的面板缓存"""
+    """get_panel(股票池, 起, 止)：与选股页共用的面板缓存（gui/sel_panel.py）"""
     hd = SP.setdefault("hd", {"holdings": D.load_holdings(), "pool": None, "result": None})
     stock_pools = [u for u in UNIVERSES if U.kind(u) == "stock"]
     if hd["pool"] not in stock_pools:

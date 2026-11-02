@@ -1,19 +1,17 @@
-"""选股页各标签页共用的状态、常量与面板缓存"""
-
-from collections import OrderedDict
+"""选股页各标签页共用的状态与常量（面板缓存在 gui/sel_panel.py，与工具页共用）"""
 
 import pandas as pd
 from nicegui import run
 
 from simplequant.engine.optimize import default_workers
-from simplequant.stocks import StockStore, UNIVERSES, FACTORS, GROUPS, REBALANCE, DEFAULT_FILTERS
-from simplequant.stocks import panel_cache, universe as U, factors_for
+from simplequant.stocks import FACTORS, GROUPS, REBALANCE, DEFAULT_FILTERS, factors_for
 from simplequant.stocks import ml as ML
 from simplequant.stocks.selection import panel_warmup_days
 from simplequant.stocks.panel import STOCK_FILTERS, RISK_FILTERS
 from simplequant.bonds.panel import CB_FILTERS, CB_DEFAULT_FILTERS
 from simplequant.stocks.walkforward import TARGET_METRICS as WF_TARGETS
 from gui import state
+from gui.sel_panel import get_panel
 from gui.common import t, p
 from ui.shared import clean
 
@@ -24,13 +22,6 @@ CB_SEL_DEFAULT = [{"key": "cb_double_low", "weight": 1.0, "direction": -1}]     
 # 股票与可转债各自记住的表单项（切换股票池时互换）
 KIND_KEYS = ("factors", "excl_st", "min_list", "dividend", "ni", "ns")
 POS_DEFAULT = 95           # 买入资金比例（%）的默认值
-
-_PANELS: OrderedDict = OrderedDict()    # (股票池, 起, 止, 数据版本) → 面板；最多留 3 个
-_TR_TRIED: set = set()                  # 本次启动已尝试补下载全收益指数的股票池
-
-
-def store() -> StockStore:
-    return StockStore()
 
 
 def sp_state() -> dict:
@@ -124,12 +115,6 @@ def reb_label(r) -> str:
     return p(REBALANCE[r]) if r in REBALANCE else t("sel.every_n", n=r)
 
 
-def data_version(st: StockStore, universe: str) -> str:
-    """数据有更新时让缓存的面板失效"""
-    files = U.data_files(universe, st)
-    return "|".join(str(f.stat().st_mtime) if f.exists() else "-" for f in files)
-
-
 def spec_panel_start(SP, ctx, spec: dict) -> str:
     """
     回测这个策略用的面板起始日：一般就是 ctx.panel_start；
@@ -148,30 +133,6 @@ async def spec_panel(SP, ctx, spec: dict):
     if ps == ctx.panel_start:
         return ctx.panel, ps
     return await run.io_bound(get_panel, SP["universe"], ps, ctx.end), ps
-
-
-def get_panel(universe: str, start: str, end: str):
-    st = store()
-    if U.kind(universe) == "stock" and universe not in _TR_TRIED:     # 每次启动只试一次，官网连不上时不反复等
-        _TR_TRIED.add(universe)
-        st.ensure_tr_index(UNIVERSES[universe]["index"])
-    key =(universe, start, end, data_version(st, universe))
-    if key in _PANELS:
-        _PANELS.move_to_end(key)
-        return _PANELS[key]
-    cache_dir = st.root.parent / "panel_cache"
-    panel = panel_cache.load(cache_dir, *key)
-    if panel is None:
-        panel = U.build(universe, start, end, st)
-        panel_cache.save(cache_dir, *key, panel)
-    _PANELS[key] = panel
-    while len(_PANELS) > 3:
-        _PANELS.popitem(last=False)
-    return panel
-
-
-def universe_ready(universe: str) -> bool:
-    return U.ready(universe, store())
 
 
 class Ctx:

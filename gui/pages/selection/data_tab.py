@@ -12,7 +12,7 @@ from simplequant.stocks.store import DAILY_LIMIT
 from gui.common import t, p
 from gui.components import metric_tile
 from gui.widgets import hint, notice, download_btn, Progress
-from .common import store
+from gui.sel_panel import store
 
 
 # ================= 数据 =================

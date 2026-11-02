@@ -1,4 +1,4 @@
-"""选股页「个股概览」：标签页里按代码 / 名称查看，或在选股结果里点开入选股票（核心见 simplequant/stocks/overview.py）"""
+"""「个股概览」：工具页的标签页里按代码 / 名称查看，或在选股结果里点开入选股票（核心见 simplequant/stocks/overview.py）"""
 
 import numpy as np
 import pandas as pd

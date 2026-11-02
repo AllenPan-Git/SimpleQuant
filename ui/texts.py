@@ -901,6 +901,7 @@ TEXT.update({
     "sp.tab_research": L("因子研究", "Factor research"),
     "sp.tab_backtest": L("选股回测", "Backtest"),
     "sp.tab_wf": L("滚动优化", "Walk-forward"),
+    "sp.moved_tools": L("个股概览、持仓诊断已移至「工具」页 →", "Stock overview and Holdings check have moved to the Tools page →"),
     "sp.tab_custom": L("自定义因子", "Custom factors"),
     "sp.tab_mine": L("AI 因子挖掘", "AI factor mining"),
     # ---- AI 因子挖掘 ----
@@ -1814,6 +1815,9 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
 
     # ---- 模型设置 ----
     "nav.settings": L("设置", "Settings"),
+    "nav.tools": L("工具", "Tools"),
+    "tools.intro": L("查看单只股票的概况，或检查一组持仓的集中度与风格。均使用本机已下载的选股数据。",
+                     "Look up a single stock, or check the concentration and style of a set of holdings. Both use the stock data already downloaded."),
     "nav.go_settings": L("前往模型设置", "Go to AI model settings"),
     "set.intro": L("用于「自然语言描述（AI）」及「AI 解读结果」功能。支持 Claude、OpenAI、各类兼容 OpenAI 协议的服务（DeepSeek、通义千问、Kimi、智谱、本地 Ollama）以及 LiteLLM。",
                    "Used by \"Describe in plain language (AI)\" and \"Explain with AI\". Supports Claude, OpenAI, OpenAI-compatible services (DeepSeek, Qwen, Kimi, Zhipu, local Ollama) and LiteLLM."),
@@ -1928,6 +1932,7 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
     "step.n_accounts": L("{n} 个账户", "{n} account(s)"),
     "step.eyebrow": L("{flow} · 第 {n} 步", "{flow} · Step {n}"),
     "top.settings": L("设置", "Settings"),
+    "top.tools": L("工具", "Tools"),
 
     "home.greet_morning": L("早上好", "Good morning"),
     "home.greet_afternoon": L("下午好", "Good afternoon"),
@@ -1963,6 +1968,7 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
     "home.w_selection_body": L("在沪深300、中证500 成分股中按价值、动量等因子定期选股、调仓。",
                                "Pick stocks from the CSI 300 / CSI 500 by value, momentum and other factors, rebalancing on a schedule."),
     "home.w_selection_more": L("组合策略", "Portfolio strategy"),
+    "home.tools": L("工具：", "Tools:"),
     "home.recent": L("最近的报告", "Recent reports"),
     "home.recent_note": L("点击可重新打开", "Click to reopen"),
     "home.sharpe": L("夏普 {v}", "Sharpe {v}"),

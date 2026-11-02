@@ -47,6 +47,13 @@ def page():
                     ui.label(t(f"home.w_{key}")).classes("sq-serif text-lg mt-3 mb-1 sq-hover-title")
                     ui.label(t(f"home.w_{key}_body")).classes("text-sm").style("color: var(--sq-text2)")
                     ui.label(t(f"home.w_{key}_more") + " →").classes("sq-more mt-3")
+        with ui.row().classes("items-center gap-2 text-sm"):
+            ui.label(t("home.tools")).classes("sq-muted")
+            for i, (tab, key) in enumerate((("ov", "sp.tab_overview"), ("hd", "sp.tab_diag"))):
+                if i:
+                    ui.label("·").classes("sq-faint")
+                ui.label(t(key)).classes("sq-red cursor-pointer") \
+                    .on("click", lambda tab=tab: _open_tool(tab)).mark(f"home_tools:{tab}")
 
         if recent:
             _section(t("home.recent"), t("home.recent_note"))
@@ -102,6 +109,11 @@ def _start(key: str, route: str):
     if key in ("template", "ai", "code"):
         state.strategy()["mode"] = key
     ui.navigate.to(route)
+
+
+def _open_tool(tab: str):
+    state.STATE["tools_tab"] = tab
+    ui.navigate.to("/tools")
 
 
 # ---------------- 继续上次的工作 / 第一次使用 ----------------

@@ -19,6 +19,7 @@ PAGES = [
     ("/selection", "nav.selection", "filter_list"),
     ("/paper", "nav.paper", "account_balance_wallet"),
     ("/allocation", "nav.allocation", "pie_chart"),
+    ("/tools", "nav.tools", "build"),
     ("/settings", "nav.settings", "settings"),
 ]
 
@@ -121,6 +122,8 @@ def frame(route: str):
         _steps(route, flow)
 
         with ui.row().classes("sq-top-right items-center gap-4 no-wrap"):
+            ui.label(t("top.tools")).classes("sq-top-link" + (" on" if route == "/tools" else "")) \
+                .on("click", lambda: ui.navigate.to("/tools")).mark("nav:/tools")
             ui.label(t("top.settings")).classes("sq-top-link" + (" on" if route == "/settings" else "")) \
                 .on("click", lambda: ui.navigate.to("/settings")).mark("nav:/settings")
 

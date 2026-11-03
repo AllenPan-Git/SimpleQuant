@@ -1,6 +1,7 @@
 """第 3 页：回测（结果按研究报告排版：结论段落 → 指标 → 图 → 明细，右侧给出下一步）"""
 
 import datetime as dt
+from contextlib import nullcontext
 from dataclasses import asdict
 from types import SimpleNamespace
 
@@ -60,28 +61,39 @@ def report(BT: dict, exp_menu):
         _results(BT, exp_menu)
 
 
-def setup_bar(by_id: dict, BT: dict, strategy_part) -> SimpleNamespace:
+def setup_bar(by_id: dict, BT: dict, strategy_part, sticky: bool = False, open_: bool | None = None) -> SimpleNamespace:
     """
     回测设置条与运行（经典回测页与择时工作台共用）：设置收起时是一行摘要（数据 · 策略 · 区间 · 资金），右边是
     开始回测、导出、导入方案；下面是提示与「正在回测」。
-    strategy_part(on_change, on_broker) 画出设置区里的「策略」一块，返回 {"spec", "label", "name"}（原地更新）。
-    返回的对象：pick / strat / make_broker / setup / exp_menu、check()、ready()、run()；
-    调用方画好报告后把重画报告的函数赋给 .report（运行开始时清空报告、结束时画出新报告）
+    strategy_part(on_change, on_broker) 画出设置区里的「策略」一块，返回 {"spec", "label", "name"}（原地更新）；
+    其中可以有 "errors"（有错时不能运行、导出）和 "full_check"（运行、保存前调用，返回 False 时取消）。
+    sticky：右边的按钮跟着页面滚动（设置区很长时，择时工作台用），「正在回测」放在按钮下面；open_：设置区是否展开（默认没有结果时展开）。
+    返回的对象：pick / strat / make_broker / setup / setup_row / save_name / exp_menu、check()、ready()、run()；
+    调用方可以替换这些回调（默认什么都不做）：.report()（运行开始时清空报告、结束时画出新报告）、.on_ran(ok)（回测结束）、
+    .on_phase()（调仓日检验完成）、.on_check()（设置改动、提示重画之后）、.on_saved(name)（保存了策略）、.on_name(text)（改了策略名称）
     """
-    bar = SimpleNamespace(report=lambda: None)
+    noop = lambda *a: None  # noqa: E731
+    bar = SimpleNamespace(report=noop, on_ran=noop, on_phase=noop, on_check=noop, on_saved=noop, on_name=noop)
     lg = lang()
 
     # ---------------- 设置：收起时显示为一行摘要（数据 · 策略 · 区间 · 资金） ----------------
-    with ui.row().classes("sq-setup-row w-full items-start gap-3 no-wrap"):
-        setup = ui.expansion(value=BT.get("result") is None).classes("grow min-w-0 sq-setup")
+    with ui.row().classes("sq-setup-row w-full items-start gap-3 no-wrap" + (" sq-setup-sticky" if sticky else "")) \
+            as setup_row:
+        setup = ui.expansion(value=BT.get("result") is None if open_ is None else open_) \
+            .classes("grow min-w-0 sq-setup").mark("bt_setup")
         with setup.add_slot("header"):
-            chips = ui.row().classes("sq-chip-row w-full items-stretch gap-0 no-wrap")
-        with ui.row().classes("items-center gap-2 no-wrap pt-2"):
-            run_btn = ui.button(t("bt.run"), icon="play_arrow", on_click=lambda: do_run()) \
-                .props("unelevated no-caps").mark("run")
-            with ui.button(t("exp.menu"), icon="ios_share").props("outline no-caps") as exp_btn:
-                exp_menu = ui.menu().props("auto-close")
-            import_button()
+            chips = ui.row().classes("sq-chip-row w-full items-stretch gap-0 no-wrap" + (" sq-chip-row-wrap" if sticky else ""))
+        actions = ui.column().classes("sq-setup-actions gap-2 pt-2") if sticky \
+            else ui.row().classes("items-center gap-2 no-wrap pt-2")
+        with actions:
+            with ui.element("div").classes("sq-setup-btns") if sticky else nullcontext():
+                run_btn = ui.button(t("bt.run"), icon="play_arrow", on_click=lambda: do_run()) \
+                    .props("unelevated no-caps").mark("run")
+                with ui.button(t("exp.menu"), icon="ios_share").props("outline no-caps") as exp_btn:
+                    exp_menu = ui.menu().props("auto-close")
+                import_button()
+            if sticky:
+                running, running_text = _running_row()
     with setup:
         with ui.column().classes("w-full gap-4 pt-3"):
             pick = data_selector(by_id, "bt", lambda: check())
@@ -99,24 +111,26 @@ def setup_bar(by_id: dict, BT: dict, strategy_part) -> SimpleNamespace:
                 save_name = ui.input(t("bt.save_name"), value=strat.get("name", ""))                     .props("outlined dense").classes("grow").mark("bt_save_name")
                 ui.button(t("bt.save_strategy"), icon="save", on_click=lambda: save_strategy())                     .props("outline no-caps").tooltip(t("bt.save_strategy_help")).mark("bt_save")
     setup.on_value_change(lambda _: draw_chips())
+    save_name.on_value_change(lambda e: bar.on_name(e.value or ""))
     warnings = ui.column().classes("w-full gap-2")
-    running = ui.row().classes("items-center gap-2")
-    with running:
-        ui.spinner(size="sm")
-        running_text = ui.label(t("bt.running")).classes("sq-muted text-sm")
-    running.set_visibility(False)
+    if not sticky:
+        running, running_text = _running_row()
 
     def batch() -> bool:
         """分别回测：选了两个及以上标的，并选择了「分别回测」"""
         return state.STATE.get("bt_mode") == "batch" and len(pick.ids) > 1
 
+    def full_check() -> bool:
+        return strat["full_check"]() if strat.get("full_check") else True
+
     def save_strategy():
         """策略连同当前的资金与费率一起保存；之后在回测页选它时恢复"""
         name = (save_name.value or "").strip()
-        if not name:
+        if not name or strat.get("errors") or not full_check():
             return
         strategies.save_strategy(name, strat["spec"], broker=asdict(make_broker()))
         ui.notify(t("strat.saved", name=name), type="positive")
+        bar.on_saved(name)
 
     def on_mode(v):
         state.STATE["bt_mode"] = v
@@ -129,7 +143,7 @@ def setup_bar(by_id: dict, BT: dict, strategy_part) -> SimpleNamespace:
         items = [
             ("data", t("bt.chip_batch", n=len(pick.ids)) if batch()
              else " · ".join(asset_names(by_id, pick.ids, lang()).values()) or "—"),
-            ("strategy", strat.get("name", "")),
+            ("strategy", strat.get("name") or strat.get("label", "")),
             ("range", f"{pick.start} ~ {pick.end}" if pick.date_range else "—"),
             ("broker", t("bt.cash_wan", v=f"{(b.get('cash') or 0) / 1e4:g}")
              + (" · " + p(preset["label"]) if preset else "") + (" · T+1" if b.get("t1", True) else "")
@@ -148,6 +162,8 @@ def setup_bar(by_id: dict, BT: dict, strategy_part) -> SimpleNamespace:
             ui.label(t("bt.edit_setup")).classes("sq-muted text-xs self-center pr-2 whitespace-nowrap")
 
     def ready() -> bool:
+        if strat.get("errors"):
+            return False
         need = strategies.min_assets(strat["spec"])
         if batch():
             return need <= 1 and len(pick.freqs) == 1 and pick.date_range is not None
@@ -179,6 +195,7 @@ def setup_bar(by_id: dict, BT: dict, strategy_part) -> SimpleNamespace:
         exp_btn.set_enabled(ok)
         build_export_menu()
         draw_chips()
+        bar.on_check()
 
     def build_export_menu():
         exp_menu.clear()
@@ -243,7 +260,7 @@ def setup_bar(by_id: dict, BT: dict, strategy_part) -> SimpleNamespace:
         return {n: data_source_text(by_id[i], lang()) for i, n in asset_names(by_id, pick.ids, lang()).items()}
 
     async def do_run():
-        if not ready():
+        if not ready() or not full_check():
             return
         spec, broker = strat["spec"], make_broker()
         plan_ctx = state.STATE.pop("bt_plan", None)        # 刚导入的方案：回测后与其中记录的结果核对
@@ -282,6 +299,7 @@ def setup_bar(by_id: dict, BT: dict, strategy_part) -> SimpleNamespace:
         if phased:
             BT["phase_pending"] = {"n": 0, "of": len(phases(timing_cycle(spec)))}
         bar.report()
+        bar.on_ran(BT.get("result") is not None)
         if phased:
             await phase_check(BT["result"], prices, spec, broker, warm)
 
@@ -296,6 +314,7 @@ def setup_bar(by_id: dict, BT: dict, strategy_part) -> SimpleNamespace:
         if BT.get("result") is res:          # 期间没有重新回测
             BT["checks"] = BT.get("checks", []) + found
             BT.pop("phase_pending", None)
+            bar.on_phase()
 
     async def do_batch(spec, broker, warm):
         done = {"n": 0, "of": len(pick.ids)}
@@ -320,10 +339,20 @@ def setup_bar(by_id: dict, BT: dict, strategy_part) -> SimpleNamespace:
             run_btn.enable()
             running.set_visibility(False)
         bar.report()
+        bar.on_ran(BT.get("batch") is not None)
 
-    bar.__dict__.update(pick=pick, strat=strat, make_broker=make_broker, setup=setup, exp_menu=exp_menu,
-                        check=check, ready=ready, run=do_run)
+    bar.__dict__.update(pick=pick, strat=strat, make_broker=make_broker, setup=setup, setup_row=setup_row,
+                        save_name=save_name, exp_menu=exp_menu, check=check, ready=ready, run=do_run)
     return bar
+
+
+def _running_row():
+    """「正在回测」：转圈 + 一行字（分别回测时显示进度）；先隐藏"""
+    with ui.row().classes("items-center gap-2") as row:
+        ui.spinner(size="sm")
+        text = ui.label(t("bt.running")).classes("sq-muted text-sm")
+    row.set_visibility(False)
+    return row, text
 
 
 def _batch_results(BT: dict):

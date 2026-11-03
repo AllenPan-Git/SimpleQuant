@@ -161,11 +161,9 @@ def strategy_editor(S, ctx: Ctx):
     return box
 
 
-def load_saved(S, ctx: Ctx, n: str):
-    """把已保存的策略载入编辑器"""
-    spec = strategies.list_strategies()[n]
-    S["name"] = n
-    ctx.set_name(n)
+def load_spec(S, spec: dict, name: str):
+    """把一个策略描述（模板 / 规则 / 代码）放进编辑器的状态；界面要由调用方重画（ctx.reload）"""
+    S["name"] = name
     S["ai_symbols"] = None
     if spec["kind"] == "code":
         S["mode"] = "code"
@@ -178,11 +176,20 @@ def load_saved(S, ctx: Ctx, n: str):
         S["mode"] = "template"
         S["tpl_key"] = spec["template"]
         S["tpl_params"][spec["template"]] = dict(spec.get("params") or {})
+
+
+def load_saved(S, ctx: Ctx, n: str):
+    """把已保存的策略载入编辑器"""
+    spec = strategies.list_strategies()[n]
+    S["name"] = n
+    ctx.set_name(n)
+    load_spec(S, spec, n)
     ctx.reload()
 
 
-def saved_strategies(S, ctx: Ctx):
-    """「已保存的策略（n）」折叠区：载入 / 删除；返回 refreshable（保存新策略后调用 .refresh()）"""
+def saved_strategies(S, ctx: Ctx, on_load=None):
+    """「已保存的策略（n）」折叠区：载入 / 删除；返回 refreshable（保存新策略后调用 .refresh()）。
+    on_load(名称)：载入之后调用（择时工作台用它恢复保存时的资金与费率）"""
     @ui.refreshable
     def saved_list():
         saved = {n: s for n, s in strategies.list_strategies().items() if strategies.runnable_on_single_assets(s)}
@@ -194,9 +201,15 @@ def saved_strategies(S, ctx: Ctx):
                     with ui.column().classes("grow gap-0"):
                         ui.label(n).classes("font-semibold")
                         ui.label(strategies.describe(s, lang())).classes("sq-muted text-sm whitespace-pre-wrap")
-                    ui.button(t("strat.load"), on_click=lambda n=n: load_saved(S, ctx, n)).props("flat no-caps dense")
+                    ui.button(t("strat.load"), on_click=lambda n=n: load(n)).props("flat no-caps dense") \
+                        .mark(f"load_saved:{n}")
                     ui.button(t("strat.delete"), on_click=lambda n=n: delete_saved(n)) \
                         .props("flat no-caps dense color=negative")
+
+    def load(n):
+        load_saved(S, ctx, n)
+        if on_load:
+            on_load(n)
 
     def delete_saved(n):
         strategies.delete_strategy(n)

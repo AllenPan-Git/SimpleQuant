@@ -1982,6 +1982,11 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
     "prog.not_run": L("未运行", "Not run"),
     "prog.verify_n": L("{n} / {of} 项", "{n} of {of} checks"),
     "prog.paper_n": L("{n} 个账户", "Accounts: {n}"),
+    # 新版界面：择时工作台（策略 + 回测 + 验证）
+    "nav.timing": L("择时工作台", "Timing workbench"),
+    "timing.subtitle": L("在同一页编写策略、回测并检验结果。修改设置后点击「开始回测」，报告在下方更新。",
+                         "Write a strategy, backtest it and check the results on one page. After changing the settings, "
+                         "click \"Run backtest\" and the report below is updated."),
     # 设置页：界面版本
     "set.ui": L("界面", "Interface"),
     "set.ui_classic": L("经典", "Classic"),

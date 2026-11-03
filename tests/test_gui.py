@@ -1634,7 +1634,7 @@ async def test_settings_switch_ui(user: User):
     await user.should_see(marker="sq_sidebar")
     await user.should_not_see(marker="flow:timing")
     await user.should_see(marker="nav:/tools")
-    assert "on" in user.find(marker="nav:/backtest").elements.pop().classes      # 策略页也算「择时策略」
+    assert "on" in user.find(marker="nav:/timing").elements.pop().classes        # 经典策略页也算「择时策略」
     assert "on" not in user.find(marker="nav:/selection").elements.pop().classes
     user.find(marker="nav:/settings").click()
     await user.should_see(marker="set_ui")
@@ -1701,6 +1701,96 @@ async def test_new_ui_home_progress(user: User, paper_dir):
     assert "next" in cell("verify").classes
     user.find(marker="prog:paper").click()
     await user.should_see(marker="pp_run_all")
+
+
+def _expanded(user: User, marker: str) -> bool:
+    return bool(user.find(marker=marker).elements.pop().value)
+
+
+async def test_new_ui_timing_workbench(user: User, lib_dir):
+    """择时工作台：改策略 → 运行 → 设置收起、报告出来 → 点进度「设置」展开 → 写到一半的条件还在 → 再运行；
+    运行不自动保存；保存后进度「设置」打勾，再改规则变成「有改动未保存」"""
+    from gui import common
+    common.set_ui("new")
+    _save_prices()
+    S = state.strategy()
+    BT = lambda: state.STATE.get("bt", {})
+    cell = lambda k: user.find(marker=f"prog:{k}").elements.pop()
+
+    await user.open("/timing")
+    await user.should_see(marker="timing_strategy")
+    assert "on" in user.find(marker="nav:/timing").elements.pop().classes
+    assert _expanded(user, "bt_setup")                       # 还没有结果：设置展开
+    user.find(marker="mode").elements.pop().set_value("rule")
+    await settle()
+    user.find(marker="add:buy").click()                      # 多加一条买入条件（写到一半）
+    await settle()
+    n = len(S["rule"]["buy"]["conditions"])
+    user.find(marker="run").click()
+    assert await _wait(lambda: BT().get("result") is not None)
+    await settle()
+    assert not _expanded(user, "bt_setup")                   # 运行完收起
+    await user.should_see("可信度检查")
+    assert BT()["spec"]["kind"] == "rule" and len(BT()["spec"]["rule"]["buy"]["conditions"]) == n
+    assert not strategies.list_strategies()                  # 运行不自动保存
+    assert "ok" in cell("backtest").classes and "next" in cell("setup").classes
+
+    user.find(marker="prog:setup").click()
+    await settle()
+    assert _expanded(user, "bt_setup")
+    cid = S["rule"]["buy"]["conditions"][-1]["_id"]
+    assert len(S["rule"]["buy"]["conditions"]) == n and user.find(marker=f"del:{cid}").elements
+
+    user.find(marker="bt_save_name").elements.pop().set_value("均线条件")
+    await settle()
+    assert S["name"] == "均线条件"                           # 名称框与编辑器同一个名字
+    user.find(marker="bt_save").click()
+    await settle()
+    assert strategies.list_strategies()["均线条件"]["kind"] == "rule"
+    assert "均线条件" in strategies.strategy_brokers()          # 连同资金与费率一起保存
+    assert "ok" in cell("setup").classes
+    await user.should_see("已保存的策略（1）")
+
+    user.find(marker=f"del:{cid}").click()                   # 再改规则
+    await settle()
+    assert "有改动未保存" in cell("setup").props["title"] and "ok" not in cell("backtest").classes
+    first = BT()["result"]
+    user.find(marker="run").click()
+    assert await _wait(lambda: BT().get("result") is not None and BT()["result"] is not first)
+    assert len(BT()["spec"]["rule"]["buy"]["conditions"]) == n - 1
+
+
+async def test_new_ui_timing_errors_and_saved(user: User, lib_dir):
+    """工作台：规则有错时不能运行；载入已保存的策略恢复它的资金；没有数据时只显示编辑器，也能保存"""
+    from gui import common
+    from simplequant.engine import BrokerConfig
+    from dataclasses import asdict
+    common.set_ui("new")
+    strategies.save_strategy("五万均线", {"kind": "template", "template": "sma_cross", "params": {"fast": 7}},
+                             broker=asdict(BrokerConfig(cash=50_000)))
+    await user.open("/timing")                               # 还没有数据
+    await user.should_see("前往数据页")
+    await user.should_see(marker="mode")
+    user.find(marker="bt_save_name").elements.pop().set_value("草稿")
+    user.find(marker="bt_save").click()
+    assert "草稿" in strategies.list_strategies()
+
+    _save_prices()
+    await user.open("/timing")
+    user.find(marker="mode").elements.pop().set_value("rule")
+    await settle()
+    S = state.strategy()
+    for c in list(S["rule"]["buy"]["conditions"]):
+        user.find(marker=f"del:{c['_id']}").click()
+    await settle()
+    assert not user.find(marker="run").elements.pop().enabled
+    user.find(marker="load_saved:五万均线").click()
+    await settle()
+    assert S["mode"] == "template" and S["name"] == "五万均线"
+    assert user.find(marker="run").elements.pop().enabled
+    assert state.STATE["bt_broker"]["cash"] == 50_000
+    assert user.find(marker="bt_save_name").elements.pop().value == "五万均线"
+    assert "ok" in user.find(marker="prog:setup").elements.pop().classes
 
 
 def _body_classes(user: User) -> list:

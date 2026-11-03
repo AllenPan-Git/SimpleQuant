@@ -41,6 +41,7 @@ _NARROW_1150 = """\
   .sq-setup-sticky { flex-wrap: wrap; }
   .sq-setup-sticky > .sq-setup-actions { order: -1; width: 100%; top: var(--sq-header-h, 64px); padding-bottom: 8px;
     background: var(--sq-page); }
+  .sq-setup-btns { flex-direction: row; flex-wrap: wrap; }
 """
 _NARROW_860 = """\
   .sq-title { font-size: 1.7rem; }
@@ -222,6 +223,9 @@ code, pre {{ font-family: var(--sq-mono); }}
    都会让吸顶失效。容器改 clip（同样裁掉切换动画，但不算滚动容器）；.q-panel 高度随内容，本来就不出滚动条，改 visible */
 .q-panel-parent:has(.sq-setup-actions) {{ overflow: clip; }}
 .q-panel-parent:has(.sq-setup-actions) > .q-panel {{ overflow: visible; }}
+/* 择时工作台：按钮竖排成一列，给设置表单多留宽度；内容区变窄、按钮移到上方时恢复横排（_NARROW_1150） */
+.sq-setup-btns {{ display: flex; flex-direction: column; align-items: stretch; gap: 8px; }}
+.sq-setup-btns > .q-btn .q-btn__content {{ justify-content: flex-start; }}
 
 /* 新版界面（body.sq-new）：左侧栏。守住研报风格：纸色底、细线分组、宋体标志，当前栏目浅红底 + 左侧红条（同 .sq-next-rec）。
    没有顶栏，吸顶元素的 top 取 0。

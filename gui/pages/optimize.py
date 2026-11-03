@@ -289,6 +289,7 @@ def optimize_panel(by_id: dict, pick, strat: dict, make_broker) -> SimpleNamespa
                                      int(O["test"]), O["window"] == "anchored", int(O["workers"]), progress,
                                      O["stitch"], warm)
             O["wf"] = (res, labels, O["metric"], O["stitch"])
+            O["wf_spec"] = spec               # 进度的「验证」按策略规则比对
             O["wf_div_notes"] = (skipped, patched)
         except Exception as e:  # noqa: BLE001
             O.pop("wf", None)

@@ -45,6 +45,7 @@ class DataPick:
     freqs: set = field(default_factory=set)
     union: bool = False           # 批量回测：区间取各标的数据的并集（每个标的只用自己有数据的部分）
     refresh: object = None        # 切换 union 后调用，重新计算可选区间
+    set_ids: object = None        # set_ids(ids)：在下拉框里换选数据（与手动选择一样触发 on_change）
 
     @property
     def date_range(self):
@@ -124,6 +125,7 @@ def data_selector(by_id: dict, key: str, on_change) -> DataPick:
         on_change()
 
     pick.refresh = on_union
+    pick.set_ids = sel.set_value
     pick.union = state.STATE.get(f"{key}_mode") == "batch" and len(pick.ids) > 1
     if saved_range and pick.ids:
         pick.start, pick.end = saved_range

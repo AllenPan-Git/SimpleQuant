@@ -201,10 +201,46 @@ _SPEC_META = {"name", "broker"}       # 不影响规则的字段，比较两个�
 
 
 def spec_key(spec: dict) -> str:
-    """策略的「指纹」：规则相同、只是名称或资金不同的两个策略得到同一个值"""
+    """策略的「指纹」：规则相同、只是名称或资金不同的两个策略得到同一个值。
+    模板的参数按模板补齐默认值、转成参数本身的类型（{} 与写全默认值、20 与 20.0 都算相同）"""
     import json
-    return json.dumps({k: v for k, v in (spec or {}).items() if k not in _SPEC_META},
-                      sort_keys=True, ensure_ascii=False, default=str)
+    body = {k: v for k, v in (spec or {}).items() if k not in _SPEC_META}
+    if body.get("kind") == "template":
+        from simplequant.strategies import TEMPLATES
+        tpl = TEMPLATES.get(body.get("template"))
+        if tpl is not None:
+            vals = dict(body.get("params") or {})
+            try:
+                vals.update({p.name: (int if p.is_int else float)(vals.get(p.name, p.default)) for p in tpl.params})
+                body["params"] = vals
+            except (TypeError, ValueError):
+                pass
+    return json.dumps(body, sort_keys=True, ensure_ascii=False, default=str)
+
+
+def timing_verify(spec: dict, bt: dict, opt: dict) -> dict[str, bool] | None:
+    """
+    择时策略做过哪些检验（VERIFY_AUTO / VERIFY_MANUAL）→ {检验: 是否已做}，只列适用的项。
+    bt：回测的状态（STATE["bt"]），其中的回测与 spec 规则相同时才算上随回测完成的几项：可信度检查；随机买卖对照
+    （平仓交易太少时不做，不列）；调仓日检验（只对定期调仓的策略做，正在进行时算未做）。
+    opt：参数优化的状态（STATE["opt"]），网格优化 / 滚动优化的策略与 spec 规则相同才算。两边都没有时为 None
+    """
+    key = spec_key(spec)
+    v = {}
+    if bt.get("result") is not None and spec_key(bt.get("spec")) == key:
+        keys = [c.get("key", "") for c in bt.get("checks", [])]
+        v["credibility"] = True
+        if any(k.startswith("cred.random") for k in keys):
+            v["random"] = True
+        if bt.get("phase_pending") or any(k.startswith("cred.phase") for k in keys):
+            v["phase"] = any(k.startswith("cred.phase") for k in keys)
+    res = opt.get("result")
+    grid = bool(res) and spec_key(res.get("spec")) == key
+    wf = bool(opt.get("wf")) and opt.get("wf_spec") is not None and spec_key(opt["wf_spec"]) == key
+    if not v and not (grid or wf):
+        return None
+    v["optimize"], v["walkforward"] = grid, wf
+    return v
 
 
 def saved_name(spec: dict, saved: dict[str, dict]) -> str | None:

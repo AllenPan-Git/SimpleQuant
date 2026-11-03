@@ -122,6 +122,29 @@ def test_spec_matching_ignores_name_and_broker():
     assert shared.paper_count(a, accs) == 1
 
 
+def test_spec_key_fills_template_defaults():
+    """模板参数没写（用默认值）、写全默认值、整数写成小数，都算同一个策略；参数真的不同时不算"""
+    a = {"kind": "template", "template": "sma_cross", "params": {}}
+    assert shared.spec_key(a) == shared.spec_key({**a, "params": {"fast": 5, "slow": 20.0, "position_pct": 95}})
+    assert shared.spec_key(a) != shared.spec_key({**a, "params": {"fast": 7}})
+    assert shared.spec_key({"kind": "template", "template": "no_such", "params": {}}) != shared.spec_key(a)
+
+
+def test_timing_verify():
+    """择时策略做过的检验：回测与策略规则相同才算随回测完成的几项；参数优化、滚动优化按各自的策略比对"""
+    a = {"kind": "template", "template": "sma_cross", "params": {}}
+    b = {**a, "params": {"fast": 7}}
+    bt = {"result": object(), "spec": a, "checks": [{"key": "cred.random_ok"}, {"key": "cred.trades_few"}]}
+    assert shared.timing_verify(a, bt, {}) == {"credibility": True, "random": True, "optimize": False, "walkforward": False}
+    assert shared.timing_verify(b, bt, {}) is None                       # 回测的是另一组参数
+    assert shared.timing_verify(a, {**bt, "phase_pending": {"n": 1, "of": 3}}, {})["phase"] is False
+    bt["checks"].append({"key": "cred.phase_ok"})
+    opt = {"result": {"spec": {**a, "name": "x"}}, "wf": ("res",), "wf_spec": b}
+    assert shared.timing_verify(a, bt, opt) == {"credibility": True, "random": True, "phase": True,
+                                                "optimize": True, "walkforward": False}
+    assert shared.timing_verify(b, {}, opt) == {"optimize": False, "walkforward": True}
+
+
 def test_progress_steps():
     """四步进度：完成的打勾，第一个没完成的是「建议下一步」；验证要做过参数优化或滚动优化才算完成"""
     def run(**kw):

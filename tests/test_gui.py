@@ -1672,6 +1672,37 @@ def test_narrow_rules_shared_by_media_and_container():
     assert ".sq-new .q-page-container { container: sqpage / inline-size; }" in theme.CSS
 
 
+async def test_new_ui_home_progress(user: User, paper_dir):
+    """新版首页：「继续上次的工作」显示四步进度（未保存 → 建议先设置；保存并开了模拟账户 → 只差验证），
+    点一步去对应的页面；「工具」那一行不显示（侧栏有）"""
+    from gui import common, history
+    from simplequant.engine import BrokerConfig
+    from simplequant.paper import create_account
+    common.set_ui("new")
+    history.clear()
+    spec = {"kind": "template", "template": "sma_cross", "params": {}}
+    history.add("bt", "均线", "510300 · 日线", {"total_return": 0.25}, data="510300", strategy="均线",
+                restore={"spec": {"name": "均线", **spec}, "ids": [], "range": ["2024-01-02", "2024-12-31"], "broker": {}})
+
+    def cell(k):
+        return user.find(marker=f"prog:{k}").elements.pop()
+
+    await user.open("/")
+    await user.should_see(marker="home_continue")
+    await user.should_not_see(marker="home_tools:ov")
+    assert "next" in cell("setup").classes and "ok" in cell("backtest").classes
+    assert cell("verify").props["title"] == "03 验证"          # 内存里没有这次回测：不知道做了哪些检验
+
+    strategies.save_strategy("均线", spec)
+    create_account("均线账户", spec, BrokerConfig(), "2026-01-05",
+                   assets=[{"source": "akshare", "symbol": "510300", "asset": "etf", "name": "510300"}])
+    await user.open("/")
+    assert [k for k in ("setup", "backtest", "verify", "paper") if "ok" in cell(k).classes] == ["setup", "backtest", "paper"]
+    assert "next" in cell("verify").classes
+    user.find(marker="prog:paper").click()
+    await user.should_see(marker="pp_run_all")
+
+
 def _body_classes(user: User) -> list:
     """ui.query("body") 加到 body 上的 class"""
     from nicegui.elements.query import QueryElement

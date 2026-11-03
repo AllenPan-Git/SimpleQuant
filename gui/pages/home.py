@@ -10,10 +10,10 @@ from simplequant.data import library
 from simplequant.paper import list_accounts, load_calendar, health, schedule
 from simplequant.strategies import list_strategies
 from gui import history, state
-from gui.common import t
-from gui.components import accounts_table
+from gui.common import t, lang, new_ui
+from gui.components import accounts_table, strategy_progress
 from gui.layout import frame
-from ui.shared import pct, num, account_rows
+from ui.shared import pct, num, account_rows, progress_steps, saved_name, paper_count, spec_key
 
 
 def page():
@@ -33,7 +33,9 @@ def page():
                      if metas else t("home.status_empty")).classes("sq-muted text-sm")
 
         with ui.element("div").classes("sq-home-top w-full grid gap-10").style("grid-template-columns: minmax(0, 1fr) 320px"):
-            if recent:
+            if recent and new_ui():
+                _continue_new(recent[0], accounts)
+            elif recent:
                 _continue(recent[0])
             else:
                 _hero(bool(metas))
@@ -53,13 +55,14 @@ def page():
                     ui.label(t(f"home.w_{key}")).classes("sq-serif text-lg mt-3 mb-1 sq-hover-title")
                     ui.label(t(f"home.w_{key}_body")).classes("text-sm").style("color: var(--sq-text2)")
                     ui.label(t(f"home.w_{key}_more") + " →").classes("sq-more mt-3")
-        with ui.row().classes("items-center gap-2 text-sm"):
-            ui.label(t("home.tools")).classes("sq-muted")
-            for i, (tab, key) in enumerate((("ov", "sp.tab_overview"), ("hd", "sp.tab_diag"))):
-                if i:
-                    ui.label("·").classes("sq-faint")
-                ui.label(t(key)).classes("sq-red cursor-pointer") \
-                    .on("click", lambda tab=tab: _open_tool(tab)).mark(f"home_tools:{tab}")
+        if not new_ui():         # 新版侧栏里有「工具」
+            with ui.row().classes("items-center gap-2 text-sm"):
+                ui.label(t("home.tools")).classes("sq-muted")
+                for i, (tab, key) in enumerate((("ov", "sp.tab_overview"), ("hd", "sp.tab_diag"))):
+                    if i:
+                        ui.label("·").classes("sq-faint")
+                    ui.label(t(key)).classes("sq-red cursor-pointer") \
+                        .on("click", lambda tab=tab: _open_tool(tab)).mark(f"home_tools:{tab}")
 
         if recent:
             _section(t("home.recent"), t("home.recent_note"))
@@ -164,14 +167,91 @@ def _continue(e: dict):
                     lbl = ui.label(v).classes("v")
                     if k == t("step.backtest") and ret is not None:
                         lbl.classes("sq-fig " + ("sq-up" if ret >= 0 else "sq-down"))
-        with ui.row().classes("gap-3 pt-5"):
-            ui.button(t("home.open_report"), on_click=lambda: reopen(e)).props("unelevated no-caps color=primary") \
-                .classes("px-5").mark("open_report")
-            if sel:
-                ui.button(t("home.to_paper"), on_click=lambda: ui.navigate.to("/paper")).props("outline no-caps")
-            else:
-                ui.button(t("home.try_optimize"), on_click=lambda: (reopen(e, go=False), ui.navigate.to("/optimize"))) \
-                    .props("outline no-caps")
+        _continue_buttons(e, sel)
+
+
+def _continue_buttons(e: dict, sel: bool):
+    with ui.row().classes("gap-3 pt-5"):
+        ui.button(t("home.open_report"), on_click=lambda: reopen(e)).props("unelevated no-caps color=primary") \
+            .classes("px-5").mark("open_report")
+        if sel:
+            ui.button(t("home.to_paper"), on_click=lambda: ui.navigate.to("/paper")).props("outline no-caps")
+        else:
+            ui.button(t("home.try_optimize"), on_click=lambda: (reopen(e, go=False), ui.navigate.to("/optimize"))) \
+                .props("outline no-caps")
+
+
+def _continue_new(e: dict, accounts: list):
+    """新版：继续上次的工作 = 策略名 + 四步进度（设置 / 回测 / 验证 / 模拟盘），点一步去对应的地方。
+    工作台（4.2）做好前，各步先指向经典的页面"""
+    sel = e.get("kind") == "sel"
+    spec = _entry_spec(e)
+    try:
+        saved = saved_name(spec, list_strategies()) if spec else None
+    except Exception:  # noqa: BLE001 - 读不出已保存的策略时当作未保存
+        saved = None
+    steps = progress_steps(lang(), saved, False, e.get("ret"), _entry_verify(e, spec),
+                           paper_count(spec, accounts) if spec else 0)
+    with ui.column().classes("sq-sheet gap-0 px-8 py-6 min-w-0").mark("home_continue"):
+        ui.label(t("home.continue")).classes("sq-eyebrow")
+        ui.label(e["title"]).classes("sq-serif text-2xl mt-1 mb-5")
+        strategy_progress(steps, on_click=lambda k: _open_step(e, k))
+        _continue_buttons(e, sel)
+
+
+def _entry_spec(e: dict) -> dict | None:
+    """这条报告的策略；2.6.0 前的选股记录没存 spec，按名字找已保存的策略"""
+    spec = (e.get("restore") or {}).get("spec")
+    if spec:
+        return spec
+    try:
+        return list_strategies().get(e.get("strategy") or e["title"])
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _entry_verify(e: dict, spec: dict | None) -> dict | None:
+    """这条报告做过哪些检验（shared.VERIFY_*）。只有内存里还留着同一次回测的结果时才知道，否则为 None（显示「—」）；
+    重启后也能显示要等 4.2.4 把检验记进报告记录"""
+    S = state.STATE
+    if not spec:
+        return None
+    if e.get("kind") == "sel":
+        sp = S.get("sp") or {}
+        res = sp.get("result")
+        if not res or spec_key(res[1]) != spec_key(spec):
+            return None
+        return {"credibility": True, "phase": bool((sp.get("phase") or {}).get("found")),
+                "walkforward": bool(sp.get("wf"))}
+    bt = S.get("bt") or {}
+    if bt.get("result") is None or bt.get("time") != e["time"]:
+        return None
+    keys = [c.get("key", "") for c in bt.get("checks", [])]
+    v = {"credibility": True}
+    if any(k.startswith("cred.random") for k in keys):        # 随回测同步算完；没有 = 不适用（平仓交易太少），不列
+        v["random"] = True
+    if bt.get("phase_pending") or any(k.startswith("cred.phase") for k in keys):    # 调仓日检验只对定期调仓的策略做
+        v["phase"] = any(k.startswith("cred.phase") for k in keys)
+    choice, opt = S.get("opt_strategy", ""), S.get("opt") or {}
+    opt_spec = S.get("current_spec") if choice == "__current__" else \
+        list_strategies().get(choice[6:]) if choice.startswith("saved:") else None
+    same = bool(opt_spec) and spec_key(opt_spec) == spec_key(spec)
+    v["optimize"], v["walkforward"] = same and bool(opt.get("result")), same and bool(opt.get("wf"))
+    return v
+
+
+def _open_step(e: dict, key: str):
+    """点进度的一步：设置、回测 → 恢复设置回到回测页；验证 → 优化页（选股：滚动优化标签）；模拟盘 → 模拟盘页"""
+    if key == "paper":
+        ui.navigate.to("/paper")
+    elif e.get("kind") == "sel":
+        state.STATE["sp_tab"] = "wf" if key == "verify" else "bt"
+        ui.navigate.to("/selection")
+    elif key == "verify":
+        reopen(e, go=False)
+        ui.navigate.to("/optimize")
+    else:
+        reopen(e)
 
 
 def reopen(e: dict, go: bool = True):

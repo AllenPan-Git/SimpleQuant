@@ -608,7 +608,9 @@ def _backtest_form(SP, ctx, rebuild):
             SP["plan_check"] = (plan_mod.compare(plan_ctx.get("result"), res.metrics), plan_ctx) if plan_ctx else None
             uni = p(UNIVERSES[spec["universe"]]["label"])
             title = SP["name"].strip() or t("sel.kind")
-            history.add("sel", title, f"{uni} · {ctx.start} ~ {ctx.end}", res.metrics, data=uni, strategy=title)
+            # restore 只记 spec（首页的策略进度用它比对已保存的策略、模拟账户）；选股重新打开不恢复设置
+            history.add("sel", title, f"{uni} · {ctx.start} ~ {ctx.end}", res.metrics, restore={"spec": spec},
+                        data=uni, strategy=title)
             support.after_run()
             ok = True
         except Exception as ex:  # noqa: BLE001

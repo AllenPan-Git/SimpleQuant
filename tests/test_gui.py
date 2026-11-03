@@ -1663,6 +1663,15 @@ async def test_new_ui_page_eyebrow(user: User):
     assert await eyebrow("/settings") == "SETTINGS"
 
 
+def test_narrow_rules_shared_by_media_and_container():
+    """窄宽度规则：经典界面按窗口（@media），新版按内容区（@container sqpage），两边用同一份规则"""
+    from gui import theme
+    for w, rules in ((1150, theme._NARROW_1150), (860, theme._NARROW_860), (640, theme._NARROW_640)):
+        assert f"@media (max-width: {w}px) {{" in theme.CSS and f"@container sqpage (max-width: {w}px) {{" in theme.CSS
+        assert theme.CSS.count(rules) == 2
+    assert ".sq-new .q-page-container { container: sqpage / inline-size; }" in theme.CSS
+
+
 def _body_classes(user: User) -> list:
     """ui.query("body") 加到 body 上的 class"""
     from nicegui.elements.query import QueryElement

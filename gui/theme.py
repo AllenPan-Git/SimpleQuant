@@ -28,6 +28,40 @@ SANS_PLOT = "Segoe UI, Inter, Microsoft YaHei UI, PingFang SC, sans-serif"
 SIDE_W, SIDE_MINI_W, SIDE_MINI_BELOW = 200, 64, 1100
 _MINI = "body.sq-new:not(.sq-side-open)"      # 窄窗口、没有手动展开时 = 图标列
 
+# 内容区变窄时的规则（报头的规则不在这里）：经典界面按窗口宽度（@media），新版界面按内容区宽度（@container），共用这三段
+_NARROW_1150 = """\
+  .sq-main { padding-left: 20px !important; padding-right: 20px !important; }
+  .sq-report { grid-template-columns: minmax(0, 1fr) !important; }
+  .sq-home-top { grid-template-columns: minmax(0, 1fr) !important; }
+  .sq-starts { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+  .sq-starts .sq-start:nth-child(3) { padding-left: 0; border-left: 0; }
+  .sq-starts .sq-start:nth-child(n+3) { border-top: 1px solid var(--sq-border); }
+  .sq-chip-row { flex-wrap: wrap; }
+  /* 吸顶按钮换到设置区上方，整行铺底色（吸顶时免得和下面的表单叠在一起），表单不再被按钮列挤窄 */
+  .sq-setup-sticky { flex-wrap: wrap; }
+  .sq-setup-sticky > .sq-setup-actions { order: -1; width: 100%; top: var(--sq-header-h, 64px); padding-bottom: 8px;
+    background: var(--sq-page); }
+"""
+_NARROW_860 = """\
+  .sq-title { font-size: 1.7rem; }
+  .sq-setup-row { flex-wrap: wrap; }
+  .sq-recent-row { grid-template-columns: minmax(0, 1fr) 90px !important; }
+  .sq-recent-row > :nth-child(2), .sq-recent-row > :nth-child(3) { display: none; }
+  /* 模拟账户一览：只留账户、待执行交易、状态 */
+  .sq-acct-row { grid-template-columns: minmax(0, 1fr) 120px 120px !important; }
+  .sq-acct-row > :nth-child(2), .sq-acct-row > :nth-child(3) { display: none; }
+  .sq-acct-row > :nth-child(4) { padding-left: 0; }
+  .sq-figs .v { font-size: 22px; }
+  .sq-figs > div { padding-right: 10px; } .sq-figs > div + div { padding-left: 10px; }
+  .sq-pipe .v { font-size: 13.5px; }
+"""
+_NARROW_640 = """\
+  .sq-starts { grid-template-columns: minmax(0, 1fr) !important; }
+  .sq-starts .sq-start { padding-left: 0 !important; border-left: 0 !important; border-top: 1px solid var(--sq-border); }
+  .sq-figs { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+  .sq-pipe { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+"""
+
 CSS = f"""
 @font-face {{ font-family: 'Inter'; font-weight: 100 900; font-display: swap;
   src: url('/static/fonts/inter-latin-wght-normal.woff2') format('woff2'); }}
@@ -307,39 +341,25 @@ body.body--dark .q-btn.bg-primary, body.body--dark .q-btn.bg-primary .q-btn__con
   .sq-top-right {{ margin-left: auto; }}
   .sq-steps {{ order: 3; width: 100%; justify-content: center; padding-top: 6px; border-top: 1px solid var(--sq-border2); }}
   .sq-step small {{ display: block; }}
-  .sq-main {{ padding-left: 20px !important; padding-right: 20px !important; }}
-  .sq-report {{ grid-template-columns: minmax(0, 1fr) !important; }}
-  .sq-home-top {{ grid-template-columns: minmax(0, 1fr) !important; }}
-  .sq-starts {{ grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }}
-  .sq-starts .sq-start:nth-child(3) {{ padding-left: 0; border-left: 0; }}
-  .sq-starts .sq-start:nth-child(n+3) {{ border-top: 1px solid var(--sq-border); }}
-  .sq-chip-row {{ flex-wrap: wrap; }}
-  /* 吸顶按钮换到设置区上方，整行铺底色（吸顶时免得和下面的表单叠在一起），表单不再被按钮列挤窄 */
-  .sq-setup-sticky {{ flex-wrap: wrap; }}
-  .sq-setup-sticky > .sq-setup-actions {{ order: -1; width: 100%; top: var(--sq-header-h, 64px); padding-bottom: 8px;
-    background: var(--sq-page); }}
-}}
+{_NARROW_1150}}}
 @media (max-width: 860px) {{
   .sq-step small {{ display: none; }}
   .sq-mode {{ font-size: 12.5px; }}
-  .sq-title {{ font-size: 1.7rem; }}
-  .sq-setup-row {{ flex-wrap: wrap; }}
-  .sq-recent-row {{ grid-template-columns: minmax(0, 1fr) 90px !important; }}
-  .sq-recent-row > :nth-child(2), .sq-recent-row > :nth-child(3) {{ display: none; }}
-  /* 模拟账户一览：只留账户、待执行交易、状态 */
-  .sq-acct-row {{ grid-template-columns: minmax(0, 1fr) 120px 120px !important; }}
-  .sq-acct-row > :nth-child(2), .sq-acct-row > :nth-child(3) {{ display: none; }}
-  .sq-acct-row > :nth-child(4) {{ padding-left: 0; }}
-  .sq-figs .v {{ font-size: 22px; }}
-  .sq-figs > div {{ padding-right: 10px; }} .sq-figs > div + div {{ padding-left: 10px; }}
-  .sq-pipe .v {{ font-size: 13.5px; }}
-}}
+{_NARROW_860}}}
 @media (max-width: 640px) {{
-  .sq-starts {{ grid-template-columns: minmax(0, 1fr) !important; }}
-  .sq-starts .sq-start {{ padding-left: 0 !important; border-left: 0 !important; border-top: 1px solid var(--sq-border); }}
-  .sq-figs {{ grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }}
-  .sq-pipe {{ grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }}
+{_NARROW_640}}}
+
+/* 新版界面：内容区 = 窗口减去侧栏，上面按窗口宽度的规则会该生效时没生效（不会误生效：内容区总比窗口窄），
+   所以把内容区设成查询容器，同样的规则再按内容区宽度来一遍。不支持容器查询的老内核（Safari 15 及以前）忽略这一段，
+   退回按窗口宽度，和加侧栏之前一样 */
+.sq-new .q-page-container {{ container: sqpage / inline-size; }}
+@container sqpage (max-width: 1150px) {{
+{_NARROW_1150}  .sq-setup-sticky > .sq-setup-actions {{ padding-top: 10px; }}     /* 没有报头，吸顶时贴着窗口上沿，留一点白 */
 }}
+@container sqpage (max-width: 860px) {{
+{_NARROW_860}}}
+@container sqpage (max-width: 640px) {{
+{_NARROW_640}}}
 """
 
 # 报头高度写进 CSS 变量 --sq-header-h（吸顶元素用）。报头在窄窗口会换行变高，所以用 ResizeObserver 跟着改；

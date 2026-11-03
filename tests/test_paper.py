@@ -510,3 +510,56 @@ def test_adjust_method_new_accounts_ratio_old_accounts_additive():
     path.write_text(json.dumps(data), encoding="utf-8")
     old = load_account(acc.id)
     assert old.adjust_method == "additive" and old.fetch_kwargs("etf") == {"asset": "etf", "ratio": False}
+
+
+def _fake_run(monkeypatch, runner, seen=None):
+    """run_all 里推进账户的部分换成假的（不下载、不回测），记下推进了哪些账户"""
+    cal = pd.to_datetime(["2026-09-29"])
+    monkeypatch.setattr(runner, "load_calendar", lambda: cal)
+    monkeypatch.setattr(runner, "load_single_data", lambda a: {})
+    monkeypatch.setattr(runner, "with_rates", lambda a, prices, refresh: prices)
+
+    def fake(acc, *a, **kw):
+        if seen is not None:
+            seen.append(acc.id)
+        return {"as_of": "2026-09-29", "value": 1.0, "signals": [], "execute_on": "2026-09-30"}
+    monkeypatch.setattr(runner, "run_account", fake)
+
+
+def test_run_all_waits_for_other_run(monkeypatch):
+    """另一处（定时任务 / 窗口里的按钮）正在更新时先等它做完，不同时跑；等完后账户以文件为准：等待期间被暂停的不推进"""
+    import threading
+    import time
+    from simplequant.paper import runner
+    monkeypatch.setattr(runner, "LOCK_POLL", 0.02)
+    a, b = _acc(), _acc()
+    seen, logs, out = [], [], {}
+    _fake_run(monkeypatch, runner, seen)
+    with runner.run_lock():                                  # 另一处正在更新（另开一次文件，与另一个进程一样互斥）
+        t = threading.Thread(target=lambda: out.update(runner.run_all([a, b], store=object(), refresh=False,
+                                                                       log=logs.append)))
+        t.start()
+        time.sleep(0.3)
+        assert t.is_alive() and not seen                     # 在等
+        assert any("waiting" in m and "等它完成" in m for m in logs)
+        paused = load_account(b.id)
+        paused.status = "paused"                             # 等待期间另一处把 b 暂停了
+        paused.save()
+    t.join(5)
+    assert not t.is_alive() and seen == [a.id] and set(out) == {a.id}
+    with runner.run_lock() as waited:                        # 用完已释放，没人占用时不用等
+        assert waited is False
+
+
+def test_run_all_gives_up_after_wait_limit(monkeypatch):
+    """另一处的更新一直不结束：等到上限后放弃本次，不推进任何账户"""
+    from simplequant.paper import runner
+    monkeypatch.setattr(runner, "LOCK_POLL", 0.02)
+    monkeypatch.setattr(runner, "LOCK_WAIT_LIMIT", 0.1)
+    seen, logs = [], []
+    _fake_run(monkeypatch, runner, seen)
+    acc = _acc()
+    with runner.run_lock():
+        assert runner.run_all([acc], store=object(), refresh=False, log=logs.append) == {}
+    assert not seen and "本次跳过" in logs[-1]
+    assert runner.run_all([acc], store=object(), refresh=False, log=logs.append) == {acc.id: ""}

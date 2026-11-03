@@ -45,14 +45,20 @@ def page():
         logs = None
 
         async def run_accounts(accounts, refresh=True):
+            """返回 {账户id: 错误}；更新期间离开或刷新了页面时返回 None：更新仍在后台做完，只是不再提示"""
+            owner = ui.context.slot.parent        # 发起更新的按钮所在的元素：页面关闭或刷新后会被删掉
             logs.start()
             try:
                 results = await run.io_bound(run_all, accounts, refresh=refresh, log=logs.append)
+                if results is None or owner.is_deleted:
+                    return None
                 failed = [k for k, v in results.items() if v]
                 ui.notify(t("pp.run_done", ok=len(results) - len(failed), failed=len(failed)),
                           type="negative" if failed else "positive")
+                return results
             finally:
-                logs.stop()
+                if not owner.is_deleted:
+                    logs.stop()
 
         def redraw():
             overview.refresh()
@@ -237,8 +243,8 @@ def _overview(PP, run_accounts, redraw, open_account):
 
     async def run_every():
         btn.disable()
-        await run_accounts(list_accounts())
-        redraw()
+        if await run_accounts(list_accounts()) is not None:
+            redraw()
 
     with ui.element("div").classes("sq-sec").style("align-items: center"):
         ui.label(t("pp.accounts_head")).classes("sq-h2")
@@ -265,8 +271,8 @@ def _account_view(PP, run_accounts, redraw):
 
     async def run_this():
         b1.disable()
-        await run_accounts([acc])
-        redraw()
+        if await run_accounts([acc]) is not None:
+            redraw()
 
     def toggle_pause():
         acc.status = "active" if acc.status != "active" else "paused"

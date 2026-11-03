@@ -11,6 +11,9 @@
 
 import datetime as dt
 import json
+import os
+import time
+from contextlib import contextmanager
 from dataclasses import asdict
 
 import pandas as pd
@@ -19,7 +22,8 @@ from .. import strategies
 from ..data import SOURCES
 from ..engine import run_backtest, BrokerConfig
 from ..engine.base_strategy import ORDER_COLUMNS
-from .account import PaperAccount, NAV_COLUMNS, new_id
+from . import account as _account
+from .account import PaperAccount, NAV_COLUMNS, new_id, load_account
 from .calendar import load_calendar, next_trading_day, next_trading_days, latest_expected_day
 
 HISTORY_DAYS = 800        # 单标的：开始日之前取多少天历史用于预热指标
@@ -242,8 +246,85 @@ def run_account(acc: PaperAccount, calendar: pd.DatetimeIndex | None = None, pri
     return state
 
 
+# ---------------- 同一时间只运行一次 ----------------
+LOCK_WAIT_LIMIT = 3 * 3600    # 另一处的更新超过这么久仍未结束时放弃本次（正常一次几分钟到几十分钟）
+LOCK_POLL = 1.0
+
+
+class RunLockTimeout(Exception):
+    pass
+
+
+def _try_lock(f) -> bool:
+    f.seek(0)
+    try:
+        if os.name == "nt":
+            import msvcrt
+            msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except OSError:
+        return False
+
+
+def _unlock(f):
+    f.seek(0)
+    if os.name == "nt":
+        import msvcrt
+        msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+
+@contextmanager
+def run_lock(log=print):
+    """
+    同一时间只让一次模拟盘更新运行：定时任务、程序窗口里的按钮（离开页面后仍在后台跑的那次也算）共用这把锁。
+    两次同时跑时，两边都把数据完整下载一遍、抢 BaoStock 的连接，一边重写数据文件时另一边还可能读到空文件。
+    用操作系统的文件锁（Windows msvcrt.locking，其它系统 flock，同一进程里两次打开也互斥）：
+    持有它的进程退出（包括崩溃、被结束）时自动释放，不会留下锁死的文件。
+    yield 是否等过另一处（等过时账户文件可能已被改写，调用方要重新读取）
+    """
+    _account.PAPER_ROOT.mkdir(parents=True, exist_ok=True)
+    with open(_account.PAPER_ROOT / "run.lock", "a+") as f:
+        waited, deadline = False, time.monotonic() + LOCK_WAIT_LIMIT
+        while not _try_lock(f):
+            if not waited:
+                log("another update is running (scheduled task or the app window); waiting for it to finish / "
+                    "另一处正在更新模拟账户（定时任务或程序窗口），等它完成后继续…")
+                waited = True
+            if time.monotonic() > deadline:
+                raise RunLockTimeout()
+            time.sleep(LOCK_POLL)
+        try:
+            yield waited
+        finally:
+            _unlock(f)
+
+
+def _reload(acc: PaperAccount) -> PaperAccount | None:
+    """重新读取账户（等待期间可能被另一处更新、被暂停或被删除）；已删除时为 None"""
+    path = acc.dir / "account.json"
+    return load_account(acc.id, acc.dir.parent) if path.exists() else None
+
+
 def run_all(accounts: list[PaperAccount], store=None, refresh: bool = True, log=print) -> dict:
-    """更新数据并推进所有启用中的账户；返回 {账户id: 错误信息或空}"""
+    """更新数据并推进所有启用中的账户；返回 {账户id: 错误信息或空}。另一处正在更新时先等它做完（见 run_lock）"""
+    try:
+        with run_lock(log) as waited:
+            if waited:        # 另一处刚更新完：数据已是最新，这次只需几秒；账户以文件里的为准
+                accounts = [a for a in map(_reload, accounts) if a is not None]
+            return _run_all(accounts, store, refresh, log)
+    except RunLockTimeout:
+        log(f"another update is still running after {LOCK_WAIT_LIMIT // 3600} hours; skipped / "
+            f"另一处的更新超过 {LOCK_WAIT_LIMIT // 3600} 小时仍未结束，本次跳过")
+        return {}
+
+
+def _run_all(accounts: list[PaperAccount], store, refresh: bool, log) -> dict:
     from ..stocks import StockStore
     store = store or StockStore()
     calendar = load_calendar()

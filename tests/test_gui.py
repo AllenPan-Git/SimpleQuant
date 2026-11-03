@@ -2532,3 +2532,32 @@ async def test_tools_holdings_check(user: User, tmp_path, monkeypatch):
     end = U.load_benchmark("hs300", st).index[-1]
     want = ("hs300", D.panel_start(end), str(end.date()))
     assert any(k[:3] == want for k in sys.modules["gui.sel_panel"]._PANELS)
+
+
+async def test_paper_run_all_after_leaving_page(user: User, paper_dir, monkeypatch):
+    """「更新全部账户」进行中离开了模拟盘页面：更新在后台照常做完，做完时不再弹提示（页面已不在，之前会报错）"""
+    import threading
+    from nicegui import app
+    from simplequant.engine import BrokerConfig
+    from simplequant.paper import create_account
+    create_account("甲", {"kind": "template", "template": "buy_hold", "params": {}}, BrokerConfig(), "2026-01-05",
+                   assets=[{"source": "akshare", "symbol": "510300", "asset": "etf", "name": "510300"}])
+    gate, done, errors = threading.Event(), [], []
+
+    def slow_run_all(accounts, **kw):
+        gate.wait(10)
+        done.append(len(accounts))
+        return {a.id: "" for a in accounts}
+    patch_page(monkeypatch, "/paper", "run_all", slow_run_all)
+    monkeypatch.setattr(app, "_exception_handlers", [*app._exception_handlers, errors.append])
+
+    await user.open("/paper")
+    btn = user.find(marker="pp_run_all").elements.pop()
+    user.find(marker="pp_run_all").click()
+    await settle()
+    await user.open("/")
+    btn.client.delete()                                  # 窗口里换页后旧页面被删掉（测试工具不会自动删）
+    gate.set()
+    assert await _wait(lambda: done)
+    await asyncio.sleep(0.2)
+    assert done == [1] and not errors, errors

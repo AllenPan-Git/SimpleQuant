@@ -103,13 +103,32 @@ def load_single_data(acc: PaperAccount) -> dict[str, pd.DataFrame]:
     return {a["name"]: pd.read_parquet(acc.dir / "prices" / f"{a['symbol']}.parquet") for a in acc.assets}
 
 
+def _panel_since(acc) -> pd.Timestamp:
+    """选股账户的面板从哪天开始：开始日减去预热期"""
+    from ..stocks.selection import panel_warmup_days
+    return pd.Timestamp(acc.start) - pd.Timedelta(days=panel_warmup_days(acc.spec))
+
+
+def selection_codes(uni: pd.DataFrame, since: pd.Timestamp) -> list[str]:
+    """
+    模拟盘用得到的股票：since 那天（按不晚于它的最近一次成分股快照）及以后在股票池里的。
+    更早就调出的股票在面板区间里从来不是成分股：选股的打分、中性化、IC、机器学习都只看当天的成分股，
+    也不会买进它们，所以不用每天更新（沪深300 从 2022 年起进过指数的约 490 只，开始日附近用得到的约 330 只）
+    """
+    dates = uni["date"]
+    snap = dates[dates <= since].max()
+    return sorted(uni.loc[dates >= (snap if pd.notna(snap) else since), "code"].unique())
+
+
 def refresh_selection_data(acc: PaperAccount, store, done: set | None = None, workers: int = 4,
                            calendar: pd.DatetimeIndex | None = None) -> None:
-    """选股账户：增量更新股票池数据（同一次运行中同一个股票池只更新一次）"""
+    """选股账户：增量更新股票池里用得到的股票（见 selection_codes）；同一次运行中同样的范围只更新一次"""
     from ..stocks import UNIVERSES, FACTORS, universe
     from ..stocks.selection import panel_warmup_days, needs_fin, needs_risk
     done = done if done is not None else set()
-    if acc.universe in done:
+    since = _panel_since(acc)
+    key = acc.universe if universe.kind(acc.universe) == "cb" else (acc.universe, since.date().isoformat())
+    if key in done:
         return
     # 只更新到"此刻应有数据"的最新交易日：数据已到这天的股票会被跳过，周末/盘中重复运行很快
     today = latest_expected_day(calendar if calendar is not None else load_calendar()).date().isoformat()
@@ -122,7 +141,7 @@ def refresh_selection_data(acc: PaperAccount, store, done: set | None = None, wo
         if (store.root / "index" / f"{UNIVERSES[acc.universe]['index']}.parquet").exists() else acc.start
     uni = store.update_universe(acc.universe, first, today)
     store.update_index(UNIVERSES[acc.universe]["index"], first, today)
-    codes = sorted(uni["code"].unique())
+    codes = selection_codes(uni, since)
     store.update(codes, first, today, workers=workers)
     if needs_fin(acc.spec):
         store.update_fundamentals(codes, int(first[:4]) - 1, workers=workers)
@@ -133,14 +152,18 @@ def refresh_selection_data(acc: PaperAccount, store, done: set | None = None, wo
         store.update_dividends(codes, int(first[:4]) - 1, workers=workers)
     if needs_risk(acc.spec):
         store.update_risk(codes, int(first[:4]) - 1, workers=workers)
-    done.add(acc.universe)
+    done.add(key)
 
 
 def load_selection_panel(acc: PaperAccount, store):
+    """
+    选股账户的面板。仍放全部进过股票池的股票（包括 refresh_selection_data 不再更新的、早已调出的）：
+    它们在面板区间里不是成分股，各种计算先按成分股筛掉，数据旧了不影响结果；少放几列反而会改变横截面统计的
+    浮点运算顺序，分数几乎相同的股票可能换了先后，与账本里已记录的成交对不上
+    """
     from ..stocks import universe
-    from ..stocks.selection import panel_warmup_days
     idx = universe.load_benchmark(acc.universe, store)
-    start = max(idx.index[0], pd.Timestamp(acc.start) - pd.Timedelta(days=panel_warmup_days(acc.spec)))
+    start = max(idx.index[0], _panel_since(acc))
     return universe.build(acc.universe, start.date().isoformat(), idx.index[-1].date().isoformat(), store)
 
 

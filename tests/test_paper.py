@@ -563,3 +563,44 @@ def test_run_all_gives_up_after_wait_limit(monkeypatch):
         assert runner.run_all([acc], store=object(), refresh=False, log=logs.append) == {}
     assert not seen and "本次跳过" in logs[-1]
     assert runner.run_all([acc], store=object(), refresh=False, log=logs.append) == {acc.id: ""}
+
+
+def test_refresh_selection_data_only_needed_codes(tmp_path):
+    """选股账户每天只更新用得到的股票：开始日减预热期那天（按不晚于它的最近一次快照）及以后在股票池里的；
+    更早就调出的不再更新。另一个开始日更早的账户要的范围更大，同一次运行里再补一次"""
+    from types import SimpleNamespace
+    from simplequant.paper import runner
+    from simplequant.stocks.selection import panel_warmup_days
+    snaps = {"2025-06-30": ["A", "B", "C"], "2025-09-01": ["A", "B", "D"], "2025-12-01": ["A", "D", "E"]}
+    uni = pd.DataFrame([(pd.Timestamp(d), c) for d, cs in snaps.items() for c in cs], columns=["date", "code"])
+    calls = []
+
+    class FakeStore:
+        root = tmp_path
+
+        def update_universe(self, name, start, end):
+            return uni
+
+        def update_index(self, *a):
+            pass
+
+        def update(self, codes, *a, **kw):
+            calls.append(("prices", list(codes)))
+
+        def update_dividends(self, codes, *a, **kw):
+            calls.append(("div", list(codes)))
+
+    spec = {"kind": "selection", "universe": "hs300", "factors": [{"key": "dy", "weight": 1.0, "direction": 1}],
+            "top_n": 2, "rebalance": "monthly", "weighting": "manual"}
+    assert panel_warmup_days(spec) == 400
+    acc = SimpleNamespace(universe="hs300", start="2026-10-30", spec=spec)      # 面板从 2025-09-25 起：C 已调出
+    cal = pd.bdate_range("2026-01-01", "2026-12-31")
+    done = set()
+    runner.refresh_selection_data(acc, FakeStore(), done, calendar=cal)
+    assert calls == [("prices", ["A", "B", "D", "E"]), ("div", ["A", "B", "D", "E"])]
+    runner.refresh_selection_data(acc, FakeStore(), done, calendar=cal)        # 同样的范围这次运行里不再更新
+    assert len(calls) == 2
+    early = SimpleNamespace(universe="hs300", start="2026-08-03", spec=spec)   # 面板从 2025-06-29 起：快照还没到
+    runner.refresh_selection_data(early, FakeStore(), done, calendar=cal)
+    assert calls[2:] == [("prices", ["A", "B", "C", "D", "E"]), ("div", ["A", "B", "C", "D", "E"])]
+    assert runner.selection_codes(uni, pd.Timestamp("2025-01-01")) == ["A", "B", "C", "D", "E"]   # 早于第一次快照

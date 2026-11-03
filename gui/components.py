@@ -593,3 +593,21 @@ def walkforward_results(res, labels: dict, metric: str, stitch_label: str, note:
                                          "train_metric": t("wf.col_train_metric", m=t(f"m.{metric}"))}))
     for n in res.notes:
         ui.label(n).classes("sq-muted text-xs")
+
+
+# ---------------- 策略进度（新版界面：设置 → 回测 → 验证 → 模拟盘） ----------------
+def strategy_progress(steps: list[dict], on_click=None, mark: str = "prog"):
+    """四格进度条（沿用首页 .sq-pipe 的样式：完成的打勾，「建议下一步」浅红底）。
+    steps 由 shared.progress_steps 算好；给了 on_click(key) 时每格可点，跳到工作台对应的位置。
+    每格 mark 为 {mark}:{key}；小字状态在前，悬停显示全文"""
+    with ui.element("div").classes("sq-pipe sq-progress").style(f"grid-template-columns: repeat({len(steps)}, minmax(0, 1fr))") \
+            .mark(mark):
+        for s in steps:
+            cls = "ok" if s["done"] else "next" if s["next"] else ""
+            cell = ui.element("div").classes(cls + (" sq-progress-link" if on_click else "")).mark(f"{mark}:{s['key']}")
+            cell.props["title"] = s["title"]
+            if on_click:
+                cell.on("click", lambda k=s["key"]: on_click(k))
+            with cell:
+                ui.label(s["k"]).classes("k")
+                ui.label(s["v"]).classes("v" + (f" sq-{s['tone']}" if s["tone"] else ""))

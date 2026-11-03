@@ -162,6 +162,9 @@ code, pre {{ font-family: var(--sq-mono); }}
 .sq-pipe .ok .k::before {{ content: "✓ "; color: var(--sq-down); }}
 .sq-pipe .next {{ background: var(--sq-red-soft); box-shadow: inset 0 3px 0 var(--sq-red); }}
 .sq-pipe .next .k {{ color: var(--sq-red); letter-spacing: .04em; }}
+/* 新版界面的策略进度（components.strategy_progress）：格子可点时悬停给下划线 */
+.sq-progress-link {{ cursor: pointer; }}
+.sq-progress-link:hover .v {{ text-decoration: underline; text-decoration-color: var(--sq-red); text-underline-offset: 4px; }}
 .sq-start {{ padding: 22px 24px 20px 0; min-width: 0; }}
 .sq-start + .sq-start {{ padding-left: 24px; border-left: 1px solid var(--sq-border); }}
 .sq-more {{ font-size: 13px; color: var(--sq-muted); border-bottom: 1px solid var(--sq-border); align-self: flex-start; }}

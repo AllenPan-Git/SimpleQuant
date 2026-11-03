@@ -192,6 +192,72 @@ def account_rows(accounts: list, calendar: pd.DatetimeIndex | None, now=None) ->
     return sorted((account_row(a, calendar, now) for a in accounts), key=_row_order)
 
 
+# ---------------- 策略进度（新版界面：设置 → 回测 → 验证 → 模拟盘） ----------------
+PROGRESS_STEPS = ("setup", "backtest", "verify", "paper")
+# 验证的各项：前三项随回测自动完成，后两项要用户自己做；做过其中一项才算「验证」这一步完成
+VERIFY_AUTO = ("credibility", "random", "phase")
+VERIFY_MANUAL = ("optimize", "walkforward")
+_SPEC_META = {"name", "broker"}       # 不影响规则的字段，比较两个策略是否相同时去掉
+
+
+def spec_key(spec: dict) -> str:
+    """策略的「指纹」：规则相同、只是名称或资金不同的两个策略得到同一个值"""
+    import json
+    return json.dumps({k: v for k, v in (spec or {}).items() if k not in _SPEC_META},
+                      sort_keys=True, ensure_ascii=False, default=str)
+
+
+def saved_name(spec: dict, saved: dict[str, dict]) -> str | None:
+    """已保存的策略里与 spec 规则相同的那个的名字；同名优先（spec 里带 name 时）；没有为 None"""
+    key = spec_key(spec)
+    same = [n for n, s in saved.items() if spec_key(s) == key]
+    if not same:
+        return None
+    return spec.get("name") if spec.get("name") in same else same[0]
+
+
+def paper_count(spec: dict, accounts: list) -> int:
+    """用这个策略开的模拟账户数（含已暂停的）；账户读不出 spec 的跳过"""
+    key = spec_key(spec)
+    n = 0
+    for acc in accounts:
+        try:
+            n += spec_key(acc.spec) == key
+        except Exception:  # noqa: BLE001
+            continue
+    return n
+
+
+def progress_steps(lg: str, saved: str | None, dirty: bool, ret: float | None,
+                   verify: dict[str, bool] | None, paper: int) -> list[dict]:
+    """
+    四步进度：每步 {"key", "done", "next", "k"（上方小字）, "v"（状态）, "title"（悬停全文）, "tone"（"up" / "down" / ""，收益着色）}。
+    saved：已保存时的策略名；dirty：有改动未保存；ret：回测总收益（没有结果为 None）；
+    verify：本策略适用的各项检验 → 是否已做（不知道时为 None）；paper：用这个策略开的模拟账户数。
+    「建议下一步」是第一个没完成的步骤
+    """
+    names = {k: tr(f"prog.{k}", lg) for k in PROGRESS_STEPS}
+    vals = {
+        "setup": (saved is not None and not dirty,
+                  tr("prog.dirty", lg) if dirty else tr("prog.saved", lg) if saved is not None else tr("prog.unsaved", lg),
+                  saved or ""),
+        "backtest": (ret is not None, pct(ret) if ret is not None else tr("prog.not_run", lg), ""),
+        "verify": (bool(verify) and any(verify.get(k) for k in VERIFY_MANUAL),
+                   tr("prog.verify_n", lg, n=sum(map(bool, verify.values())), of=len(verify)) if verify else "—", ""),
+        "paper": (paper > 0, tr("prog.paper_n", lg, n=paper) if paper else "—", ""),
+    }
+    nxt = next((k for k in PROGRESS_STEPS if not vals[k][0]), None)
+    out = []
+    for i, k in enumerate(PROGRESS_STEPS, 1):
+        done, v, extra = vals[k]
+        label = tr("prog.next", lg, n=f"{i:02d}") if k == nxt else f"{i:02d} {names[k]}"
+        value = names[k] if k == nxt else v
+        title = " · ".join(x for x in (f"{i:02d} {names[k]}", v, extra) if x and x != "—")
+        tone = ("up" if ret >= 0 else "down") if k == "backtest" and ret is not None and k != nxt else ""
+        out.append({"key": k, "done": done, "next": k == nxt, "k": label, "v": value, "title": title, "tone": tone})
+    return out
+
+
 PCT_METRICS = {"total_return", "cagr", "volatility", "max_drawdown", "win_rate", "benchmark_return", "excess_return",
                "xirr", "benchmark_xirr", "twr"}
 WHOLE_METRICS = {"final_value", "initial_cash", "trades", "invested", "profit", "contributions"}

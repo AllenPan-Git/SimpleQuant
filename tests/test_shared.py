@@ -103,3 +103,47 @@ def test_data_sources_and_fallback():
     assert line == "数据来源：东方财富 · 后复权：A；新浪财经 · 后复权：B"
     many = shared.sources_line({str(i): "东方财富 · 后复权" for i in range(8)} | {"Z": "新浪财经 · 后复权"}, "en")
     assert many == "Data source: 东方财富 · 后复权: 8 assets; 新浪财经 · 后复权: Z"
+
+
+def test_spec_matching_ignores_name_and_broker():
+    """比较策略只看规则：名称、资金不同算同一个；同规则多个已保存时优先同名；模拟账户含暂停的、读坏的跳过"""
+    from types import SimpleNamespace
+    a = {"kind": "template", "template": "rsi", "params": {"n": 14}}
+    saved = {"甲": dict(a), "RSI": {**a, "broker": {"cash": 5e4}}, "别的": {**a, "params": {"n": 6}}}
+    assert shared.saved_name({**a, "name": "RSI"}, saved) == "RSI"
+    assert shared.saved_name(a, saved) == "甲"
+    assert shared.saved_name({**a, "params": {"n": 20}}, saved) is None
+
+    class Broken:
+        @property
+        def spec(self):
+            raise OSError("坏了")
+    accs = [SimpleNamespace(spec={**a, "name": "x"}), SimpleNamespace(spec=saved["别的"]), Broken()]
+    assert shared.paper_count(a, accs) == 1
+
+
+def test_progress_steps():
+    """四步进度：完成的打勾，第一个没完成的是「建议下一步」；验证要做过参数优化或滚动优化才算完成"""
+    def run(**kw):
+        args = dict(saved="RSI", dirty=False, ret=0.4422, verify=None, paper=0) | kw
+        return {s["key"]: s for s in shared.progress_steps("zh", **args)}
+
+    s = run(verify={"credibility": True, "random": True, "phase": True, "optimize": False, "walkforward": False})
+    assert [s[k]["done"] for k in shared.PROGRESS_STEPS] == [True, True, False, False]
+    assert s["setup"]["v"] == "已保存" and "RSI" in s["setup"]["title"]
+    assert s["backtest"]["v"] == "44.22%"
+    assert s["verify"]["next"] and s["verify"]["k"] == "建议下一步 · 03" and s["verify"]["v"] == "验证"
+    assert "3 / 5 项" in s["verify"]["title"]
+    assert s["paper"]["v"] == "—" and not s["paper"]["next"]
+
+    s = run(verify={"credibility": True, "optimize": True}, paper=2)
+    assert all(x["done"] for x in s.values()) and not any(x["next"] for x in s.values())
+    assert s["verify"]["v"] == "2 / 2 项" and s["paper"]["v"] == "2 个账户"
+
+    s = run(dirty=True)                         # 有改动未保存：第一步没完成，建议先保存
+    assert s["setup"]["next"] and "有改动未保存" in s["setup"]["title"]
+    s = run(saved=None, ret=None)
+    assert s["setup"]["next"] and s["backtest"]["v"] == "未运行" and not s["backtest"]["done"]
+    assert run(verify=None)["verify"]["title"] == "03 验证"     # 不知道做了哪些：只写步骤名
+    en = {x["key"]: x for x in shared.progress_steps("en", None, False, None, None, 0)}
+    assert en["setup"]["k"] == "Suggested next · 01" and en["backtest"]["k"] == "02 Backtest"

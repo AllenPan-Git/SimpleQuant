@@ -1970,6 +1970,18 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
     "side.pending": L("{n} 笔待执行交易", "Pending trades: {n}"),
     "side.expand": L("展开侧栏", "Expand sidebar"),
     "side.collapse": L("收起侧栏", "Collapse sidebar"),
+    # 新版界面：策略进度（设置 → 回测 → 验证 → 模拟盘）
+    "prog.setup": L("设置", "Setup"),
+    "prog.backtest": L("回测", "Backtest"),
+    "prog.verify": L("验证", "Validation"),
+    "prog.paper": L("模拟盘", "Paper trading"),
+    "prog.next": L("建议下一步 · {n}", "Suggested next · {n}"),
+    "prog.saved": L("已保存", "Saved"),
+    "prog.unsaved": L("未保存", "Not saved"),
+    "prog.dirty": L("有改动未保存", "Unsaved changes"),
+    "prog.not_run": L("未运行", "Not run"),
+    "prog.verify_n": L("{n} / {of} 项", "{n} of {of} checks"),
+    "prog.paper_n": L("{n} 个账户", "Accounts: {n}"),
     # 设置页：界面版本
     "set.ui": L("界面", "Interface"),
     "set.ui_classic": L("经典", "Classic"),

@@ -1,6 +1,7 @@
 """第 4 页：参数优化（网格搜索 / 滚动优化）"""
 
 from dataclasses import asdict
+from types import SimpleNamespace
 
 import pandas as pd
 from nicegui import run, ui
@@ -32,272 +33,285 @@ def page():
         by_id = require_data()
         if by_id is None:
             return
-        O = state.STATE.setdefault("opt", {"mode": "grid", "chosen": {}, "ranges": {}, "metric": TARGET_METRICS[0],
-                                           "oos": 30, "workers": default_workers(), "train": 24, "test": 6,
-                                           "window": "rolling", "stitch": next(iter(STITCH_MODES))})
-        lg = lang()
-
-        pick = data_selector(by_id, "opt", lambda: update())
-        strat = strategy_selector("opt", lambda: (params_box.refresh(), update()),
-                                  on_broker=lambda b: make_broker.load(b))
+        panel = SimpleNamespace()        # 下面两个选择区块改动时通知优化面板（面板最后才建，回调晚绑定）
+        pick = data_selector(by_id, "opt", lambda: panel.update())
+        strat = strategy_selector("opt", lambda: panel.strategy_changed(), on_broker=lambda b: make_broker.load(b))
         make_broker = broker_settings("opt", show_dividend=True, show_contribution=True)
+        panel = optimize_panel(by_id, pick, strat, make_broker)
 
-        def set_mode(e):
-            O["mode"] = e.value
-            mode_views()
-            update()
-        with ui.row().classes("items-center gap-2"):
-            ui.toggle({m: t(f"wf.mode_{m}") for m in ("grid", "wf")}, value=O["mode"], on_change=set_mode) \
-                .props("no-caps unelevated rounded toggle-color=primary").mark("opt_mode")
-            ui.icon("help_outline").classes("sq-muted").tooltip(t("wf.mode_help"))
 
-        # ---------------- 参数范围 ----------------
-        cur = {}          # 当前的 axes / is_int / labels，由 params_box 填写
+def opt_state() -> dict:
+    """参数优化的设置与结果（经典优化页与择时工作台的「验证」标签共用）"""
+    return state.STATE.setdefault("opt", {"mode": "grid", "chosen": {}, "ranges": {}, "metric": TARGET_METRICS[0],
+                                          "oos": 30, "workers": default_workers(), "train": 24, "test": 6,
+                                          "window": "rolling", "stitch": next(iter(STITCH_MODES))})
 
-        def tunables():
-            """当前策略的可调参数 → (tbs, spec_key, 已选参数, 各参数范围)；不依赖界面是否已重画"""
-            tbs = {tb.path: tb for tb in strategies.tunables(strat["spec"], lg)}
-            spec_key = str(sorted(tbs))
-            chosen = O["chosen"].setdefault(spec_key, list(tbs)[:2])
-            ranges = O["ranges"].setdefault(spec_key, {})
-            for path in chosen:
-                ranges.setdefault(path, default_range(tbs[path]))
-            return tbs, spec_key, chosen, ranges
 
-        @ui.refreshable
-        def params_box():
-            tbs, spec_key, chosen, ranges = tunables()
+def optimize_panel(by_id: dict, pick, strat: dict, make_broker) -> SimpleNamespace:
+    """
+    参数优化面板（网格搜索 / 滚动优化）：数据、策略、资金由外面传入（经典优化页是自己的三个选择区块）。
+    返回的对象：update()（数据或资金改了）、strategy_changed()（策略改了，参数区重画）
+    """
+    O = opt_state()
+    lg = lang()
 
-            with section(t("opt.params"), "grid_on"):
-                def on_chosen(e):
-                    v = list(e.value or [])[:3]
-                    O["chosen"][spec_key] = v
-                    tunables()
-                    rows.refresh()
-                    update()
-                ui.select({k: tb.label for k, tb in tbs.items()}, label=t("opt.pick_params"), value=chosen,
-                          multiple=True, on_change=on_chosen).props(DENSE + " use-chips max-values=3") \
-                    .classes("w-full").mark("opt_params")
+    def set_mode(e):
+        O["mode"] = e.value
+        mode_views()
+        update()
+    with ui.row().classes("items-center gap-2"):
+        ui.toggle({m: t(f"wf.mode_{m}") for m in ("grid", "wf")}, value=O["mode"], on_change=set_mode) \
+            .props("no-caps unelevated rounded toggle-color=primary").mark("opt_mode")
+        ui.icon("help_outline").classes("sq-muted").tooltip(t("wf.mode_help"))
 
-                @ui.refreshable
-                def rows():
-                    for path in O["chosen"][spec_key]:
-                        tb = tbs[path]
-                        a, b, s = ranges[path]
-                        with ui.row().classes("w-full items-center gap-3 no-wrap"):
-                            with ui.column().classes("gap-0 grow"):
-                                ui.label(tb.label).classes("font-medium")
-                                ui.label(t("opt.current", v=f"{tb.value:g}")).classes("sq-muted text-xs")
-                            kw = dict(precision=0) if tb.is_int else dict(format="%.4g")
-                            for i, (lab, v) in enumerate(((t("opt.from"), a), (t("opt.to"), b), (t("opt.step"), s))):
-                                def on_v(e, path=path, i=i):
-                                    if e.value is not None:
-                                        r = list(ranges[path])
-                                        r[i] = e.value
-                                        ranges[path] = tuple(r)
-                                        update()
-                                ui.number(lab, value=v, min=(1 if tb.is_int else 0.0001) if i == 2 else None,
-                                          on_change=on_v, **kw).props("outlined dense").classes("w-28") \
-                                    .mark(f"rng:{path}:{i}")
-                rows()
+    # ---------------- 参数范围 ----------------
+    cur = {}          # 当前的 axes / is_int / labels，由 params_box 填写
 
-                with ui.row().classes("w-full items-center gap-4"):
-                    def set_o(k):
-                        def f(e):
-                            if e.value is not None:
-                                O[k] = e.value
-                                update()
-                        return f
-                    ui.select({m: t(f"m.{m}") for m in TARGET_METRICS}, label=t("opt.target"), value=O["metric"],
-                              on_change=set_o("metric")).props(DENSE).classes("w-44")
-                    with ui.column().classes("gap-0 w-56") as oos_box:
-                        ui.label(t("opt.oos")).classes("text-xs sq-muted").tooltip(t("opt.oos_help"))
-                        ui.slider(min=0, max=50, step=5, value=O["oos"], on_change=set_o("oos")).props("label")
-                    oos_box.set_visibility(O["mode"] == "grid")
-                    cur["oos_box"] = oos_box
-                    ui.number(t("opt.workers"), value=O["workers"], min=1, max=32, precision=0,
-                              on_change=set_o("workers")).props("outlined dense").classes("w-36") \
-                        .tooltip(t("opt.workers_help"))
-        params_box()
-        combos = ui.label().classes("text-sm")
+    def tunables():
+        """当前策略的可调参数 → (tbs, spec_key, 已选参数, 各参数范围)；不依赖界面是否已重画"""
+        tbs = {tb.path: tb for tb in strategies.tunables(strat["spec"], lg)}
+        spec_key = str(sorted(tbs))
+        chosen = O["chosen"].setdefault(spec_key, list(tbs)[:2])
+        ranges = O["ranges"].setdefault(spec_key, {})
+        for path in chosen:
+            ranges.setdefault(path, default_range(tbs[path]))
+        return tbs, spec_key, chosen, ranges
 
-        def axes():
-            tbs, _, chosen, ranges = tunables()
-            ax, is_int = {}, {}
-            for path in chosen:
-                tb = tbs[path]
-                a, b, s = ranges[path]
-                ax[path], is_int[path] = value_range(a, b, s, tb.is_int), tb.is_int
-            return ax, is_int, {p_: tbs[p_].label for p_ in ax}
+    @ui.refreshable
+    def params_box():
+        tbs, spec_key, chosen, ranges = tunables()
 
-        # ---------------- 滚动优化设置 ----------------
-        with section(t("wf.settings"), "timeline") as wf_box:
-            with ui.row().classes("w-full items-start gap-4"):
-                def set_w(k):
+        with section(t("opt.params"), "grid_on"):
+            def on_chosen(e):
+                v = list(e.value or [])[:3]
+                O["chosen"][spec_key] = v
+                tunables()
+                rows.refresh()
+                update()
+            ui.select({k: tb.label for k, tb in tbs.items()}, label=t("opt.pick_params"), value=chosen,
+                      multiple=True, on_change=on_chosen).props(DENSE + " use-chips max-values=3") \
+                .classes("w-full").mark("opt_params")
+
+            @ui.refreshable
+            def rows():
+                for path in O["chosen"][spec_key]:
+                    tb = tbs[path]
+                    a, b, s = ranges[path]
+                    with ui.row().classes("w-full items-center gap-3 no-wrap"):
+                        with ui.column().classes("gap-0 grow"):
+                            ui.label(tb.label).classes("font-medium")
+                            ui.label(t("opt.current", v=f"{tb.value:g}")).classes("sq-muted text-xs")
+                        kw = dict(precision=0) if tb.is_int else dict(format="%.4g")
+                        for i, (lab, v) in enumerate(((t("opt.from"), a), (t("opt.to"), b), (t("opt.step"), s))):
+                            def on_v(e, path=path, i=i):
+                                if e.value is not None:
+                                    r = list(ranges[path])
+                                    r[i] = e.value
+                                    ranges[path] = tuple(r)
+                                    update()
+                            ui.number(lab, value=v, min=(1 if tb.is_int else 0.0001) if i == 2 else None,
+                                      on_change=on_v, **kw).props("outlined dense").classes("w-28") \
+                                .mark(f"rng:{path}:{i}")
+            rows()
+
+            with ui.row().classes("w-full items-center gap-4"):
+                def set_o(k):
                     def f(e):
                         if e.value is not None:
                             O[k] = e.value
                             update()
                     return f
-                ui.number(t("wf.train"), value=O["train"], min=3, max=120, step=3, precision=0,
-                          on_change=set_w("train")).props("outlined dense").classes("w-36").tooltip(t("wf.train_help"))
-                ui.number(t("wf.test"), value=O["test"], min=1, max=36, step=1, precision=0,
-                          on_change=set_w("test")).props("outlined dense").classes("w-36").tooltip(t("wf.test_help"))
-                with ui.column().classes("gap-0"):
-                    ui.label(t("wf.window")).classes("text-xs sq-muted").tooltip(t("wf.window_help"))
-                    ui.radio({w: t(f"wf.window_{w}") for w in ("rolling", "anchored")}, value=O["window"],
-                             on_change=set_w("window")).props("inline dense")
-                with ui.column().classes("gap-0"):
-                    ui.label(t("wf.stitch")).classes("text-xs sq-muted").tooltip(t("wf.stitch_help"))
-                    ui.radio({s: t(f"wf.stitch_{s}") for s in STITCH_MODES}, value=O["stitch"],
-                             on_change=set_w("stitch")).props("inline dense")
-            wf_msg = ui.label().classes("text-sm")
+                ui.select({m: t(f"m.{m}") for m in TARGET_METRICS}, label=t("opt.target"), value=O["metric"],
+                          on_change=set_o("metric")).props(DENSE).classes("w-44")
+                with ui.column().classes("gap-0 w-56") as oos_box:
+                    ui.label(t("opt.oos")).classes("text-xs sq-muted").tooltip(t("opt.oos_help"))
+                    ui.slider(min=0, max=50, step=5, value=O["oos"], on_change=set_o("oos")).props("label")
+                oos_box.set_visibility(O["mode"] == "grid")
+                cur["oos_box"] = oos_box
+                ui.number(t("opt.workers"), value=O["workers"], min=1, max=32, precision=0,
+                          on_change=set_o("workers")).props("outlined dense").classes("w-36") \
+                    .tooltip(t("opt.workers_help"))
+    params_box()
+    combos = ui.label().classes("text-sm")
 
-        warn = ui.column().classes("w-full")
-        with ui.row().classes("items-center gap-3"):
-            run_btn = ui.button(t("opt.run"), icon="play_arrow", on_click=lambda: do_run()) \
-                .props("unelevated no-caps").mark("opt_run")
-            wf_btn = ui.button(t("wf.run"), icon="play_arrow", on_click=lambda: do_wf()) \
-                .props("unelevated no-caps").mark("wf_run")
-        prog = Progress()
+    def axes():
+        tbs, _, chosen, ranges = tunables()
+        ax, is_int = {}, {}
+        for path in chosen:
+            tb = tbs[path]
+            a, b, s = ranges[path]
+            ax[path], is_int[path] = value_range(a, b, s, tb.is_int), tb.is_int
+        return ax, is_int, {p_: tbs[p_].label for p_ in ax}
 
-        def mode_views():
-            grid = O["mode"] == "grid"
-            wf_box.set_visibility(not grid)
-            run_btn.set_visibility(grid)
-            wf_btn.set_visibility(not grid)
-            if "oos_box" in cur and not cur["oos_box"].is_deleted:
-                cur["oos_box"].set_visibility(grid)
-            results.refresh()
+    # ---------------- 滚动优化设置 ----------------
+    with section(t("wf.settings"), "timeline") as wf_box:
+        with ui.row().classes("w-full items-start gap-4"):
+            def set_w(k):
+                def f(e):
+                    if e.value is not None:
+                        O[k] = e.value
+                        update()
+                return f
+            ui.number(t("wf.train"), value=O["train"], min=3, max=120, step=3, precision=0,
+                      on_change=set_w("train")).props("outlined dense").classes("w-36").tooltip(t("wf.train_help"))
+            ui.number(t("wf.test"), value=O["test"], min=1, max=36, step=1, precision=0,
+                      on_change=set_w("test")).props("outlined dense").classes("w-36").tooltip(t("wf.test_help"))
+            with ui.column().classes("gap-0"):
+                ui.label(t("wf.window")).classes("text-xs sq-muted").tooltip(t("wf.window_help"))
+                ui.radio({w: t(f"wf.window_{w}") for w in ("rolling", "anchored")}, value=O["window"],
+                         on_change=set_w("window")).props("inline dense")
+            with ui.column().classes("gap-0"):
+                ui.label(t("wf.stitch")).classes("text-xs sq-muted").tooltip(t("wf.stitch_help"))
+                ui.radio({s: t(f"wf.stitch_{s}") for s in STITCH_MODES}, value=O["stitch"],
+                         on_change=set_w("stitch")).props("inline dense")
+        wf_msg = ui.label().classes("text-sm")
 
-        def base_ready(n_combos):
-            spec = strat["spec"]
-            need = strategies.min_assets(spec)
-            return (bool(pick.ids) and len(pick.freqs) == 1 and pick.date_range is not None
-                    and len(pick.ids) >= need and 0 < n_combos <= MAX_COMBOS)
+    warn = ui.column().classes("w-full")
+    with ui.row().classes("items-center gap-3"):
+        run_btn = ui.button(t("opt.run"), icon="play_arrow", on_click=lambda: do_run()) \
+            .props("unelevated no-caps").mark("opt_run")
+        wf_btn = ui.button(t("wf.run"), icon="play_arrow", on_click=lambda: do_wf()) \
+            .props("unelevated no-caps").mark("wf_run")
+    prog = Progress()
 
-        def update():
-            spec = strat["spec"]
-            ax, _, _ = axes()
-            n_combos = len(build_grid(spec, ax)) if ax else 0
-            if n_combos > MAX_COMBOS:
-                combos.text = t("opt.too_many", n=n_combos, max=MAX_COMBOS)
-                combos.classes(replace="text-sm text-negative")
+    def mode_views():
+        grid = O["mode"] == "grid"
+        wf_box.set_visibility(not grid)
+        run_btn.set_visibility(grid)
+        wf_btn.set_visibility(not grid)
+        if "oos_box" in cur and not cur["oos_box"].is_deleted:
+            cur["oos_box"].set_visibility(grid)
+        results.refresh()
+
+    def base_ready(n_combos):
+        spec = strat["spec"]
+        need = strategies.min_assets(spec)
+        return (bool(pick.ids) and len(pick.freqs) == 1 and pick.date_range is not None
+                and len(pick.ids) >= need and 0 < n_combos <= MAX_COMBOS)
+
+    def update():
+        spec = strat["spec"]
+        ax, _, _ = axes()
+        n_combos = len(build_grid(spec, ax)) if ax else 0
+        if n_combos > MAX_COMBOS:
+            combos.text = t("opt.too_many", n=n_combos, max=MAX_COMBOS)
+            combos.classes(replace="text-sm text-negative")
+        else:
+            combos.text = t("opt.combos", n=n_combos) if O["mode"] == "grid" else ""
+            combos.classes(replace="text-sm sq-muted")
+        warn.clear()
+        need = strategies.min_assets(spec)
+        with warn:
+            if pick.ids and len(pick.ids) < need:
+                notice(t("bt.need_assets", n=need), "warning", "warning")
+            if w := unadjusted_warning(by_id, pick.ids):
+                notice(w, "warning", "warning")
+            if w := fallback_warning(by_id, pick.ids):
+                notice(w, "warning", "warning")
+            for w, kind in percentile_warnings(by_id, pick, spec):
+                notice(w, kind, kind)
+        ok = base_ready(n_combos)
+        run_btn.set_enabled(ok)
+        # 滚动优化：估算窗口数和回测次数
+        wf_ok = False
+        wf_msg.text = ""
+        if ok and O["mode"] == "wf":
+            n_windows = len(make_windows(_common_index(by_id, pick), int(O["train"]), int(O["test"]),
+                                         O["window"] == "anchored"))
+            total = count_backtests(spec, ax, n_windows)
+            if n_windows == 0:
+                wf_msg.text, color = t("wf.no_windows"), "text-negative"
+            elif total > WF_MAX:
+                wf_msg.text, color = t("wf.too_many", n=total, max=WF_MAX), "text-negative"
             else:
-                combos.text = t("opt.combos", n=n_combos) if O["mode"] == "grid" else ""
-                combos.classes(replace="text-sm sq-muted")
-            warn.clear()
-            need = strategies.min_assets(spec)
-            with warn:
-                if pick.ids and len(pick.ids) < need:
-                    notice(t("bt.need_assets", n=need), "warning", "warning")
-                if w := unadjusted_warning(by_id, pick.ids):
-                    notice(w, "warning", "warning")
-                if w := fallback_warning(by_id, pick.ids):
-                    notice(w, "warning", "warning")
-                for w, kind in percentile_warnings(by_id, pick, spec):
-                    notice(w, kind, kind)
-            ok = base_ready(n_combos)
-            run_btn.set_enabled(ok)
-            # 滚动优化：估算窗口数和回测次数
-            wf_ok = False
-            wf_msg.text = ""
-            if ok and O["mode"] == "wf":
-                n_windows = len(make_windows(_common_index(by_id, pick), int(O["train"]), int(O["test"]),
-                                             O["window"] == "anchored"))
-                total = count_backtests(spec, ax, n_windows)
-                if n_windows == 0:
-                    wf_msg.text, color = t("wf.no_windows"), "text-negative"
-                elif total > WF_MAX:
-                    wf_msg.text, color = t("wf.too_many", n=total, max=WF_MAX), "text-negative"
-                else:
-                    wf_msg.text, color, wf_ok = t("wf.estimate", w=n_windows, n=total), "sq-muted", True
-                wf_msg.classes(replace=f"text-sm {color}")
-            wf_btn.set_enabled(wf_ok)
+                wf_msg.text, color, wf_ok = t("wf.estimate", w=n_windows, n=total), "sq-muted", True
+            wf_msg.classes(replace=f"text-sm {color}")
+        wf_btn.set_enabled(wf_ok)
 
-        async def do_run():
-            spec, broker = strat["spec"], make_broker()
-            ax, is_int, labels = axes()
-            oos = O["oos"] / 100
-            n = len(build_grid(spec, ax))
-            warm = warm_start(pick, spec)                      # 用到估值百分位：区间前的数据只预热
-            run_btn.disable()
-            prog.start(t("opt.progress", done=0, n=n))
+    async def do_run():
+        spec, broker = strat["spec"], make_broker()
+        ax, is_int, labels = axes()
+        oos = O["oos"] / 100
+        n = len(build_grid(spec, ax))
+        warm = warm_start(pick, spec)                      # 用到估值百分位：区间前的数据只预热
+        run_btn.disable()
+        prog.start(t("opt.progress", done=0, n=n))
 
-            def work():
-                prices, skipped, patched = prepare_prices(by_id, pick, broker, spec)
-                ins, outs, cut = split_prices(prices, oos, warm) if oos > 0 else (prices, None, None)
-                df = optimize(ins, spec, ax, broker, workers=int(O["workers"]),
-                              progress=lambda d, n_: prog.set(d / n_, t("opt.progress", done=d, n=n_)),
-                              trade_start=warm)
-                best = best_row(df, O["metric"])
-                best_spec = apply_combo(spec, best, is_int)
-                is_res = run_backtest(ins, *strategies.resolve(best_spec), broker, trade_start=warm)
-                compare = {"is_best": is_res.metrics}
-                if outs is not None:
-                    oos_from = oos_start(outs, cut) if warm is not None else None
-                    compare["oos_best"] = run_backtest(outs, *strategies.resolve(best_spec), broker,
-                                                       trade_start=oos_from).metrics
-                    compare["oos_orig"] = run_backtest(outs, *strategies.resolve(spec), broker,
-                                                       trade_start=oos_from).metrics
-                ok = df[O["metric"]].notna().sum() if O["metric"] in df else 0
-                # 最优参数自身的交易检查只列出问题（样本内的成绩本来就偏乐观，不说「通过」）
-                years = yearly_ranks(df, best)
-                checks = check_grid(df, O["metric"], compare, years) + \
-                    [c for c in check_backtest(is_res.metrics, is_res.trades, positions=is_res.positions, prices=is_res.prices) if c["level"] != "ok"]
-                return dict(df=df, axes=list(ax), is_int=is_int, labels=labels, metric=O["metric"], spec=spec,
-                            spec_label=strat["label"], best_spec=best_spec, compare=compare, cut=cut,
-                            start=is_res.equity.index[0] if warm is not None
-                            else min(d.index[0] for d in prices.values()),
-                            end=max(d.index[-1] for d in prices.values()), div_notes=(skipped, patched),
-                            checks=checks, tried=int(ok), years=years, broker=asdict(broker))
-            try:
-                O["result"] = await run.io_bound(work)
-            except Exception as e:  # noqa: BLE001
-                O.pop("result", None)
-                ui.notify(t("bt.failed", e=explain_error(e, lang())), type="negative", multi_line=True)
-            finally:
-                prog.stop()
-                run_btn.enable()
-            results.refresh()
+        def work():
+            prices, skipped, patched = prepare_prices(by_id, pick, broker, spec)
+            ins, outs, cut = split_prices(prices, oos, warm) if oos > 0 else (prices, None, None)
+            df = optimize(ins, spec, ax, broker, workers=int(O["workers"]),
+                          progress=lambda d, n_: prog.set(d / n_, t("opt.progress", done=d, n=n_)),
+                          trade_start=warm)
+            best = best_row(df, O["metric"])
+            best_spec = apply_combo(spec, best, is_int)
+            is_res = run_backtest(ins, *strategies.resolve(best_spec), broker, trade_start=warm)
+            compare = {"is_best": is_res.metrics}
+            if outs is not None:
+                oos_from = oos_start(outs, cut) if warm is not None else None
+                compare["oos_best"] = run_backtest(outs, *strategies.resolve(best_spec), broker,
+                                                   trade_start=oos_from).metrics
+                compare["oos_orig"] = run_backtest(outs, *strategies.resolve(spec), broker,
+                                                   trade_start=oos_from).metrics
+            ok = df[O["metric"]].notna().sum() if O["metric"] in df else 0
+            # 最优参数自身的交易检查只列出问题（样本内的成绩本来就偏乐观，不说「通过」）
+            years = yearly_ranks(df, best)
+            checks = check_grid(df, O["metric"], compare, years) + \
+                [c for c in check_backtest(is_res.metrics, is_res.trades, positions=is_res.positions, prices=is_res.prices) if c["level"] != "ok"]
+            return dict(df=df, axes=list(ax), is_int=is_int, labels=labels, metric=O["metric"], spec=spec,
+                        spec_label=strat["label"], best_spec=best_spec, compare=compare, cut=cut,
+                        start=is_res.equity.index[0] if warm is not None
+                        else min(d.index[0] for d in prices.values()),
+                        end=max(d.index[-1] for d in prices.values()), div_notes=(skipped, patched),
+                        checks=checks, tried=int(ok), years=years, broker=asdict(broker))
+        try:
+            O["result"] = await run.io_bound(work)
+        except Exception as e:  # noqa: BLE001
+            O.pop("result", None)
+            ui.notify(t("bt.failed", e=explain_error(e, lang())), type="negative", multi_line=True)
+        finally:
+            prog.stop()
+            run_btn.enable()
+        results.refresh()
 
-        async def do_wf():
-            spec, broker = strat["spec"], make_broker()
-            ax, is_int, labels = axes()
-            warm = warm_start(pick, spec)
-            wf_btn.disable()
-            prog.start(t("wf.progress", w=0, n="…"))
+    async def do_wf():
+        spec, broker = strat["spec"], make_broker()
+        ax, is_int, labels = axes()
+        warm = warm_start(pick, spec)
+        wf_btn.disable()
+        prog.start(t("wf.progress", w=0, n="…"))
 
-            def progress(w, n, d, m):
-                prog.set(((w - 1) + d / m) / n, t("wf.progress", w=w, n=n))
-            try:
-                prices, skipped, patched = await run.io_bound(prepare_prices, by_id, pick, broker, spec)
-                res = await run.io_bound(walk_forward, prices, spec, ax, is_int, broker, O["metric"], int(O["train"]),
-                                         int(O["test"]), O["window"] == "anchored", int(O["workers"]), progress,
-                                         O["stitch"], warm)
-                O["wf"] = (res, labels, O["metric"], O["stitch"])
-                O["wf_div_notes"] = (skipped, patched)
-            except Exception as e:  # noqa: BLE001
-                O.pop("wf", None)
-                ui.notify(t("bt.failed", e=explain_error(e, lang())), type="negative", multi_line=True)
-            finally:
-                prog.stop()
-                wf_btn.enable()
-            results.refresh()
+        def progress(w, n, d, m):
+            prog.set(((w - 1) + d / m) / n, t("wf.progress", w=w, n=n))
+        try:
+            prices, skipped, patched = await run.io_bound(prepare_prices, by_id, pick, broker, spec)
+            res = await run.io_bound(walk_forward, prices, spec, ax, is_int, broker, O["metric"], int(O["train"]),
+                                     int(O["test"]), O["window"] == "anchored", int(O["workers"]), progress,
+                                     O["stitch"], warm)
+            O["wf"] = (res, labels, O["metric"], O["stitch"])
+            O["wf_div_notes"] = (skipped, patched)
+        except Exception as e:  # noqa: BLE001
+            O.pop("wf", None)
+            ui.notify(t("bt.failed", e=explain_error(e, lang())), type="negative", multi_line=True)
+        finally:
+            prog.stop()
+            wf_btn.enable()
+        results.refresh()
 
-        @ui.refreshable
-        def results():
-            if O["mode"] == "wf":
-                if O.get("wf"):
-                    res, labels, metric, stitch = O["wf"]
-                    dividend_notices(*O.get("wf_div_notes", ({}, {})))
-                    walkforward_results(res, labels, metric, t(f"wf.stitch_{stitch}"), t(f"wf.note_{stitch}"))
-            elif O.get("result"):
-                _grid_results(O["result"])
+    @ui.refreshable
+    def results():
+        if O["mode"] == "wf":
+            if O.get("wf"):
+                res, labels, metric, stitch = O["wf"]
+                dividend_notices(*O.get("wf_div_notes", ({}, {})))
+                walkforward_results(res, labels, metric, t(f"wf.stitch_{stitch}"), t(f"wf.note_{stitch}"))
+        elif O.get("result"):
+            _grid_results(O["result"])
 
-        results()
-        mode_views()
-        update()
+    results()
+    mode_views()
+    update()
+    return SimpleNamespace(update=update, strategy_changed=lambda: (params_box.refresh(), update()))
 
 
 def _common_index(by_id, pick) -> pd.DatetimeIndex:

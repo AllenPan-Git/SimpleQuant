@@ -2,6 +2,7 @@
 
 import datetime as dt
 from dataclasses import asdict
+from types import SimpleNamespace
 
 import pandas as pd
 from nicegui import run, ui
@@ -37,271 +38,292 @@ def page():
             import_button().classes("mt-2")
             return
         BT = state.STATE.setdefault("bt", {})
-        lg = lang()
-
-        # ---------------- 设置：收起时显示为一行摘要（数据 · 策略 · 区间 · 资金） ----------------
-        with ui.row().classes("sq-setup-row w-full items-start gap-3 no-wrap"):
-            setup = ui.expansion(value=BT.get("result") is None).classes("grow min-w-0 sq-setup")
-            with setup.add_slot("header"):
-                chips = ui.row().classes("sq-chip-row w-full items-stretch gap-0 no-wrap")
-            with ui.row().classes("items-center gap-2 no-wrap pt-2"):
-                run_btn = ui.button(t("bt.run"), icon="play_arrow", on_click=lambda: do_run()) \
-                    .props("unelevated no-caps").mark("run")
-                with ui.button(t("exp.menu"), icon="ios_share").props("outline no-caps") as exp_btn:
-                    exp_menu = ui.menu().props("auto-close")
-                import_button()
-        with setup:
-            with ui.column().classes("w-full gap-4 pt-3"):
-                pick = data_selector(by_id, "bt", lambda: check())
-                mode_row = ui.row().classes("w-full items-center gap-3 px-1")
-                with mode_row:
-                    ui.label(t("bt.mode")).classes("text-sm")
-                    ui.radio({"portfolio": t("bt.mode_portfolio"), "batch": t("bt.mode_batch")},
-                             value=state.STATE.get("bt_mode", "portfolio"), on_change=lambda e: on_mode(e.value)) \
-                        .props("inline dense").mark("bt_mode")
-                    ui.icon("help_outline").classes("sq-muted").tooltip(t("bt.mode_help"))
-                strat = strategy_selector("bt", lambda: (save_name.set_value(strat.get("name", "")), check()),
-                                          on_broker=lambda b: make_broker.load(b))
-                make_broker = broker_settings("bt", show_dividend=True, show_contribution=True)
-                with ui.row().classes("w-full items-end gap-3"):
-                    save_name = ui.input(t("bt.save_name"), value=strat.get("name", ""))                         .props("outlined dense").classes("grow").mark("bt_save_name")
-                    ui.button(t("bt.save_strategy"), icon="save", on_click=lambda: save_strategy())                         .props("outline no-caps").tooltip(t("bt.save_strategy_help")).mark("bt_save")
-        setup.on_value_change(lambda _: draw_chips())
-        warnings = ui.column().classes("w-full gap-2")
-        running = ui.row().classes("items-center gap-2")
-        with running:
-            ui.spinner(size="sm")
-            running_text = ui.label(t("bt.running")).classes("sq-muted text-sm")
-        running.set_visibility(False)
-
-        def batch() -> bool:
-            """分别回测：选了两个及以上标的，并选择了「分别回测」"""
-            return state.STATE.get("bt_mode") == "batch" and len(pick.ids) > 1
-
-        def save_strategy():
-            """策略连同当前的资金与费率一起保存；之后在回测页选它时恢复"""
-            name = (save_name.value or "").strip()
-            if not name:
-                return
-            strategies.save_strategy(name, strat["spec"], broker=asdict(make_broker()))
-            ui.notify(t("strat.saved", name=name), type="positive")
-
-        def on_mode(v):
-            state.STATE["bt_mode"] = v
-            check()
-
-        def draw_chips():
-            chips.clear()
-            b = state.STATE.get("bt_broker", {})
-            preset = COST_PRESETS.get(b.get("preset"), {})
-            items = [
-                ("data", t("bt.chip_batch", n=len(pick.ids)) if batch()
-                 else " · ".join(asset_names(by_id, pick.ids, lang()).values()) or "—"),
-                ("strategy", strat.get("name", "")),
-                ("range", f"{pick.start} ~ {pick.end}" if pick.date_range else "—"),
-                ("broker", t("bt.cash_wan", v=f"{(b.get('cash') or 0) / 1e4:g}")
-                 + (" · " + p(preset["label"]) if preset else "") + (" · T+1" if b.get("t1", True) else "")
-                 + (" · " + t("bt.chip_cash_div") if b.get("dividend") == "cash" else "")
-                 + (" · " + t("bt.chip_contribution", v=f"{b['contribution']:,.0f}",
-                              freq=t("bt.contrib_weekly") if b.get("contribution_freq") == "weekly"
-                              else t("bt.contrib_monthly"))
-                    if b.get("contribution") else "")),
-            ]
-            with chips:
-                for k, v in items:
-                    with ui.element("div").classes("sq-chip"):
-                        ui.label(t(f"bt.chip_{k}")).classes("k")
-                        ui.label(v).classes("v")
-                ui.space()
-                ui.label(t("bt.edit_setup")).classes("sq-muted text-xs self-center pr-2 whitespace-nowrap")
-
-        def ready() -> bool:
-            need = strategies.min_assets(strat["spec"])
-            if batch():
-                return need <= 1 and len(pick.freqs) == 1 and pick.date_range is not None
-            return bool(pick.ids) and len(pick.freqs) == 1 and pick.date_range is not None and len(pick.ids) >= need
-
-        def check():
-            warnings.clear()
-            mode_row.set_visibility(len(pick.ids) > 1)
-            if pick.union != batch():
-                pick.union = batch()
-                pick.refresh()               # 重新计算可选区间，并再次调用 check()
-                return
-            need = strategies.min_assets(strat["spec"])
-            with warnings:
-                if batch() and need > 1:
-                    notice(t("bt.batch_need_single", n=need), "warning", "warning")
-                elif pick.ids and len(pick.ids) < need:
-                    notice(t("bt.need_assets", n=need), "warning", "warning")
-                for w in missing_factor_warnings(by_id, pick.ids, strat["spec"]):
-                    notice(w, "warning", "warning")
-                if w := unadjusted_warning(by_id, pick.ids):
-                    notice(w, "warning", "warning")
-                if w := fallback_warning(by_id, pick.ids):
-                    notice(w, "warning", "warning")
-                for w, kind in percentile_warnings(by_id, pick, strat["spec"]):
-                    notice(w, kind, kind)
-            ok = ready()
-            run_btn.set_enabled(ok)
-            exp_btn.set_enabled(ok)
-            build_export_menu()
-            draw_chips()
-
-        def build_export_menu():
-            exp_menu.clear()
-            if not ready():
-                return
-            spec, label = strat["spec"], strat["label"]
-            stem = export_filename(label)[:-3]
-            with exp_menu:
-                if spec.get("kind") in ("template", "rule"):
-                    with ui.menu_item(on_click=export_plan).mark("plan_export"):
-                        with ui.row().classes("items-center gap-2 no-wrap"):
-                            ui.icon("description")
-                            with ui.column().classes("gap-0"):
-                                ui.label(t("plan.export"))
-                                ui.label(t("plan.export_help")).classes("sq-muted text-xs max-w-[320px]")
-                    ui.separator()
-                if batch():
-                    ui.label(t("plan.batch_only")).classes("sq-muted text-xs px-4 py-2 max-w-[360px]")
-                    return
-                with ui.menu_item(on_click=lambda: ui.download.content(
-                        export_script(spec, label, by_id, pick.ids, pick.date_range, make_broker(), lg),
-                        export_filename(label), "text/x-python")):
-                    with ui.row().classes("items-center gap-2 no-wrap"):
-                        ui.icon("code")
-                        ui.label(t("exp.button"))
-                ui.separator()
-                ui.label(t("exp.platform_note")).classes("sq-muted text-xs px-4 py-2 max-w-[360px]")
-                for key, meta in PLATFORMS.items():
-                    data, why = platform_export(key, spec, label, by_id, pick.ids, pick.date_range, make_broker(), lg)
-                    item = ui.menu_item(on_click=lambda d=data, k=key: ui.download.content(
-                        d, f"{stem}_{k}.py", "text/x-python"))
-                    with item:
-                        with ui.column().classes("gap-0"):
-                            with ui.row().classes("items-center gap-2 no-wrap"):
-                                ui.icon("upload_file")
-                                ui.label(p(meta["label"]))
-                            if why:
-                                ui.label(why).classes("text-warning text-xs max-w-[320px]")
-                    if data is None:
-                        item.disable()
-                    item.tooltip(why or t(f"exp.help_{key}"))
-
-        def signature():
-            """当前设置；导出方案时，回测结果与当前设置一致才附带结果"""
-            return (strat["spec"], tuple(pick.ids), pick.date_range, make_broker())
-
-        def export_plan():
-            name = strat.get("name") or strat["label"].split("：")[-1].split(": ")[-1]
-            res = BT.get("result")
-            result = res.metrics if res is not None and BT.get("sig") == signature() else None
-            try:
-                data = export_bytes(name, strat["spec"], [by_id[i] for i in pick.ids], pick.date_range,
-                                    make_broker(), "batch" if batch() else "portfolio", result)
-            except plan_mod.PlanError as e:
-                ui.notify(t(e.key, **e.kw), type="warning")
-                return
-            ui.download.content(data, plan_filename(name), "application/json")
-            if result is None:
-                ui.notify(t("plan.exported_no_result"), multi_line=True)
-
-        def sources():
-            return {n: data_source_text(by_id[i], lang()) for i, n in asset_names(by_id, pick.ids, lang()).items()}
-
-        async def do_run():
-            if not ready():
-                return
-            spec, broker = strat["spec"], make_broker()
-            plan_ctx = state.STATE.pop("bt_plan", None)        # 刚导入的方案：回测后与其中记录的结果核对
-            sig = signature()
-            warm = warm_start(pick, spec)                      # 用到估值百分位：区间前的数据只预热
-            run_btn.disable()
-            running.set_visibility(True)
-            BT.clear()                       # 先清掉上一份报告，免得新结果出来前又露出来
-            results.refresh()
-            if batch():
-                await do_batch(spec, broker, warm)
-                return
-            try:
-                prices, skipped, patched = await run.io_bound(prepare_prices, by_id, pick, broker, spec)
-                cls, params = strategies.resolve(spec)
-                res = await run.io_bound(run_backtest, prices, cls, params, broker, trade_start=warm,
-                                         with_panels=True)
-                tuned = state.STATE.get("tuned") or {}          # 参数优化页「用最优参数回测」带过来的
-                tried = tuned["n"] if tuned.get("spec") == spec else 0
-                BT.clear()
-                BT.update(result=res, title=(strat["label"], list(prices), next(iter(pick.freqs))), spec=spec,
-                          broker=broker, name=strat.get("name", ""), div_notes=(skipped, patched),
-                          checks=check_backtest(res.metrics, res.trades, tried, res.positions, res.prices), sig=sig,
-                          sources=sources())
-                if plan_ctx:
-                    BT["plan_check"] = (plan_mod.compare(plan_ctx.get("result"), res.metrics), plan_ctx)
-                _remember(BT, by_id, pick, strat)
-                setup.value = False
-            except Exception as e:  # noqa: BLE001
-                BT.clear()
-                ui.notify(t("bt.failed", e=explain_error(e, lang())), type="negative", multi_line=True)
-            finally:
-                run_btn.enable()
-                running.set_visibility(False)
-            phased = BT.get("result") is not None and len(prices) > 1 and timing_cycle(spec) > 1
-            if phased:
-                BT["phase_pending"] = {"n": 0, "of": len(phases(timing_cycle(spec)))}
-            results.refresh()
-            if phased:
-                await phase_check(BT["result"], prices, spec, broker, warm)
-
-        async def phase_check(res, prices, spec, broker, warm):
-            """调仓日检验：报告先显示，检验在后台进行，完成后补进可信度检查（_checks 会自己刷新）"""
-            prog = BT["phase_pending"]
-            try:
-                rows = await run.io_bound(run_timing, prices, spec, broker, warm, lambda n, of: prog.update(n=n, of=of))
-                found = check_phase(res.metrics, rows)
-            except Exception as e:  # noqa: BLE001
-                found = [{"level": "note", "key": "cred.phase_failed", "args": {"e": explain_error(e, lang())}}]
-            if BT.get("result") is res:          # 期间没有重新回测
-                BT["checks"] = BT.get("checks", []) + found
-                BT.pop("phase_pending", None)
-
-        async def do_batch(spec, broker, warm):
-            done = {"n": 0, "of": len(pick.ids)}
-            tick = ui.timer(0.3, lambda: running_text.set_text(t("bt.batch_running", n=done["n"], of=done["of"])))
-            try:
-                prices, skipped, patched = await run.io_bound(prepare_prices, by_id, pick, broker, spec)
-                df = await run.io_bound(run_batch, prices, spec, broker, None,
-                                        lambda n, of: done.update(n=n, of=of), warm)
-                BT.clear()
-                BT.update(batch=df, summary=summarize(df), spec=spec, broker=broker,
-                          name=strat.get("name", "") or strat["label"], freq=next(iter(pick.freqs)),
-                          range=(pick.start, pick.end), div_notes=(skipped, patched),
-                          ids={n: i for i, n in asset_names(by_id, pick.ids, lang()).items()}, sources=sources(),
-                          time=dt.datetime.now().strftime("%Y-%m-%d %H:%M"))
-                setup.value = False
-            except Exception as e:  # noqa: BLE001
-                BT.clear()
-                ui.notify(t("bt.failed", e=explain_error(e, lang())), type="negative", multi_line=True)
-            finally:
-                tick.cancel()
-                running_text.set_text(t("bt.running"))
-                run_btn.enable()
-                running.set_visibility(False)
-            results.refresh()
-
-        check()
+        bar = setup_bar(by_id, BT, lambda on_change, on_broker: strategy_selector("bt", on_change, on_broker=on_broker))
+        bar.check()
 
         @ui.refreshable
         def results():
-            if BT.get("batch") is not None:
-                _batch_results(BT)
-            elif BT.get("result") is not None:
-                _results(BT, exp_menu)
+            report(BT, bar.exp_menu)
         results()
+        bar.report = results.refresh
 
         # 从首页「最近的报告」打开：设置已恢复，自动重新运行
-        if state.STATE.pop("bt_autorun", None) and ready():
-            ui.timer(0.05, do_run, once=True)
+        if state.STATE.pop("bt_autorun", None) and bar.ready():
+            ui.timer(0.05, bar.run, once=True)
+
+
+def report(BT: dict, exp_menu):
+    """回测报告：分别回测是分布与明细，否则是完整报告；还没有结果时什么都不画"""
+    if BT.get("batch") is not None:
+        _batch_results(BT)
+    elif BT.get("result") is not None:
+        _results(BT, exp_menu)
+
+
+def setup_bar(by_id: dict, BT: dict, strategy_part) -> SimpleNamespace:
+    """
+    回测设置条与运行（经典回测页与择时工作台共用）：设置收起时是一行摘要（数据 · 策略 · 区间 · 资金），右边是
+    开始回测、导出、导入方案；下面是提示与「正在回测」。
+    strategy_part(on_change, on_broker) 画出设置区里的「策略」一块，返回 {"spec", "label", "name"}（原地更新）。
+    返回的对象：pick / strat / make_broker / setup / exp_menu、check()、ready()、run()；
+    调用方画好报告后把重画报告的函数赋给 .report（运行开始时清空报告、结束时画出新报告）
+    """
+    bar = SimpleNamespace(report=lambda: None)
+    lg = lang()
+
+    # ---------------- 设置：收起时显示为一行摘要（数据 · 策略 · 区间 · 资金） ----------------
+    with ui.row().classes("sq-setup-row w-full items-start gap-3 no-wrap"):
+        setup = ui.expansion(value=BT.get("result") is None).classes("grow min-w-0 sq-setup")
+        with setup.add_slot("header"):
+            chips = ui.row().classes("sq-chip-row w-full items-stretch gap-0 no-wrap")
+        with ui.row().classes("items-center gap-2 no-wrap pt-2"):
+            run_btn = ui.button(t("bt.run"), icon="play_arrow", on_click=lambda: do_run()) \
+                .props("unelevated no-caps").mark("run")
+            with ui.button(t("exp.menu"), icon="ios_share").props("outline no-caps") as exp_btn:
+                exp_menu = ui.menu().props("auto-close")
+            import_button()
+    with setup:
+        with ui.column().classes("w-full gap-4 pt-3"):
+            pick = data_selector(by_id, "bt", lambda: check())
+            mode_row = ui.row().classes("w-full items-center gap-3 px-1")
+            with mode_row:
+                ui.label(t("bt.mode")).classes("text-sm")
+                ui.radio({"portfolio": t("bt.mode_portfolio"), "batch": t("bt.mode_batch")},
+                         value=state.STATE.get("bt_mode", "portfolio"), on_change=lambda e: on_mode(e.value)) \
+                    .props("inline dense").mark("bt_mode")
+                ui.icon("help_outline").classes("sq-muted").tooltip(t("bt.mode_help"))
+            strat = strategy_part(lambda: (save_name.set_value(strat.get("name", "")), check()),
+                                  lambda b: make_broker.load(b))
+            make_broker = broker_settings("bt", show_dividend=True, show_contribution=True)
+            with ui.row().classes("w-full items-end gap-3"):
+                save_name = ui.input(t("bt.save_name"), value=strat.get("name", ""))                     .props("outlined dense").classes("grow").mark("bt_save_name")
+                ui.button(t("bt.save_strategy"), icon="save", on_click=lambda: save_strategy())                     .props("outline no-caps").tooltip(t("bt.save_strategy_help")).mark("bt_save")
+    setup.on_value_change(lambda _: draw_chips())
+    warnings = ui.column().classes("w-full gap-2")
+    running = ui.row().classes("items-center gap-2")
+    with running:
+        ui.spinner(size="sm")
+        running_text = ui.label(t("bt.running")).classes("sq-muted text-sm")
+    running.set_visibility(False)
+
+    def batch() -> bool:
+        """分别回测：选了两个及以上标的，并选择了「分别回测」"""
+        return state.STATE.get("bt_mode") == "batch" and len(pick.ids) > 1
+
+    def save_strategy():
+        """策略连同当前的资金与费率一起保存；之后在回测页选它时恢复"""
+        name = (save_name.value or "").strip()
+        if not name:
+            return
+        strategies.save_strategy(name, strat["spec"], broker=asdict(make_broker()))
+        ui.notify(t("strat.saved", name=name), type="positive")
+
+    def on_mode(v):
+        state.STATE["bt_mode"] = v
+        check()
+
+    def draw_chips():
+        chips.clear()
+        b = state.STATE.get("bt_broker", {})
+        preset = COST_PRESETS.get(b.get("preset"), {})
+        items = [
+            ("data", t("bt.chip_batch", n=len(pick.ids)) if batch()
+             else " · ".join(asset_names(by_id, pick.ids, lang()).values()) or "—"),
+            ("strategy", strat.get("name", "")),
+            ("range", f"{pick.start} ~ {pick.end}" if pick.date_range else "—"),
+            ("broker", t("bt.cash_wan", v=f"{(b.get('cash') or 0) / 1e4:g}")
+             + (" · " + p(preset["label"]) if preset else "") + (" · T+1" if b.get("t1", True) else "")
+             + (" · " + t("bt.chip_cash_div") if b.get("dividend") == "cash" else "")
+             + (" · " + t("bt.chip_contribution", v=f"{b['contribution']:,.0f}",
+                          freq=t("bt.contrib_weekly") if b.get("contribution_freq") == "weekly"
+                          else t("bt.contrib_monthly"))
+                if b.get("contribution") else "")),
+        ]
+        with chips:
+            for k, v in items:
+                with ui.element("div").classes("sq-chip"):
+                    ui.label(t(f"bt.chip_{k}")).classes("k")
+                    ui.label(v).classes("v")
+            ui.space()
+            ui.label(t("bt.edit_setup")).classes("sq-muted text-xs self-center pr-2 whitespace-nowrap")
+
+    def ready() -> bool:
+        need = strategies.min_assets(strat["spec"])
+        if batch():
+            return need <= 1 and len(pick.freqs) == 1 and pick.date_range is not None
+        return bool(pick.ids) and len(pick.freqs) == 1 and pick.date_range is not None and len(pick.ids) >= need
+
+    def check():
+        warnings.clear()
+        mode_row.set_visibility(len(pick.ids) > 1)
+        if pick.union != batch():
+            pick.union = batch()
+            pick.refresh()               # 重新计算可选区间，并再次调用 check()
+            return
+        need = strategies.min_assets(strat["spec"])
+        with warnings:
+            if batch() and need > 1:
+                notice(t("bt.batch_need_single", n=need), "warning", "warning")
+            elif pick.ids and len(pick.ids) < need:
+                notice(t("bt.need_assets", n=need), "warning", "warning")
+            for w in missing_factor_warnings(by_id, pick.ids, strat["spec"]):
+                notice(w, "warning", "warning")
+            if w := unadjusted_warning(by_id, pick.ids):
+                notice(w, "warning", "warning")
+            if w := fallback_warning(by_id, pick.ids):
+                notice(w, "warning", "warning")
+            for w, kind in percentile_warnings(by_id, pick, strat["spec"]):
+                notice(w, kind, kind)
+        ok = ready()
+        run_btn.set_enabled(ok)
+        exp_btn.set_enabled(ok)
+        build_export_menu()
+        draw_chips()
+
+    def build_export_menu():
+        exp_menu.clear()
+        if not ready():
+            return
+        spec, label = strat["spec"], strat["label"]
+        stem = export_filename(label)[:-3]
+        with exp_menu:
+            if spec.get("kind") in ("template", "rule"):
+                with ui.menu_item(on_click=export_plan).mark("plan_export"):
+                    with ui.row().classes("items-center gap-2 no-wrap"):
+                        ui.icon("description")
+                        with ui.column().classes("gap-0"):
+                            ui.label(t("plan.export"))
+                            ui.label(t("plan.export_help")).classes("sq-muted text-xs max-w-[320px]")
+                ui.separator()
+            if batch():
+                ui.label(t("plan.batch_only")).classes("sq-muted text-xs px-4 py-2 max-w-[360px]")
+                return
+            with ui.menu_item(on_click=lambda: ui.download.content(
+                    export_script(spec, label, by_id, pick.ids, pick.date_range, make_broker(), lg),
+                    export_filename(label), "text/x-python")):
+                with ui.row().classes("items-center gap-2 no-wrap"):
+                    ui.icon("code")
+                    ui.label(t("exp.button"))
+            ui.separator()
+            ui.label(t("exp.platform_note")).classes("sq-muted text-xs px-4 py-2 max-w-[360px]")
+            for key, meta in PLATFORMS.items():
+                data, why = platform_export(key, spec, label, by_id, pick.ids, pick.date_range, make_broker(), lg)
+                item = ui.menu_item(on_click=lambda d=data, k=key: ui.download.content(
+                    d, f"{stem}_{k}.py", "text/x-python"))
+                with item:
+                    with ui.column().classes("gap-0"):
+                        with ui.row().classes("items-center gap-2 no-wrap"):
+                            ui.icon("upload_file")
+                            ui.label(p(meta["label"]))
+                        if why:
+                            ui.label(why).classes("text-warning text-xs max-w-[320px]")
+                if data is None:
+                    item.disable()
+                item.tooltip(why or t(f"exp.help_{key}"))
+
+    def signature():
+        """当前设置；导出方案时，回测结果与当前设置一致才附带结果"""
+        return (strat["spec"], tuple(pick.ids), pick.date_range, make_broker())
+
+    def export_plan():
+        name = strat.get("name") or strat["label"].split("：")[-1].split(": ")[-1]
+        res = BT.get("result")
+        result = res.metrics if res is not None and BT.get("sig") == signature() else None
+        try:
+            data = export_bytes(name, strat["spec"], [by_id[i] for i in pick.ids], pick.date_range,
+                                make_broker(), "batch" if batch() else "portfolio", result)
+        except plan_mod.PlanError as e:
+            ui.notify(t(e.key, **e.kw), type="warning")
+            return
+        ui.download.content(data, plan_filename(name), "application/json")
+        if result is None:
+            ui.notify(t("plan.exported_no_result"), multi_line=True)
+
+    def sources():
+        return {n: data_source_text(by_id[i], lang()) for i, n in asset_names(by_id, pick.ids, lang()).items()}
+
+    async def do_run():
+        if not ready():
+            return
+        spec, broker = strat["spec"], make_broker()
+        plan_ctx = state.STATE.pop("bt_plan", None)        # 刚导入的方案：回测后与其中记录的结果核对
+        sig = signature()
+        warm = warm_start(pick, spec)                      # 用到估值百分位：区间前的数据只预热
+        run_btn.disable()
+        running.set_visibility(True)
+        BT.clear()                       # 先清掉上一份报告，免得新结果出来前又露出来
+        bar.report()
+        if batch():
+            await do_batch(spec, broker, warm)
+            return
+        try:
+            prices, skipped, patched = await run.io_bound(prepare_prices, by_id, pick, broker, spec)
+            cls, params = strategies.resolve(spec)
+            res = await run.io_bound(run_backtest, prices, cls, params, broker, trade_start=warm,
+                                     with_panels=True)
+            tuned = state.STATE.get("tuned") or {}          # 参数优化页「用最优参数回测」带过来的
+            tried = tuned["n"] if tuned.get("spec") == spec else 0
+            BT.clear()
+            BT.update(result=res, title=(strat["label"], list(prices), next(iter(pick.freqs))), spec=spec,
+                      broker=broker, name=strat.get("name", ""), div_notes=(skipped, patched),
+                      checks=check_backtest(res.metrics, res.trades, tried, res.positions, res.prices), sig=sig,
+                      sources=sources())
+            if plan_ctx:
+                BT["plan_check"] = (plan_mod.compare(plan_ctx.get("result"), res.metrics), plan_ctx)
+            _remember(BT, by_id, pick, strat)
+            setup.value = False
+        except Exception as e:  # noqa: BLE001
+            BT.clear()
+            ui.notify(t("bt.failed", e=explain_error(e, lang())), type="negative", multi_line=True)
+        finally:
+            run_btn.enable()
+            running.set_visibility(False)
+        phased = BT.get("result") is not None and len(prices) > 1 and timing_cycle(spec) > 1
+        if phased:
+            BT["phase_pending"] = {"n": 0, "of": len(phases(timing_cycle(spec)))}
+        bar.report()
+        if phased:
+            await phase_check(BT["result"], prices, spec, broker, warm)
+
+    async def phase_check(res, prices, spec, broker, warm):
+        """调仓日检验：报告先显示，检验在后台进行，完成后补进可信度检查（_checks 会自己刷新）"""
+        prog = BT["phase_pending"]
+        try:
+            rows = await run.io_bound(run_timing, prices, spec, broker, warm, lambda n, of: prog.update(n=n, of=of))
+            found = check_phase(res.metrics, rows)
+        except Exception as e:  # noqa: BLE001
+            found = [{"level": "note", "key": "cred.phase_failed", "args": {"e": explain_error(e, lang())}}]
+        if BT.get("result") is res:          # 期间没有重新回测
+            BT["checks"] = BT.get("checks", []) + found
+            BT.pop("phase_pending", None)
+
+    async def do_batch(spec, broker, warm):
+        done = {"n": 0, "of": len(pick.ids)}
+        tick = ui.timer(0.3, lambda: running_text.set_text(t("bt.batch_running", n=done["n"], of=done["of"])))
+        try:
+            prices, skipped, patched = await run.io_bound(prepare_prices, by_id, pick, broker, spec)
+            df = await run.io_bound(run_batch, prices, spec, broker, None,
+                                    lambda n, of: done.update(n=n, of=of), warm)
+            BT.clear()
+            BT.update(batch=df, summary=summarize(df), spec=spec, broker=broker,
+                      name=strat.get("name", "") or strat["label"], freq=next(iter(pick.freqs)),
+                      range=(pick.start, pick.end), div_notes=(skipped, patched),
+                      ids={n: i for i, n in asset_names(by_id, pick.ids, lang()).items()}, sources=sources(),
+                      time=dt.datetime.now().strftime("%Y-%m-%d %H:%M"))
+            setup.value = False
+        except Exception as e:  # noqa: BLE001
+            BT.clear()
+            ui.notify(t("bt.failed", e=explain_error(e, lang())), type="negative", multi_line=True)
+        finally:
+            tick.cancel()
+            running_text.set_text(t("bt.running"))
+            run_btn.enable()
+            running.set_visibility(False)
+        bar.report()
+
+    bar.__dict__.update(pick=pick, strat=strat, make_broker=make_broker, setup=setup, exp_menu=exp_menu,
+                        check=check, ready=ready, run=do_run)
+    return bar
 
 
 def _batch_results(BT: dict):

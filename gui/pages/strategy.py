@@ -21,8 +21,9 @@ DENSE = "outlined dense options-dense"
 
 
 class Ctx:
-    """编辑器各部分之间的回调"""
-    changed = reload = set_name = staticmethod(lambda *a: None)
+    """编辑器各部分之间的回调：changed（内容改了，重画预览）、reload（整体换了内容）、set_name（改名称输入框）；
+    on_change(errors)：预览重画后调用，外面的按钮（保存、回测）据此启用或变灰"""
+    changed = reload = set_name = on_change = staticmethod(lambda *a: None)
 
 
 def page():
@@ -30,108 +31,37 @@ def page():
     ctx = Ctx()
     with frame("/strategy"):
         page_title("/strategy")
+        box = strategy_editor(S, ctx)
 
-        def set_mode(e):
-            if S["mode"] != e.value:
-                S["mode"] = e.value
-                editor.refresh()
-                changed()
-        mode_toggle = ui.toggle({m: t(f"strat.mode_{m}") for m in ("template", "rule", "ai", "code")}, value=S["mode"],
-                                on_change=set_mode).props("no-caps unelevated rounded toggle-color=primary")             .mark("mode")
+        # ---------------- 名称 / 保存 / 去回测（接在预览区块里） ----------------
+        with box, ui.row().classes("w-full items-end gap-3"):
+            name = ui.input(t("strat.name"), value=S["name"], placeholder=t("strat.name_ph")) \
+                .props("outlined dense").classes("grow")
+            save_btn = ui.button(t("strat.save"), icon="save", on_click=lambda: save()).props("outline no-caps")
+            go_btn = ui.button(t("strat.to_backtest"), icon="play_arrow", on_click=lambda: to_backtest()) \
+                .props("unelevated no-caps")
 
-        @ui.refreshable
-        def editor():
-            {"template": _template_editor, "rule": _rule_editor, "ai": _ai_editor, "code": _code_editor}[S["mode"]](S, ctx)
-
-        def reload():
-            """整体换了内容（载入示例 / 已保存的策略 / AI 结果转积木）"""
-            mode_toggle.value = S["mode"]
-            editor.refresh()
-            changed()
-        ctx.reload = reload
-
-        editor()
-
-        # ---------------- 预览 / 保存 ----------------
-        with section(t("strat.preview"), "visibility"):
-            preview = ui.column().classes("w-full gap-1")
-            code_btn = ui.button(t("strat.to_code"), icon="code", on_click=lambda: to_code())                 .props("flat no-caps dense color=primary").classes("self-start").tooltip(t("strat.to_code_help"))
-            with ui.row().classes("w-full items-end gap-3"):
-                name = ui.input(t("strat.name"), value=S["name"], placeholder=t("strat.name_ph")) \
-                    .props("outlined dense").classes("grow")
-                save_btn = ui.button(t("strat.save"), icon="save", on_click=lambda: save()).props("outline no-caps")
-                go_btn = ui.button(t("strat.to_backtest"), icon="play_arrow", on_click=lambda: to_backtest()) \
-                    .props("unelevated no-caps")
-
-        def current():
-            """(策略描述, 错误列表)"""
-            lg = lang()
-            if S["mode"] == "code":
-                spec = {"kind": "code", "code": S["code"]}
-                return spec, code_strategy.check_syntax(S["code"], lg)
-            if S["mode"] == "template":
-                key = S["tpl_key"] or next(iter(TEMPLATES))
-                spec = {"kind": "template", "template": key, "params": _tpl_values(S, key)}
-                return spec, []
-            if S["mode"] == "ai":
-                res = S["ai_result"]
-                if not res:
-                    return {"kind": "rule", "rule": {"buy": {"conditions": []}}}, [t("ai.no_result")]
-                return res.spec, validate(res.spec["rule"], lg)
-            spec = {"kind": "rule", "rule": clean(S["rule"])}
-            return spec, validate(spec["rule"], lg)
-
-        def changed():
-            spec, errors = current()
-            preview.clear()
-            with preview:
-                if S["mode"] == "ai" and not S["ai_result"]:
-                    ui.label(errors[0]).classes("sq-muted text-sm")
-                elif errors:
-                    for e in errors:
-                        with ui.row().classes("items-center gap-2 text-negative no-wrap"):
-                            ui.icon("error_outline")
-                            ui.label(e)
-                else:
-                    ui.label(strategies.describe(spec, lang())).classes("sq-code w-full")
-            code_btn.set_visibility(S["mode"] in ("template", "rule") and not errors)
+        def on_change(errors):
             save_btn.set_enabled(not errors and bool((name.value or "").strip()))
             go_btn.set_enabled(not errors)
 
         def on_name(e):
             S["name"] = e.value or ""
-            changed()
+            ctx.changed()
         name.on_value_change(on_name)
-        ctx.changed, ctx.set_name = changed, name.set_value
-
-        def full_check() -> bool:
-            """代码策略保存 / 回测前真正执行一次定义部分，确认 Strategy 类可用"""
-            if S["mode"] != "code":
-                return True
-            errors = code_strategy.check(S["code"], lang())
-            if errors:
-                ui.notify(errors[0], type="negative", multi_line=True)
-            return not errors
-
-        def to_code():
-            spec, errors = current()
-            if errors:
-                return
-            S["code"] = code_strategy.to_code(spec, lang())
-            S["mode"] = "code"
-            reload()
+        ctx.on_change, ctx.set_name = on_change, name.set_value
 
         def save():
-            spec, errors = current()
-            if errors or not S["name"].strip() or not full_check():
+            spec, errors = editor_spec(S)
+            if errors or not S["name"].strip() or not code_ok(S):
                 return
             strategies.save_strategy(S["name"].strip(), spec)
             ui.notify(t("strat.saved", name=S["name"].strip()), type="positive")
             saved_list.refresh()
 
         def to_backtest():
-            spec, errors = current()
-            if errors or not full_check():
+            spec, errors = editor_spec(S)
+            if errors or not code_ok(S):
                 return
             state.STATE["current_spec"] = {"name": S["name"].strip() or t("strat.unnamed"), **spec}
             state.STATE["bt_strategy"] = "__current__"
@@ -142,46 +72,138 @@ def page():
                     state.STATE["bt_ids"] = ids
             ui.navigate.to("/backtest")
 
-        # ---------------- 已保存的策略 ----------------
-        @ui.refreshable
-        def saved_list():
-            saved = {n: s for n, s in strategies.list_strategies().items() if strategies.runnable_on_single_assets(s)}
-            if not saved:
-                return
-            with ui.expansion(t("strat.saved_list", n=len(saved)), icon="folder_open").classes("w-full q-card"):
-                for n, s in saved.items():
-                    with ui.row().classes("w-full items-center gap-3 no-wrap py-2"):
-                        with ui.column().classes("grow gap-0"):
-                            ui.label(n).classes("font-semibold")
-                            ui.label(strategies.describe(s, lang())).classes("sq-muted text-sm whitespace-pre-wrap")
-                        ui.button(t("strat.load"), on_click=lambda n=n: load_saved(n)).props("flat no-caps dense")
-                        ui.button(t("strat.delete"), on_click=lambda n=n: delete_saved(n)) \
-                            .props("flat no-caps dense color=negative")
+        saved_list = saved_strategies(S, ctx)
+        ctx.changed()
 
-        def load_saved(n):
-            spec = strategies.list_strategies()[n]
-            S["name"] = n
-            name.value = n
-            S["ai_symbols"] = None
-            if spec["kind"] == "code":
-                S["mode"] = "code"
-                S["code"] = code_strategy.materialize(spec)
-            elif spec["kind"] == "rule":
-                S["mode"] = "rule"
-                S["rule"] = with_ids(spec["rule"])
-                S["rule"].setdefault("position_pct", 95)
-            else:
-                S["mode"] = "template"
-                S["tpl_key"] = spec["template"]
-                S["tpl_params"][spec["template"]] = dict(spec.get("params") or {})
-            reload()
 
-        def delete_saved(n):
-            strategies.delete_strategy(n)
-            saved_list.refresh()
+def editor_spec(S) -> tuple[dict, list]:
+    """编辑器当前的内容 → (策略描述, 错误列表)"""
+    lg = lang()
+    if S["mode"] == "code":
+        spec = {"kind": "code", "code": S["code"]}
+        return spec, code_strategy.check_syntax(S["code"], lg)
+    if S["mode"] == "template":
+        key = S["tpl_key"] or next(iter(TEMPLATES))
+        spec = {"kind": "template", "template": key, "params": _tpl_values(S, key)}
+        return spec, []
+    if S["mode"] == "ai":
+        res = S["ai_result"]
+        if not res:
+            return {"kind": "rule", "rule": {"buy": {"conditions": []}}}, [t("ai.no_result")]
+        return res.spec, validate(res.spec["rule"], lg)
+    spec = {"kind": "rule", "rule": clean(S["rule"])}
+    return spec, validate(spec["rule"], lg)
 
-        saved_list()
+
+def code_ok(S) -> bool:
+    """代码策略保存 / 回测前真正执行一次定义部分，确认 Strategy 类可用；出错时弹出提示"""
+    if S["mode"] != "code":
+        return True
+    errors = code_strategy.check(S["code"], lang())
+    if errors:
+        ui.notify(errors[0], type="negative", multi_line=True)
+    return not errors
+
+
+def strategy_editor(S, ctx: Ctx):
+    """策略编辑器（经典策略页与择时工作台共用）：模式切换（模板 / 条件 / AI / 代码）+ 编辑区 + 预览。
+    返回预览区块，调用方可以接着往里放名称、保存等按钮；放好后调用一次 ctx.changed() 画出预览"""
+    def set_mode(e):
+        if S["mode"] != e.value:
+            S["mode"] = e.value
+            editor.refresh()
+            changed()
+    mode_toggle = ui.toggle({m: t(f"strat.mode_{m}") for m in ("template", "rule", "ai", "code")}, value=S["mode"],
+                            on_change=set_mode).props("no-caps unelevated rounded toggle-color=primary")         .mark("mode")
+
+    @ui.refreshable
+    def editor():
+        {"template": _template_editor, "rule": _rule_editor, "ai": _ai_editor, "code": _code_editor}[S["mode"]](S, ctx)
+
+    def reload():
+        """整体换了内容（载入示例 / 已保存的策略 / AI 结果转积木）"""
+        mode_toggle.value = S["mode"]
+        editor.refresh()
         changed()
+    ctx.reload = reload
+
+    editor()
+
+    # ---------------- 预览 ----------------
+    with section(t("strat.preview"), "visibility") as box:
+        preview = ui.column().classes("w-full gap-1")
+        code_btn = ui.button(t("strat.to_code"), icon="code", on_click=lambda: to_code())             .props("flat no-caps dense color=primary").classes("self-start").tooltip(t("strat.to_code_help"))
+
+    def changed():
+        spec, errors = editor_spec(S)
+        preview.clear()
+        with preview:
+            if S["mode"] == "ai" and not S["ai_result"]:
+                ui.label(errors[0]).classes("sq-muted text-sm")
+            elif errors:
+                for e in errors:
+                    with ui.row().classes("items-center gap-2 text-negative no-wrap"):
+                        ui.icon("error_outline")
+                        ui.label(e)
+            else:
+                ui.label(strategies.describe(spec, lang())).classes("sq-code w-full")
+        code_btn.set_visibility(S["mode"] in ("template", "rule") and not errors)
+        ctx.on_change(errors)
+    ctx.changed = changed
+
+    def to_code():
+        spec, errors = editor_spec(S)
+        if errors:
+            return
+        S["code"] = code_strategy.to_code(spec, lang())
+        S["mode"] = "code"
+        reload()
+    return box
+
+
+def load_saved(S, ctx: Ctx, n: str):
+    """把已保存的策略载入编辑器"""
+    spec = strategies.list_strategies()[n]
+    S["name"] = n
+    ctx.set_name(n)
+    S["ai_symbols"] = None
+    if spec["kind"] == "code":
+        S["mode"] = "code"
+        S["code"] = code_strategy.materialize(spec)
+    elif spec["kind"] == "rule":
+        S["mode"] = "rule"
+        S["rule"] = with_ids(spec["rule"])
+        S["rule"].setdefault("position_pct", 95)
+    else:
+        S["mode"] = "template"
+        S["tpl_key"] = spec["template"]
+        S["tpl_params"][spec["template"]] = dict(spec.get("params") or {})
+    ctx.reload()
+
+
+def saved_strategies(S, ctx: Ctx):
+    """「已保存的策略（n）」折叠区：载入 / 删除；返回 refreshable（保存新策略后调用 .refresh()）"""
+    @ui.refreshable
+    def saved_list():
+        saved = {n: s for n, s in strategies.list_strategies().items() if strategies.runnable_on_single_assets(s)}
+        if not saved:
+            return
+        with ui.expansion(t("strat.saved_list", n=len(saved)), icon="folder_open").classes("w-full q-card"):
+            for n, s in saved.items():
+                with ui.row().classes("w-full items-center gap-3 no-wrap py-2"):
+                    with ui.column().classes("grow gap-0"):
+                        ui.label(n).classes("font-semibold")
+                        ui.label(strategies.describe(s, lang())).classes("sq-muted text-sm whitespace-pre-wrap")
+                    ui.button(t("strat.load"), on_click=lambda n=n: load_saved(S, ctx, n)).props("flat no-caps dense")
+                    ui.button(t("strat.delete"), on_click=lambda n=n: delete_saved(n)) \
+                        .props("flat no-caps dense color=negative")
+
+    def delete_saved(n):
+        strategies.delete_strategy(n)
+        saved_list.refresh()
+
+    saved_list()
+    return saved_list
 
 
 # ---------------- 模板 ----------------

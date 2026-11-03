@@ -13,6 +13,7 @@ REPO = "AllenPan-Git/SimpleQuant"
 HOME_PAGE = f"https://github.com/{REPO}"
 RELEASES_PAGE = f"{HOME_PAGE}/releases"
 ISSUES_PAGE = f"{HOME_PAGE}/issues"
+DISCUSSIONS_PAGE = f"{HOME_PAGE}/discussions"
 CHANGELOG_PAGE = f"{HOME_PAGE}/blob/main/CHANGELOG.md"
 SPONSOR_PAGE = "https://afdian.com/a/allengit"          # 爱发电主页；留空时界面只显示「GitHub 打星」
 # 返回 GitHub「最新发布」接口格式（tag_name / body / html_url / assets[].name, browser_download_url）的地址

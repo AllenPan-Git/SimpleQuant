@@ -1957,6 +1957,22 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
     "step.eyebrow": L("{flow} · 第 {n} 步", "{flow} · Step {n}"),
     "top.settings": L("设置", "Settings"),
     "top.tools": L("工具", "Tools"),
+    # 新版界面的侧栏
+    "side.today": L("今日", "Today"),
+    "side.timing": L("择时策略", "Timing strategies"),
+    "side.selection": L("多因子选股", "Stock selection"),
+    "side.allocation": L("资产配置", "Asset allocation"),
+    "side.paper": L("模拟盘", "Paper trading"),
+    "side.data": L("数据", "Data"),
+    "side.tools": L("工具", "Tools"),
+    "side.settings": L("设置", "Settings"),
+    # 设置页：界面版本
+    "set.ui": L("界面", "Interface"),
+    "set.ui_classic": L("经典", "Classic"),
+    "set.ui_new": L("新版（预览）", "New (preview)"),
+    "set.ui_help": L("新版界面采用左侧导航，并逐步将择时策略的设置、回测与验证集中到同一页。目前为预览版，可随时切回经典界面；策略、数据与模拟账户在两套界面中通用。",
+                     "The new interface uses a sidebar and is gradually bringing a timing strategy's settings, backtest and validation onto one page. It is a preview: you can switch back to the classic interface at any time, and strategies, data and paper accounts are shared by both."),
+    "set.ui_feedback": L("反馈意见（GitHub Discussions）", "Share feedback (GitHub Discussions)"),
 
     "home.greet_morning": L("早上好", "Good morning"),
     "home.greet_afternoon": L("下午好", "Good afternoon"),

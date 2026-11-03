@@ -41,7 +41,9 @@ async def settle():
 
 @pytest.fixture(autouse=True)
 def isolated(tmp_path, monkeypatch):
-    """每个测试：界面状态清空；保存的策略写到临时目录"""
+    """每个测试：界面状态清空；保存的策略写到临时目录；界面版本回到「没选过」"""
+    from nicegui import app
+    app.storage.general.pop("ui", None)
     state.reset()
     d = tmp_path / "strategies"
     for fn in (strategies.save_strategy, strategies.list_strategies, strategies.delete_strategy,
@@ -53,6 +55,7 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(allocation, "ROOT", tmp_path / "allocation")      # 风险测评与配置设置
     custom_factors.load_all()
     yield
+    app.storage.general.pop("ui", None)
     state.reset()
     monkeypatch.undo()
     custom_factors.load_all()
@@ -1603,6 +1606,44 @@ async def test_selection_walkforward(user: User):
 
 
 # ---------------- 设置 ----------------
+def test_ui_choice_default_and_explicit(monkeypatch):
+    """界面版本：没选过按默认；明确选了经典的，默认改成新版（3.0）后仍是经典"""
+    from nicegui import app
+    from gui import common
+    assert common.ui_choice() is None and not common.new_ui()
+    monkeypatch.setattr(common, "UI_DEFAULT", "new")
+    assert common.new_ui()
+    common.set_ui("classic")
+    assert common.ui_choice() == "classic" and not common.new_ui()
+    app.storage.general["ui"] = "unknown"            # 读到不认识的值当作没选过
+    assert common.ui_choice() is None and common.new_ui()
+
+
+async def test_settings_switch_ui(user: User):
+    """设置页切到新版：报头（流程切换、步骤条）换成侧栏，当前栏目高亮；切回经典恢复报头"""
+    from nicegui import app
+    await user.open("/settings")
+    await user.should_see(marker="flow:timing")
+    await user.should_not_see(marker="sq_sidebar")
+    user.find(marker="set_ui").elements.pop().set_value("new")
+    assert app.storage.general["ui"] == "new"
+
+    await user.open("/strategy")
+    await user.should_see(marker="sq_sidebar")
+    await user.should_not_see(marker="flow:timing")
+    await user.should_see(marker="nav:/tools")
+    assert "on" in user.find(marker="nav:/backtest").elements.pop().classes      # 策略页也算「择时策略」
+    assert "on" not in user.find(marker="nav:/selection").elements.pop().classes
+    user.find(marker="nav:/settings").click()
+    await user.should_see(marker="set_ui")
+
+    user.find(marker="set_ui").elements.pop().set_value("classic")
+    assert app.storage.general["ui"] == "classic"
+    await user.open("/")
+    await user.should_see(marker="flow:timing")
+    await user.should_not_see(marker="sq_sidebar")
+
+
 async def test_settings_preset_and_save(user: User, monkeypatch, tmp_path):
     import simplequant.llm as llm
     from simplequant.llm.config import load_config as real_load

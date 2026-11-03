@@ -7,7 +7,7 @@ from nicegui import app, ui
 
 from simplequant.i18n import LANGS, tr
 from gui import theme, state, update
-from gui.common import t, p, lang, set_lang, dark, set_dark
+from gui.common import t, p, lang, set_lang, dark, set_dark, new_ui
 
 # (路由, 文字键, 图标)：全部页面（注册路由、页面标题用）
 PAGES = [
@@ -35,6 +35,19 @@ STEP_KEY = {"/data": "step.data", "/strategy": "step.strategy", "/backtest": "st
             "/allocation": "step.allocation"}
 
 _THEMES = [(None, "brightness_auto"), (False, "light_mode"), (True, "dark_mode")]
+
+# 新版界面的侧栏（界面重构计划 4.1）：(路由, 文字键, 图标, 也算本栏目的其他路由)
+# 还没做的新页面先不放（因子实验室 2.7.0 加）；择时工作台做好前「择时策略」先指向经典的回测页
+NAV = [
+    ("/", "side.today", "today", ()),
+    ("/backtest", "side.timing", "show_chart", ("/strategy", "/optimize")),
+    ("/selection", "side.selection", "filter_list", ()),
+    ("/allocation", "side.allocation", "pie_chart", ()),
+    ("/paper", "side.paper", "account_balance_wallet", ()),
+    ("/data", "side.data", "storage", ()),
+    ("/tools", "side.tools", "build", ()),
+    ("/settings", "side.settings", "settings", ()),
+]
 
 
 def flow_of(route: str) -> str:
@@ -122,8 +135,63 @@ def _steps(route: str, flow: str):
 def frame(route: str):
     """用法：with frame("/data"): ...页面内容..."""
     theme.apply(dark())
-    flow = flow_of(route)
+    if new_ui():
+        ui.query("body").classes("sq-new")       # 新版界面的样式都写在 body.sq-new 下，经典界面不受影响
+        _sidebar(route)
+    else:
+        _header(route)
 
+    with ui.column().classes("sq-main w-full max-w-[1200px] mx-auto px-8 pt-8 pb-24 gap-5"):
+        update.banner(route)     # 新版本提示、上次更新的结果
+        yield
+
+
+def _lang_switch():
+    """中 · EN"""
+    def on_lang(lg):
+        if lg != lang():
+            set_lang(lg)
+            ui.navigate.reload()
+    with ui.row().classes("items-center gap-1 no-wrap"):
+        for i, lg in enumerate(LANGS):
+            if i:
+                ui.label("·").classes("sq-faint text-xs")
+            ui.label({"zh": "中", "en": "EN"}.get(lg, lg)).classes("sq-top-link" + (" on" if lg == lang() else "")) \
+                .on("click", lambda lg=lg: on_lang(lg))
+
+
+def _theme_button():
+    """跟随系统 → 浅色 → 深色"""
+    cur = next(i for i, (v, _) in enumerate(_THEMES) if v == dark())
+
+    def cycle_theme():
+        set_dark(_THEMES[(cur + 1) % len(_THEMES)][0])
+        ui.navigate.reload()
+    ui.button(icon=_THEMES[cur][1], on_click=cycle_theme).props("flat round dense size=sm") \
+        .classes("sq-muted").tooltip(t("gui.theme"))
+
+
+def _sidebar(route: str):
+    """新版界面：左侧栏（4.0 先搭骨架，样式、窄窗口折叠、待执行交易数字在 4.1.1 做）"""
+    with ui.left_drawer(value=True, fixed=True, bordered=True).props("width=200 behavior=desktop") \
+            .classes("sq-side column no-wrap").mark("sq_sidebar"):
+        with ui.element("div").classes("sq-logo").on("click", lambda: ui.navigate.to("/")).mark("logo"):
+            ui.html("Simple<span>Quant</span>")
+        for r, key, icon, also in NAV:
+            on = route == r or route in also
+            with ui.row().classes("sq-side-item items-center no-wrap" + (" on" if on else "")) \
+                    .on("click", lambda r=r: ui.navigate.to(r)).mark(f"nav:{r}"):
+                ui.icon(icon, size="18px")
+                ui.label(t(key))
+        ui.space()
+        with ui.row().classes("items-center justify-between no-wrap px-3"):
+            _lang_switch()
+            _theme_button()
+
+
+def _header(route: str):
+    """经典界面：报头（标志、流程切换、步骤条、工具 / 设置、语言、主题）"""
+    flow = flow_of(route)
     with ui.header(elevated=False).classes("sq-header items-center gap-x-6 gap-y-2 px-8 py-3"):
         with ui.element("div").classes("sq-logo").on("click", lambda: ui.navigate.to("/")).mark("logo"):
             ui.html("Simple<span>Quant</span>")
@@ -140,29 +208,8 @@ def frame(route: str):
                 .on("click", lambda: ui.navigate.to("/tools")).mark("nav:/tools")
             ui.label(t("top.settings")).classes("sq-top-link" + (" on" if route == "/settings" else "")) \
                 .on("click", lambda: ui.navigate.to("/settings")).mark("nav:/settings")
-
-            def on_lang(lg):
-                if lg != lang():
-                    set_lang(lg)
-                    ui.navigate.reload()
-            with ui.row().classes("items-center gap-1 no-wrap"):
-                for i, lg in enumerate(LANGS):
-                    if i:
-                        ui.label("·").classes("sq-faint text-xs")
-                    ui.label({"zh": "中", "en": "EN"}.get(lg, lg)).classes("sq-top-link" + (" on" if lg == lang() else "")) \
-                        .on("click", lambda lg=lg: on_lang(lg))
-
-            cur = next(i for i, (v, _) in enumerate(_THEMES) if v == dark())
-
-            def cycle_theme():
-                set_dark(_THEMES[(cur + 1) % len(_THEMES)][0])
-                ui.navigate.reload()
-            ui.button(icon=_THEMES[cur][1], on_click=cycle_theme).props("flat round dense size=sm") \
-                .classes("sq-muted").tooltip(t("gui.theme"))
-
-    with ui.column().classes("sq-main w-full max-w-[1200px] mx-auto px-8 pt-8 pb-24 gap-5"):
-        update.banner(route)     # 新版本提示、上次更新的结果
-        yield
+            _lang_switch()
+            _theme_button()
 
 
 def page_title(route: str, subtitle: str | None = None, subtitle_full: str | None = None):

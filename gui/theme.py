@@ -182,6 +182,16 @@ code, pre {{ font-family: var(--sq-mono); }}
 .q-panel-parent:has(.sq-setup-actions) {{ overflow: clip; }}
 .q-panel-parent:has(.sq-setup-actions) > .q-panel {{ overflow: visible; }}
 
+/* 新版界面（body.sq-new）：左侧栏。4.0 只是骨架，研报风格的细节、窄窗口折叠在 4.1.1 做 */
+body.sq-new {{ --sq-header-h: 0px; }}
+.sq-new .sq-side {{ background: var(--sq-sunk); border-color: var(--sq-border) !important; padding: 22px 10px 14px; gap: 2px; }}
+.sq-new .sq-side .sq-logo {{ padding: 0 12px 18px; cursor: pointer; }}
+.sq-new .sq-side-item {{ gap: 12px; min-height: 42px; padding: 0 12px; cursor: pointer; color: var(--sq-text2);
+  border-left: 2px solid transparent; }}
+.sq-new .sq-side-item:hover {{ color: var(--sq-text); background: rgba(127, 120, 110, .08); }}
+.sq-new .sq-side-item.on {{ color: var(--sq-red); background: var(--sq-red-soft); border-left-color: var(--sq-red);
+  font-weight: 600; }}
+
 /* 按钮：直角；主按钮墨色实底 */
 .q-btn {{ border-radius: 2px; letter-spacing: 0; }}
 .q-btn.bg-primary, .q-btn.bg-primary .q-btn__content {{ color: {PAPER} !important; }}

@@ -5,6 +5,14 @@
 
 Changes in each release. `tools/release.py` copies the matching section into the GitHub release notes.
 
+## 未发布
+
+### 更新内容
+- 新增：设置页「界面」可在「经典」与「新版（预览）」之间切换。新版界面采用左侧导航，并将逐步把择时策略的设置、回测与验证集中到同一页；目前为预览版，可随时切回经典界面，策略、数据与模拟账户在两套界面中通用。设置页附有反馈入口（GitHub Discussions）
+
+### Changes
+- New: Settings → Interface switches between "Classic" and "New (preview)". The new interface uses a sidebar and will gradually bring a timing strategy's settings, backtest and validation onto one page. It is a preview: you can switch back at any time, and strategies, data and paper accounts are shared by both. A feedback link (GitHub Discussions) is provided
+
 ## 2.5.0（2026-11-03）
 
 ### 更新内容

@@ -1,10 +1,11 @@
-"""设置：AI 模型；关于 SimpleQuant（版本、检查更新、项目链接）"""
+"""设置：界面版本；AI 模型；关于 SimpleQuant（版本、检查更新、项目链接）"""
 
 from nicegui import run, ui
 
 from simplequant import llm
 from simplequant.llm import LLMConfig, PRESETS, PROVIDERS, JSON_MODES
-from gui.common import t, p
+from simplequant.update import DISCUSSIONS_PAGE
+from gui.common import t, p, new_ui, set_ui
 from gui import update
 from gui.layout import frame, page_title
 from gui.widgets import folder_btn, notice
@@ -16,6 +17,8 @@ FIELDS = ("provider", "model", "api_key", "base_url", "json_mode", "timeout", "r
 def page():
     with frame("/settings"):
         page_title("/settings")
+        _ui_choice()
+        ui.separator().classes("q-my-sm")
         cfg = llm.load_config() or LLMConfig()
         F = {"preset": cfg.preset, **{f: getattr(cfg, f) for f in FIELDS}}
 
@@ -123,3 +126,17 @@ def page():
 
         ui.separator().classes("q-my-md")
         update.about()
+
+
+def _ui_choice():
+    """界面：经典 / 新版（预览）。选了就写进设置（「选了经典」和「没选过」分开存），重新载入页面"""
+    def on_change(e):
+        if e.value and e.value != ("new" if new_ui() else "classic"):
+            set_ui(e.value)
+            ui.navigate.reload()
+    with ui.column().classes("gap-2"):
+        ui.label(t("set.ui")).classes("font-semibold")
+        ui.toggle({"classic": t("set.ui_classic"), "new": t("set.ui_new")}, value="new" if new_ui() else "classic",
+                  on_change=on_change).props("no-caps unelevated toggle-color=primary").mark("set_ui")
+        ui.label(t("set.ui_help")).classes("sq-muted text-sm")
+        ui.link(t("set.ui_feedback"), DISCUSSIONS_PAGE, new_tab=True).classes("text-sm").mark("link:set.ui_feedback")

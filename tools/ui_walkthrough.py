@@ -1,7 +1,7 @@
 """
 打包版的界面自动测试（由 gui/uitest.py 在真正的桌面窗口里运行；tools/smoke_test.py --ui 调用）
-按 docs/mac-test.md 的清单走一遍：首页、语言与主题、下载数据、策略 → 回测、原生图、设置页检查更新、
-定时任务创建与删除、模拟账户。每步截图。依赖网络的步骤失败只记 WARN（GitHub 的机器在国外，国内数据源未必连得上），
+按 docs/mac-test.md 的清单走一遍：首页、语言与主题、下载数据、策略 → 回测、原生图、新版界面的择时工作台回测、
+设置页检查更新、定时任务创建与删除、模拟账户。每步截图。依赖网络的步骤失败只记 WARN（GitHub 的机器在国外，国内数据源未必连得上），
 此时用随机生成的行情继续后面的步骤。
 """
 
@@ -13,8 +13,10 @@ import sys
 import numpy as np
 import pandas as pd
 
+from nicegui import app
+
 from gui import state
-from gui.common import set_dark, set_lang
+from gui.common import set_dark, set_lang, set_ui, ui_choice
 from simplequant.data import library
 from simplequant.paper import list_accounts, schedule
 
@@ -88,6 +90,7 @@ async def main(d):
     await d.step("策略页 → 回测", strategy)
     if await d.step("回测", backtest):
         await d.step("Backtrader 原生图（检查中文）", native_chart)
+    await d.step("新版界面：择时工作台回测", lambda: timing_workbench(d))
 
     async def settings():
         from simplequant.update.client import UPDATER
@@ -141,6 +144,40 @@ async def main(d):
 
     if downloaded:          # 模拟账户每天会重新下载行情；没联网时跳过
         await d.step("新建模拟账户（需联网）", account, required=False)
+
+
+
+async def timing_workbench(d):
+    """新版界面（预览）：设置页切到新版 → 侧栏「择时策略」打开工作台 → 回测一次。
+    做完恢复原来的界面设置（没选过的仍是没选过），后面的步骤照旧走经典界面"""
+    prev = ui_choice()
+    try:
+        await d.goto("/settings")
+        old = {c.id for c in type(d.client).instances.values()}
+        with d.client:          # 与用户点选相同：写入设置并重新载入页面
+            d.one(marker="set_ui").set_value("new")
+        await d.wait_client("/settings", exclude=old)
+        d.one(marker="sq_sidebar")
+        s = state.strategy()
+        s["mode"], s["tpl_key"] = "template", "sma_cross"
+        old = {c.id for c in type(d.client).instances.values()}
+        await d.click(marker="nav:/timing")
+        await d.wait_client("/timing", exclude=old)
+        first = state.STATE.get("bt", {}).get("result")
+
+        def new_result():
+            r = state.STATE.get("bt", {}).get("result")
+            return r is not None and r is not first
+        await d.click(marker="run")
+        await d.until(new_result, timeout=120, what="workbench backtest")
+        await d.see("可信度检查")
+        await d.shot("timing")
+        return f"{len(state.STATE['bt']['result'].orders)} orders"
+    finally:
+        if prev:
+            set_ui(prev)
+        else:
+            app.storage.general.pop("ui", None)
 
 
 async def _fake():

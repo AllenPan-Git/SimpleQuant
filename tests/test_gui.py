@@ -1837,6 +1837,68 @@ async def test_new_ui_entries_open_workbench(user: User, lib_dir):
     assert S()["tpl_key"] == "sma_cross" and S()["tpl_params"]["sma_cross"] == best["params"]
 
 
+async def test_new_ui_timing_verify_tab(user: User, lib_dir):
+    """工作台「验证」标签：用设置区的数据与策略做参数优化 → 以最优参数回测（回到报告、提示挑选次数）→ 报告「下一步」
+    回到验证 → 滚动优化；做过的检验记进报告记录，重启后首页进度的「验证」仍是完成"""
+    from gui import common, history
+    common.set_ui("new")
+    history.clear()
+    _save_prices(n=900)
+    _opt_setup()
+    S = state.strategy()
+    S["tpl_key"] = "sma_cross"
+    O, BT = state.STATE["opt"], lambda: state.STATE.get("bt", {})
+    tab = lambda: user.find(marker="timing_panels").elements.pop().value
+    sub = lambda k: next(e for e in user.find(marker=f"vf:{k}").elements.pop().descendants() if "sq-vf-sub" in e.classes)
+
+    await user.open("/timing")
+    user.find(marker="tab:verify").click()
+    await settle()
+    assert tab() == "verify"
+    await user.should_see("组参数")                         # 默认选中参数优化
+    assert sub("credibility").text == "回测后自动完成"
+    user.find(marker="opt_run").click()
+    assert await _wait(lambda: O.get("result"))
+    await user.should_see("优化结果")
+    await settle()
+    assert "ok" in sub("optimize").classes
+    assert "ok" in user.find(marker="prog:verify").elements.pop().classes
+
+    await user.should_see(marker="use_best")
+    user.find(marker="use_best").click()
+    assert await _wait(lambda: BT().get("result") is not None)
+    assert tab() == "report"
+    best = O["result"]["best_spec"]
+    assert S["tpl_params"]["sma_cross"] == best["params"]
+    tuned = [c for c in BT()["checks"] if c["key"] == "cred.tuned"]
+    assert tuned and tuned[0]["args"]["n"] == O["result"]["tried"]
+    assert history.recent()[0]["verify"]["optimize"] is True      # 最优组合也算做过参数优化
+
+    await user.should_see(marker="next_opt")
+    user.find(marker="next_opt").click()
+    await settle()
+    assert tab() == "verify"
+
+    for ranges in O["ranges"].values():                     # 每个参数 2 个取值，滚动优化跑得快
+        for path, (a, b, s) in list(ranges.items()):
+            ranges[path] = (a, a + s, s)
+    user.find(marker="vf:walkforward").click()
+    await settle()
+    assert O["mode"] == "wf"
+    await user.open("/timing")                               # 重画一次，范围生效；仍停在验证标签的滚动优化
+    assert tab() == "verify"
+    await user.should_see("个窗口")
+    user.find(marker="wf_run").click()
+    assert await _wait(lambda: O.get("wf"))
+    await settle()
+    assert "ok" in sub("walkforward").classes
+    assert history.recent()[0]["verify"]["walkforward"] is True
+
+    state.reset()                                            # 重启：内存里的结果没了，首页按记录显示
+    await user.open("/")
+    assert "ok" in user.find(marker="prog:verify").elements.pop().classes
+
+
 def _body_classes(user: User) -> list:
     """ui.query("body") 加到 body 上的 class"""
     from nicegui.elements.query import QueryElement

@@ -610,7 +610,8 @@ def _backtest_form(SP, ctx, rebuild):
             title = SP["name"].strip() or t("sel.kind")
             # restore 只记 spec（首页的策略进度用它比对已保存的策略、模拟账户）；选股重新打开不恢复设置
             history.add("sel", title, f"{uni} · {ctx.start} ~ {ctx.end}", res.metrics, restore={"spec": spec},
-                        data=uni, strategy=title)
+                        data=uni, strategy=title,
+                        verify={"credibility": True, "phase": False, "walkforward": False})   # 之后做了检验再补记
             support.after_run()
             ok = True
         except Exception as ex:  # noqa: BLE001
@@ -785,6 +786,8 @@ def _sel_checks(SP, base: list[dict]):
                                       SP["result_range"][0], lambda n, of: ph["prog"].update(n=n, of=of),
                                       lambda: ph["stop"])
             ph["found"] = check_phase(res.metrics, rows)
+            if ph["found"]:
+                history.mark_verify("sel", rspec, phase=True)
         except Exception as e:  # noqa: BLE001
             ph["found"] = [{"level": "note", "key": "cred.phase_failed", "args": {"e": str(e)}}]
         if not ph["found"] and SP.get("phase") is ph:      # 停得太早，相位不够下结论：恢复按钮

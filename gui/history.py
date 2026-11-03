@@ -36,5 +36,18 @@ def add(kind: str, title: str, sub: str, metrics: dict, restore: dict | None = N
     app.storage.general["recent"] = [entry] + items[:MAX_ITEMS - 1]
 
 
+def mark_verify(kind: str, spec: dict, **done: bool):
+    """记下这个策略做过的检验（如 optimize=True），记在最近一条同类、同规则的报告上；
+    首页「继续上次的工作」重启后据此显示进度的「验证」一步。没有对应的报告时不记"""
+    from ui.shared import spec_key
+    key, items = spec_key(spec), recent()
+    for i, e in enumerate(items):
+        rs = (e.get("restore") or {}).get("spec")
+        if e.get("kind") == kind and rs and spec_key(rs) == key:
+            items[i] = {**e, "verify": {**(e.get("verify") or {}), **done}}
+            app.storage.general["recent"] = items
+            return
+
+
 def clear():
     app.storage.general["recent"] = []

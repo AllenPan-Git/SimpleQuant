@@ -223,7 +223,8 @@ def timing_verify(spec: dict, bt: dict, opt: dict) -> dict[str, bool] | None:
     择时策略做过哪些检验（VERIFY_AUTO / VERIFY_MANUAL）→ {检验: 是否已做}，只列适用的项。
     bt：回测的状态（STATE["bt"]），其中的回测与 spec 规则相同时才算上随回测完成的几项：可信度检查；随机买卖对照
     （平仓交易太少时不做，不列）；调仓日检验（只对定期调仓的策略做，正在进行时算未做）。
-    opt：参数优化的状态（STATE["opt"]），网格优化 / 滚动优化的策略与 spec 规则相同才算。两边都没有时为 None
+    opt：参数优化的状态（STATE["opt"]），网格优化 / 滚动优化的策略与 spec 规则相同才算；网格优化选出的最优参数组合
+    （「以最优参数回测」带去的）也算做过参数优化。两边都没有时为 None
     """
     key = spec_key(spec)
     v = {}
@@ -235,7 +236,7 @@ def timing_verify(spec: dict, bt: dict, opt: dict) -> dict[str, bool] | None:
         if bt.get("phase_pending") or any(k.startswith("cred.phase") for k in keys):
             v["phase"] = any(k.startswith("cred.phase") for k in keys)
     res = opt.get("result")
-    grid = bool(res) and spec_key(res.get("spec")) == key
+    grid = bool(res) and key in (spec_key(res.get("spec")), spec_key(res.get("best_spec")))
     wf = bool(opt.get("wf")) and opt.get("wf_spec") is not None and spec_key(opt["wf_spec"]) == key
     if not v and not (grid or wf):
         return None

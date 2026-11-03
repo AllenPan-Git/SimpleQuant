@@ -10,7 +10,7 @@ from simplequant.engine.optimize import value_range
 from simplequant.engine.walkforward import make_windows
 from simplequant.stocks.walkforward import (walk_forward_selection, selection_tunables, selection_grid,
                                             REBALANCE_CHOICES, TARGET_METRICS as WF_TARGETS, MAX_COMBOS as WF_MAX)
-from gui import state
+from gui import state, history
 from gui.common import t, lang
 from gui.components import walkforward_results
 from gui.widgets import section, df_table, notice, Progress
@@ -175,6 +175,7 @@ def _walkforward(SP, ctx):
                                      int(W["test"]), W["window"] == "anchored", ctx.start, int(W["workers"]), progress)
             SP["wf"] = dict(res=res, labels={k: labels_all[k] for k in ax}, is_int=is_int, metric=W["metric"],
                             spec=spec, range=(ctx.start, ctx.end), secs=time.time() - t0)
+            history.mark_verify("sel", spec, walkforward=True)
         except Exception as ex:  # noqa: BLE001
             SP["wf"] = None
             ui.notify(t("bt.failed", e=ex), type="negative", multi_line=True)

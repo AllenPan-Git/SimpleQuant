@@ -28,7 +28,8 @@ from gui.layout import frame, page_title
 from gui.widgets import df_table, fmt_table, plot, notice, download_btn
 from ui.charts import equity_chart, strategy_chart, batch_scatter
 from ui.shared import (export_script, export_filename, platform_export, orders_table, real_orders, trades_table,
-                       logs_table, pct, num, asset_names, data_source_text, sources_line)
+                       logs_table, pct, num, asset_names, data_source_text, sources_line,
+                       spec_key, timing_verify)
 
 
 def page():
@@ -280,7 +281,7 @@ def setup_bar(by_id: dict, BT: dict, strategy_part, sticky: bool = False, open_:
             res = await run.io_bound(run_backtest, prices, cls, params, broker, trade_start=warm,
                                      with_panels=True)
             tuned = state.STATE.get("tuned") or {}          # 参数优化页「用最优参数回测」带过来的
-            tried = tuned["n"] if tuned.get("spec") == spec else 0
+            tried = tuned["n"] if tuned.get("spec") and spec_key(tuned["spec"]) == spec_key(spec) else 0
             BT.clear()
             BT.update(result=res, title=(strat["label"], list(prices), next(iter(pick.freqs))), spec=spec,
                       broker=broker, name=strat.get("name", ""), div_notes=(skipped, patched),
@@ -315,6 +316,7 @@ def setup_bar(by_id: dict, BT: dict, strategy_part, sticky: bool = False, open_:
         if BT.get("result") is res:          # 期间没有重新回测
             BT["checks"] = BT.get("checks", []) + found
             BT.pop("phase_pending", None)
+            history.mark_verify("bt", spec, phase=True)
             bar.on_phase()
 
     async def do_batch(spec, broker, warm):
@@ -463,7 +465,7 @@ def _remember(BT: dict, by_id: dict, pick, strat: dict):
                 restore={"spec": {"name": name, **strat["spec"]}, "ids": list(pick.ids),
                          "range": [str(pick.start), str(pick.end)],
                          "broker": dict(state.STATE.get("bt_broker", {}))},
-                data=data, strategy=name)
+                data=data, strategy=name, verify=timing_verify(strat["spec"], BT, state.STATE.get("opt") or {}))
     BT["time"] = history.recent()[0]["time"]
     support.after_run()
 

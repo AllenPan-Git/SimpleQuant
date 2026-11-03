@@ -1,5 +1,6 @@
 """第 4 页：参数优化（网格搜索 / 滚动优化）"""
 
+import inspect
 from dataclasses import asdict
 from types import SimpleNamespace
 
@@ -14,7 +15,7 @@ from simplequant.engine.optimize import (optimize, value_range, build_grid, spli
                                          apply_combo, yearly_ranks, TARGET_METRICS, MAX_COMBOS, default_workers)
 from simplequant.engine.walkforward import (walk_forward, make_windows, count_backtests, STITCH_MODES,
                                             MAX_BACKTESTS as WF_MAX)
-from gui import state, routes
+from gui import state, routes, history
 from gui.common import t, lang
 from gui.components import (require_data, data_selector, strategy_selector, broker_settings, load_prices,
                             prepare_prices, metric_tile, walkforward_results, dividend_notices,
@@ -47,19 +48,24 @@ def opt_state() -> dict:
                                           "window": "rolling", "stitch": next(iter(STITCH_MODES))})
 
 
-def optimize_panel(by_id: dict, pick, strat: dict, make_broker) -> SimpleNamespace:
+def optimize_panel(by_id: dict, pick, strat: dict, make_broker, fixed_mode: bool = False,
+                   on_use_best=None) -> SimpleNamespace:
     """
     参数优化面板（网格搜索 / 滚动优化）：数据、策略、资金由外面传入（经典优化页是自己的三个选择区块）。
-    返回的对象：update()（数据或资金改了）、strategy_changed()（策略改了，参数区重画）
+    strat 里有 "errors" 时不能运行。fixed_mode：不显示「普通优化 / 滚动优化」切换（由外面调 set_mode 切换，择时工作台用）；
+    on_use_best(带名称的最优策略, {"spec", "n"})：替换「以最优参数回测」（默认去回测页）。
+    返回的对象：update()（数据或资金改了）、strategy_changed()（策略改了，参数区重画）、set_mode(模式)；
+    可替换的回调 .on_done()（一次优化结束，成功与否都调用）
     """
     O = opt_state()
     lg = lang()
+    panel = SimpleNamespace(on_done=lambda: None)
 
     def set_mode(e):
         O["mode"] = e.value
         mode_views()
         update()
-    with ui.row().classes("items-center gap-2"):
+    with ui.row().classes("items-center gap-2") as toggle_row:
         ui.toggle({m: t(f"wf.mode_{m}") for m in ("grid", "wf")}, value=O["mode"], on_change=set_mode) \
             .props("no-caps unelevated rounded toggle-color=primary").mark("opt_mode")
         ui.icon("help_outline").classes("sq-muted").tooltip(t("wf.mode_help"))
@@ -69,7 +75,10 @@ def optimize_panel(by_id: dict, pick, strat: dict, make_broker) -> SimpleNamespa
 
     def tunables():
         """当前策略的可调参数 → (tbs, spec_key, 已选参数, 各参数范围)；不依赖界面是否已重画"""
-        tbs = {tb.path: tb for tb in strategies.tunables(strat["spec"], lg)}
+        try:
+            tbs = {tb.path: tb for tb in strategies.tunables(strat["spec"], lg)}
+        except Exception:  # noqa: BLE001 - 编辑到一半的策略（择时工作台）：先当作没有可调参数
+            tbs = {}
         spec_key = str(sorted(tbs))
         chosen = O["chosen"].setdefault(spec_key, list(tbs)[:2])
         ranges = O["ranges"].setdefault(spec_key, {})
@@ -186,7 +195,7 @@ def optimize_panel(by_id: dict, pick, strat: dict, make_broker) -> SimpleNamespa
     def base_ready(n_combos):
         spec = strat["spec"]
         need = strategies.min_assets(spec)
-        return (bool(pick.ids) and len(pick.freqs) == 1 and pick.date_range is not None
+        return (not strat.get("errors") and bool(pick.ids) and len(pick.freqs) == 1 and pick.date_range is not None
                 and len(pick.ids) >= need and 0 < n_combos <= MAX_COMBOS)
 
     def update():
@@ -266,6 +275,7 @@ def optimize_panel(by_id: dict, pick, strat: dict, make_broker) -> SimpleNamespa
                         checks=checks, tried=int(ok), years=years, broker=asdict(broker))
         try:
             O["result"] = await run.io_bound(work)
+            history.mark_verify("bt", spec, optimize=True)
         except Exception as e:  # noqa: BLE001
             O.pop("result", None)
             ui.notify(t("bt.failed", e=explain_error(e, lang())), type="negative", multi_line=True)
@@ -273,6 +283,7 @@ def optimize_panel(by_id: dict, pick, strat: dict, make_broker) -> SimpleNamespa
             prog.stop()
             run_btn.enable()
         results.refresh()
+        panel.on_done()
 
     async def do_wf():
         spec, broker = strat["spec"], make_broker()
@@ -291,6 +302,7 @@ def optimize_panel(by_id: dict, pick, strat: dict, make_broker) -> SimpleNamespa
             O["wf"] = (res, labels, O["metric"], O["stitch"])
             O["wf_spec"] = spec               # 进度的「验证」按策略规则比对
             O["wf_div_notes"] = (skipped, patched)
+            history.mark_verify("bt", spec, walkforward=True)
         except Exception as e:  # noqa: BLE001
             O.pop("wf", None)
             ui.notify(t("bt.failed", e=explain_error(e, lang())), type="negative", multi_line=True)
@@ -298,6 +310,7 @@ def optimize_panel(by_id: dict, pick, strat: dict, make_broker) -> SimpleNamespa
             prog.stop()
             wf_btn.enable()
         results.refresh()
+        panel.on_done()
 
     @ui.refreshable
     def results():
@@ -307,12 +320,21 @@ def optimize_panel(by_id: dict, pick, strat: dict, make_broker) -> SimpleNamespa
                 dividend_notices(*O.get("wf_div_notes", ({}, {})))
                 walkforward_results(res, labels, metric, t(f"wf.stitch_{stitch}"), t(f"wf.note_{stitch}"))
         elif O.get("result"):
-            _grid_results(O["result"])
+            _grid_results(O["result"], on_use_best)
 
+    def set_mode_to(m: str):
+        if O["mode"] != m:
+            O["mode"] = m
+            mode_views()
+            update()
+
+    toggle_row.set_visibility(not fixed_mode)
     results()
     mode_views()
     update()
-    return SimpleNamespace(update=update, strategy_changed=lambda: (params_box.refresh(), update()))
+    panel.__dict__.update(update=update, strategy_changed=lambda: (params_box.refresh(), update()),
+                          set_mode=set_mode_to)
+    return panel
 
 
 def _common_index(by_id, pick) -> pd.DatetimeIndex:
@@ -337,7 +359,7 @@ def _years_table(years: pd.DataFrame | None):
         df_table(table)
 
 
-def _grid_results(res: dict):
+def _grid_results(res: dict, on_use_best=None):
     lg = lang()
     df, paths, labels, metric = res["df"], res["axes"], res["labels"], res["metric"]
     ok = df[df[metric].notna()]
@@ -437,7 +459,13 @@ def _grid_results(res: dict):
                 strategies.save_strategy(name.value.strip(), res["best_spec"], broker=res.get("broker"))
                 ui.notify(t("strat.saved", name=name.value.strip()), type="positive")
 
-        def use_best():
+        async def use_best():
+            if on_use_best:
+                r = on_use_best({"name": (name.value or "").strip() or t("opt.tuned"), **res["best_spec"]},
+                                {"spec": res["best_spec"], "n": res.get("tried", 0)})
+                if inspect.isawaitable(r):
+                    await r
+                return
             state.STATE["current_spec"] = {"name": (name.value or "").strip() or t("opt.tuned"), **res["best_spec"]}
             state.STATE["tuned"] = {"spec": res["best_spec"], "n": res.get("tried", 0)}     # 回测页据此提示
             state.STATE["bt_strategy"] = "__current__"

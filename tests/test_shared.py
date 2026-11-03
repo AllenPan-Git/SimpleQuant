@@ -143,6 +143,8 @@ def test_timing_verify():
     assert shared.timing_verify(a, bt, opt) == {"credibility": True, "random": True, "phase": True,
                                                 "optimize": True, "walkforward": False}
     assert shared.timing_verify(b, {}, opt) == {"optimize": False, "walkforward": True}
+    opt["result"]["best_spec"] = b                   # 以最优参数回测：选出的组合也算做过参数优化
+    assert shared.timing_verify(b, {}, opt) == {"optimize": True, "walkforward": True}
 
 
 def test_progress_steps():

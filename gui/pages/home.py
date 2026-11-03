@@ -13,7 +13,7 @@ from gui import history, state, routes
 from gui.common import t, lang, new_ui
 from gui.components import accounts_table, strategy_progress
 from gui.layout import frame
-from ui.shared import pct, num, account_rows, progress_steps, saved_name, paper_count, spec_key
+from ui.shared import pct, num, account_rows, progress_steps, saved_name, paper_count, spec_key, timing_verify
 
 
 def page():
@@ -212,8 +212,8 @@ def _entry_spec(e: dict) -> dict | None:
 
 
 def _entry_verify(e: dict, spec: dict | None) -> dict | None:
-    """这条报告做过哪些检验（shared.VERIFY_*）。只有内存里还留着同一次回测的结果时才知道，否则为 None（显示「—」）；
-    重启后也能显示要等 4.2.4 把检验记进报告记录"""
+    """这条报告做过哪些检验（shared.VERIFY_*）：内存里还留着同一次回测的结果时按内存算，否则用报告记录里记下的
+    （history.mark_verify；2.6.0 之前的记录没有，为 None，显示「—」）"""
     S = state.STATE
     if not spec:
         return None
@@ -221,24 +221,13 @@ def _entry_verify(e: dict, spec: dict | None) -> dict | None:
         sp = S.get("sp") or {}
         res = sp.get("result")
         if not res or spec_key(res[1]) != spec_key(spec):
-            return None
+            return e.get("verify")
         return {"credibility": True, "phase": bool((sp.get("phase") or {}).get("found")),
                 "walkforward": bool(sp.get("wf"))}
     bt = S.get("bt") or {}
     if bt.get("result") is None or bt.get("time") != e["time"]:
-        return None
-    keys = [c.get("key", "") for c in bt.get("checks", [])]
-    v = {"credibility": True}
-    if any(k.startswith("cred.random") for k in keys):        # 随回测同步算完；没有 = 不适用（平仓交易太少），不列
-        v["random"] = True
-    if bt.get("phase_pending") or any(k.startswith("cred.phase") for k in keys):    # 调仓日检验只对定期调仓的策略做
-        v["phase"] = any(k.startswith("cred.phase") for k in keys)
-    choice, opt = S.get("opt_strategy", ""), S.get("opt") or {}
-    opt_spec = S.get("current_spec") if choice == "__current__" else \
-        list_strategies().get(choice[6:]) if choice.startswith("saved:") else None
-    same = bool(opt_spec) and spec_key(opt_spec) == spec_key(spec)
-    v["optimize"], v["walkforward"] = same and bool(opt.get("result")), same and bool(opt.get("wf"))
-    return v
+        return e.get("verify")
+    return timing_verify(spec, bt, S.get("opt") or {})
 
 
 def _open_step(e: dict, key: str):

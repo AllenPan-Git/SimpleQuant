@@ -203,17 +203,30 @@ def _sidebar(route: str):
             .classes("sq-side column no-wrap").mark("sq_sidebar"):
         with ui.element("div").classes("sq-logo").on("click", lambda: ui.navigate.to("/")).mark("logo"):
             ui.html("<div class='sq-logo-full'>Simple<span>Quant</span></div><div class='sq-logo-mini'>S<span>Q</span></div>")
+        ui.label(_masthead_date()).classes("sq-side-date").mark("side_date")
         nav = ui.element("nav").classes("sq-side-nav")
         nav.props["aria-label"] = t("side.nav")
         with nav:
             for i, (r, key, icon, group, _) in enumerate(NAV):
                 if i and group != NAV[i - 1][3]:
-                    ui.element("div").classes("sq-side-space" if group == "bottom" else "sq-side-sep")
+                    if group == "bottom":
+                        ui.element("div").classes("sq-side-space")
+                    else:   # 分组名；图标列下 CSS 把它变回一条细线
+                        with ui.element("div").classes("sq-side-sep"):
+                            ui.label(t(f"side.group_{group}")).classes("sq-side-group")
                 _side_item(r, t(key), icon, on=key == cur, n=pending if r == "/paper" else 0)
         with ui.element("div").classes("sq-side-foot"):
             _lang_switch()
             _theme_button()
             _side_toggle()
+
+
+def _masthead_date(today=None) -> str:
+    """侧栏报头的日期：「2026年11月3日　星期二」/「Tuesday, Nov. 3, 2026」"""
+    import datetime as dt
+    d = today or dt.date.today()
+    return t("side.date", y=d.year, m=d.month, d=d.day, w=t("side.weekdays").split(",")[d.weekday()],
+             mon=t("side.months").split(",")[d.month - 1])
 
 
 def _side_item(route: str, name: str, icon: str, on: bool, n: int = 0):

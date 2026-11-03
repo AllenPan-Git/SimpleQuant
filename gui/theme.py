@@ -248,23 +248,35 @@ code, pre {{ font-family: var(--sq-mono); }}
    每次换页都会先宽后窄闪一下。改用 @media 盖掉抽屉和内容区的内联宽度（!important 优先于内联样式）；
    用户在窄窗口点「展开侧栏」后 body 加 sq-side-open，恢复原宽度，内容区跟着让开 */
 body.sq-new {{ --sq-header-h: 0px; }}
-.sq-new .q-drawer {{ background: var(--sq-sunk); border-color: var(--sq-border) !important; }}
-.sq-new .sq-side {{ background: var(--sq-sunk); padding: 24px 8px 12px; overflow-x: hidden; align-items: stretch; }}
-.sq-new .sq-side .sq-logo {{ padding: 0 14px 18px; font-size: 22px; }}
+/* 像报纸的目录：与正文同一张纸（不用深一档的底色），标志下一条墨线（同经典界面报头）；
+   宽窗口不显示图标、栏目名用宋体；当前栏目墨色加粗 + 左侧朱红细条，不填色块；待执行笔数是朱红 Georgia 数字 */
+.sq-new .q-drawer {{ background: var(--sq-page); border-color: var(--sq-border) !important; }}
+.sq-new .sq-side {{ background: var(--sq-page); padding: 26px 18px 12px; overflow-x: hidden; align-items: stretch; }}
+.sq-new .sq-side .sq-logo {{ padding: 0 0 12px; font-size: 22px; border-bottom: 1px solid var(--sq-text); }}
+.sq-new .sq-side-date {{ padding: 7px 0 8px; margin-bottom: 10px; border-bottom: 1px solid var(--sq-border);
+  font-family: var(--sq-serif); font-size: 12.5px; color: var(--sq-muted); white-space: nowrap; }}
 .sq-new .sq-logo-mini {{ display: none; }}
-.sq-new .sq-side-nav {{ flex: 1 0 auto; display: flex; flex-direction: column; gap: 2px; }}
-.sq-new .sq-side-item {{ display: flex; align-items: center; gap: 12px; min-height: 42px; padding: 0 12px; white-space: nowrap;
-  color: var(--sq-text2); text-decoration: none; border-left: 2px solid transparent; }}
-.sq-new .sq-side-item:hover {{ color: var(--sq-text); background: rgba(127, 120, 110, .08); }}
+.sq-new .sq-side-nav {{ flex: 1 0 auto; display: flex; flex-direction: column; }}
+.sq-new .sq-side-item {{ display: flex; align-items: center; gap: 12px; min-height: 40px; padding: 0 0 0 14px; white-space: nowrap;
+  font-family: var(--sq-serif); font-size: 15.5px; font-weight: 500; color: var(--sq-text2); text-decoration: none;
+  border-left: 2px solid transparent; }}
+.sq-new .sq-side-item > .q-icon {{ display: none; }}
+.sq-new .sq-side-item:hover {{ color: var(--sq-text); }}
+.sq-new .sq-side-item:hover .sq-side-label {{ text-decoration: underline; text-decoration-color: var(--sq-red);
+  text-underline-offset: 5px; }}
 .sq-new .sq-side-item:focus-visible {{ outline: 1px solid var(--sq-text); outline-offset: -1px; }}
-.sq-new .sq-side-item.on {{ color: var(--sq-red); background: var(--sq-red-soft); border-left-color: var(--sq-red);
-  font-weight: 600; }}
+.sq-new .sq-side-item.on {{ color: var(--sq-text); border-left-color: var(--sq-red); font-weight: 700; }}
+.sq-new .sq-side-item.on:hover .sq-side-label {{ text-decoration: none; }}
 .sq-new .sq-side-label {{ min-width: 0; overflow: hidden; text-overflow: ellipsis; }}
-.sq-new .sq-side-badge {{ margin-left: auto; min-width: 18px; padding: 0 5px; border-radius: 9px; background: var(--sq-red);
-  color: #fff; font-size: 11px; line-height: 18px; text-align: center; font-weight: 400; }}
-.sq-new .sq-side-sep {{ flex-shrink: 0; height: 1px; margin: 8px 12px; background: var(--sq-border); }}
+.sq-new .sq-side-badge {{ margin-left: auto; font: 400 15px/1 var(--sq-fig); font-variant-numeric: lining-nums tabular-nums;
+  color: var(--sq-red); }}
+/* 分组头像报纸的栏目标题：宋体灰字、字距放宽，细线接在名字后面拉到右边；朱红只留给当前栏目 */
+.sq-new .sq-side-sep {{ flex-shrink: 0; display: flex; align-items: center; gap: 10px; margin: 16px 0 4px; padding-left: 16px; }}
+.sq-new .sq-side-sep::after {{ content: ""; flex: 1; height: 1px; background: var(--sq-border); }}
+.sq-new .sq-side-group {{ font-family: var(--sq-serif); font-size: 13px; font-weight: 600; letter-spacing: .14em;
+  color: var(--sq-muted); white-space: nowrap; }}
 .sq-new .sq-side-space {{ flex-grow: 1; min-height: 20px; }}
-.sq-new .sq-side-foot {{ display: flex; align-items: center; gap: 4px; padding: 10px 6px 0 14px; }}
+.sq-new .sq-side-foot {{ display: flex; align-items: center; gap: 4px; padding: 10px 0 0; border-top: 1px solid var(--sq-border); }}
 .sq-new .sq-side-foot > :first-child {{ margin-right: auto; }}
 .sq-new .sq-side-toggle {{ display: none; }}
 .q-tooltip.sq-tip {{ background: var(--sq-text); color: var(--sq-page); border-radius: 2px; font-size: 12px; padding: 4px 10px; }}
@@ -274,15 +286,20 @@ body.sq-side-open .sq-side-tip {{ display: none; }}
   .sq-new .sq-side-toggle {{ display: inline-flex; }}
   {_MINI} .q-drawer {{ width: {SIDE_MINI_W}px !important; }}
   {_MINI} .q-page-container {{ padding-left: {SIDE_MINI_W}px !important; }}
-  {_MINI} .sq-side {{ padding: 18px 6px 10px; }}
-  {_MINI} .sq-side .sq-logo {{ padding: 0 0 14px; text-align: center; }}
+  {_MINI} .sq-side {{ padding: 18px 8px 10px; }}
+  {_MINI} .sq-side .sq-logo {{ padding: 0 0 12px; margin-bottom: 10px; text-align: center; }}
   {_MINI} .sq-logo-full {{ display: none; }}
   {_MINI} .sq-logo-mini {{ display: block; }}
-  {_MINI} .sq-side-item {{ position: relative; justify-content: center; padding: 0; }}
+  {_MINI} .sq-side-item {{ position: relative; justify-content: center; padding: 0; color: var(--sq-muted); }}
+  {_MINI} .sq-side-item > .q-icon {{ display: inline-flex; }}
+  {_MINI} .sq-side-item:hover, {_MINI} .sq-side-item.on {{ color: var(--sq-text); }}
+  {_MINI} .sq-side-item.on > .q-icon {{ color: var(--sq-red); }}
   {_MINI} .sq-side-label {{ display: none; }}
-  {_MINI} .sq-side-badge {{ position: absolute; top: 9px; right: 11px; width: 8px; height: 8px; min-width: 0; padding: 0;
-    font-size: 0; }}
-  {_MINI} .sq-side-sep {{ margin: 6px 10px; }}
+  {_MINI} .sq-side-badge {{ position: absolute; top: 9px; right: 9px; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--sq-red); font-size: 0; }}
+  {_MINI} .sq-side-date, {_MINI} .sq-side-group {{ display: none; }}
+  {_MINI} .sq-side-sep {{ display: block; height: 1px; margin: 8px 4px; padding: 0; background: var(--sq-border); }}
+  {_MINI} .sq-side-sep::after {{ display: none; }}
   {_MINI} .sq-side-foot {{ flex-direction: column; padding: 8px 0 0; }}
   {_MINI} .sq-side-foot > :first-child {{ margin-right: 0; }}
 }}

@@ -96,9 +96,6 @@ def page():
             tab_mine = ui.tab("mine", t("sp.tab_mine"), icon="auto_awesome")
             tab_bt = ui.tab("bt", t("sp.tab_backtest"), icon="query_stats")
             tab_wf = ui.tab("wf", t("sp.tab_wf"), icon="timeline")
-        # 过渡提示（2.4.0 起，保留两个版本）：个股概览、持仓诊断移到了工具页
-        ui.label(t("sp.moved_tools")).classes("sq-muted text-xs cursor-pointer") \
-            .on("click", lambda: ui.navigate.to("/tools")).mark("sp_moved_tools")
         with ui.tab_panels(tabs, value=state.STATE.get("sp_tab", "bt")).classes("w-full bg-transparent") \
                 .mark("sp_tabs") as panels:
             with ui.tab_panel(tab_data).classes("px-0 gap-4"):

@@ -133,7 +133,7 @@ async def test_nav_goes_to_page(user: User):
 
 
 async def test_tools_page_entries(user: User, tmp_path, monkeypatch):
-    """工具页的入口：首页「工具」一行直达对应标签；报头「工具」；选股页的过渡提示。切换后标签记住"""
+    """工具页的入口：首页「工具」一行直达对应标签；报头「工具」。切换后标签记住"""
     from simplequant.stocks import diagnosis as D
     monkeypatch.setattr(D, "HOLDINGS_FILE", tmp_path / "holdings.json")
 
@@ -146,7 +146,7 @@ async def test_tools_page_entries(user: User, tmp_path, monkeypatch):
     await user.open("/selection")
     await user.should_not_see(marker="hd_query")          # 选股页不再有这两个标签
     await user.should_not_see(marker="ov_query")
-    user.find(marker="sp_moved_tools").click()
+    user.find(marker="nav:/tools").click()                 # 报头「工具」，回到上次的标签
     await on_tab("hd")
     await user.open("/")
     user.find(marker="home_tools:ov").click()
@@ -1608,6 +1608,19 @@ async def test_selection_walkforward(user: User):
 
 
 # ---------------- 设置 ----------------
+def test_masthead_date():
+    """侧栏报头日期：中文「年月日　星期」，英文「星期, 月 日, 年」"""
+    import datetime as dt
+    from nicegui import app
+    from gui import common, layout
+    day = dt.date(2026, 11, 3)                       # 星期二
+    common.set_lang("zh")
+    assert layout._masthead_date(day) == "2026年11月3日　星期二"
+    common.set_lang("en")
+    assert layout._masthead_date(day) == "Tuesday, Nov. 3, 2026"
+    app.storage.general.pop("lang", None)
+
+
 def test_ui_choice_default_and_explicit(monkeypatch):
     """界面版本：没选过按默认；明确选了经典的，默认改成新版（3.0）后仍是经典"""
     from nicegui import app
@@ -1926,6 +1939,8 @@ async def test_new_ui_sidebar(user: User, paper_dir):
 
     await user.open("/")
     await user.should_see(marker="sq_sidebar")
+    await user.should_see(marker="side_date")                  # 报头日期
+    await user.should_see("研究")                               # 分组名
     await user.should_not_see(marker="nav_badge")              # 没有模拟账户
     assert "on" in user.find(marker="nav:/").elements.pop().classes
 

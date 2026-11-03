@@ -901,7 +901,6 @@ TEXT.update({
     "sp.tab_research": L("因子研究", "Factor research"),
     "sp.tab_backtest": L("选股回测", "Backtest"),
     "sp.tab_wf": L("滚动优化", "Walk-forward"),
-    "sp.moved_tools": L("个股概览、持仓诊断已移至「工具」页 →", "Stock overview and Holdings check have moved to the Tools page →"),
     "sp.tab_custom": L("自定义因子", "Custom factors"),
     "sp.tab_mine": L("AI 因子挖掘", "AI factor mining"),
     # ---- AI 因子挖掘 ----
@@ -1970,6 +1969,14 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
     "side.pending": L("{n} 笔待执行交易", "Pending trades: {n}"),
     "side.expand": L("展开侧栏", "Expand sidebar"),
     "side.collapse": L("收起侧栏", "Collapse sidebar"),
+    # 侧栏报头的日期（像报纸报头）；weekdays / months 用「,」分隔，星期从周一开始
+    "side.date": L("{y}年{m}月{d}日　{w}", "{w}, {mon} {d}, {y}"),
+    "side.weekdays": L("星期一,星期二,星期三,星期四,星期五,星期六,星期日", "Monday,Tuesday,Wednesday,Thursday,Friday,Saturday,Sunday"),
+    "side.months": L("1,2,3,4,5,6,7,8,9,10,11,12", "Jan.,Feb.,Mar.,Apr.,May,Jun.,Jul.,Aug.,Sep.,Oct.,Nov.,Dec."),
+    # 侧栏分组名（窄窗口图标列下变回细线）
+    "side.group_work": L("研究", "Research"),
+    "side.group_paper": L("跟踪", "Tracking"),
+    "side.group_data": L("资料", "Reference"),
     # 新版界面：策略进度（设置 → 回测 → 验证 → 模拟盘）
     "prog.setup": L("设置", "Setup"),
     "prog.backtest": L("回测", "Backtest"),

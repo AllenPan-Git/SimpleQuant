@@ -440,7 +440,11 @@ class StockStore:
         return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
 
     def plan_dividends(self, codes: list[str], start_year: int, today: dt.date | None = None) -> dict:
-        """新股票下全部年份；已有的重下去年和今年（年报分红集中在下半年实施）；今天已检查过的跳过"""
+        """
+        新股票下全部年份；已有的从上次检查那年重下到今年；今天已检查过的跳过。
+        按除权除息日所在年份查询，上次检查之前那些年的分红已经定了，不用每天重下（每只每天少一次请求）。
+        1～2 月仍连去年一起重下，以防数据源晚几天才补上年底除权的分红；没有检查记录的（旧版下载的）也从去年起
+        """
         from .dividends import years
         today = today or dt.date.today()
         ys = years(start_year, today)
@@ -448,8 +452,11 @@ class StockStore:
         for code in codes:
             if not self.has_div(code):
                 jobs[code] = (ys,)
-            elif manifest.get(code) != today.isoformat():
-                jobs[code] = ([y for y in ys if y >= today.year - 1],)
+            elif (last := manifest.get(code)) != today.isoformat():
+                since = int(last[:4]) if last else today.year - 1
+                if today.month <= 2:
+                    since = min(since, today.year - 1)
+                jobs[code] = ([y for y in ys if y >= since] or ys[-1:],)
         return jobs
 
     def _rights_path(self) -> Path:

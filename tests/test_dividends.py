@@ -157,6 +157,42 @@ def test_store_dividends_and_panel(tmp_path):
     assert frames["div_cash"]["sh.600003"].sum() == 0
 
 
+
+def test_plan_dividends_rechecks_from_last_check_year(tmp_path):
+    """已有分红数据的股票：从上次检查那年重下到今年（往年的不会再变），1～2 月连去年一起；
+    没有检查记录的从去年起；新股票下全部年份；今天查过的跳过。重下的年份替换旧数据，更早的保留"""
+    import datetime as dt
+    import json
+    st = StockStore(tmp_path, login=lambda: None)
+    old = pd.DataFrame({"ex_date": pd.to_datetime(["2024-06-03", "2026-06-02"]), "cash": [0.3, 0.4],
+                        "bonus": [0.0, 0.0], "reserve": [0.0, 0.0]})
+    st.update_dividends(["sh.600001", "sh.600003"], 2023, workers=1, fetch=lambda code, years: (code, old, ""))
+
+    def plan(last, today):
+        (tmp_path / "div_manifest.json").write_text(json.dumps({"sh.600001": last} if last else {}), encoding="utf-8")
+        return st.plan_dividends(["sh.600001", "sh.600002"], 2023, today=today)
+    new_code = ([2023, 2024, 2025, 2026],)
+    assert plan("2026-11-03", dt.date(2026, 11, 4)) == {"sh.600001": ([2026],), "sh.600002": new_code}
+    assert plan("2026-11-04", dt.date(2026, 11, 4)) == {"sh.600002": new_code}              # 今天查过
+    assert plan("2025-12-29", dt.date(2026, 3, 2))["sh.600001"] == ([2025, 2026],)          # 上次查在去年
+    assert plan("2026-02-26", dt.date(2026, 2, 27))["sh.600001"] == ([2025, 2026],)         # 1～2 月连去年
+    assert plan("2026-02-27", dt.date(2026, 3, 2))["sh.600001"] == ([2026],)
+    assert plan("2024-08-01", dt.date(2026, 11, 4))["sh.600001"] == ([2024, 2025, 2026],)   # 很久没查（如重新调入）
+    assert plan(None, dt.date(2026, 11, 4))["sh.600001"] == ([2025, 2026],)                 # 没有检查记录
+
+    (tmp_path / "div_manifest.json").write_text(json.dumps({"sh.600001": "2026-01-05"}), encoding="utf-8")
+    calls = []
+    fresh = pd.DataFrame({"ex_date": pd.to_datetime(["2026-07-01"]), "cash": [0.5], "bonus": [0.0], "reserve": [0.0]})
+
+    def fetch(code, years):
+        calls.append((code, tuple(years)))
+        return code, fresh, ""
+    st.update_dividends(["sh.600001"], 2023, workers=1, fetch=fetch)
+    assert len(calls) == 1 and calls[0][1][0] in (2025, 2026)              # 从上次检查那年起（1～2 月跑时从去年起）
+    got = st.load_div("sh.600001")
+    assert got["cash"].tolist() == [0.3, 0.5]                                # 2024 年的保留，2026 年的换成新下载的
+
+
 def _daily(closes, precloses, factors):
     idx = pd.bdate_range("2024-01-02", periods=len(closes))
     return pd.DataFrame({"raw_close": closes, "raw_preclose": precloses, "adj_factor": factors}, index=idx)

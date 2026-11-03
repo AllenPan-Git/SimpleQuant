@@ -188,12 +188,12 @@ PyInstaller cannot cross-compile, so each system's version is built on that syst
 <details>
 <summary><b>Dollar-cost averaging</b></summary>
 
-- **Contributions**: added before the open on the first trading day of each month / week; the initial capital counts as the first period. Supported in backtests, parameter optimization, walk-forward (with "Keep positions"), single-asset paper accounts and exported Python scripts; paper trading reminds you to transfer the money the day before.
+- **Contributions**: added before the open on the first trading day of each month / week; the initial capital counts as the first period. Supported in backtests, parameter optimization, walk-forward (with "Keep positions"), single-asset and selection paper accounts and exported Python scripts; paper trading reminds you to transfer the money the day before.
 - **Dollar-cost averaging**: buys whole lots at the close on the day each contribution arrives, filled at the next open; split equally across assets, with amounts too small for a lot rolled over.
 - **Valuation-based DCA**: scales each contribution by the P/E percentile over the past N years (default 5): 2x below 30%, 0.5x above 70% (0 pauses when expensive), 1x otherwise. Money held back is kept as a reserve and spent first when cheap; the reserve earns the set annual rate (default 2%, like a money market fund). Needs data with P/E: stock daily data, or ETFs / indexes downloaded with index valuation (updated monthly).
 - **Metrics**: total return = final value ÷ total invested − 1; XIRR is the money-weighted annual return, accounting for when each amount was invested; time-weighted return, CAGR, Sharpe and max drawdown use the unit value with contributions removed, so new money does not hide losses.
 - **Selection backtests**: new money waits as cash until the next rebalance open — dropped stocks are sold, new picks bought, and what is left tops up the stocks still held toward their target weight (never trimmed); it stays in cash during skipped months and market-exit periods. The benchmark buys and holds the universe index with the same amounts on the same dates.
-- Not yet supported: selection walk-forward (computed as a lump sum), contributions in selection / portfolio paper accounts, and export to JoinQuant / MyQuant / QMT.
+- Not yet supported: selection walk-forward (computed as a lump sum), contributions in portfolio paper accounts, and export to JoinQuant / MyQuant / QMT.
 </details>
 
 <details>
@@ -271,6 +271,10 @@ tests/                     pytest
 - **Platform differences**: data folder, program folder, opening folders etc. live in `simplequant/system.py`; scheduled runs in `simplequant/paper/schedule.py`; the update scripts are `simplequant/update/apply_update.ps1` (Windows) and `apply_update.sh` (macOS / Linux).
 - **Tests**: `.venv\Scripts\python -m pytest -q tests` (macOS / Linux: `.venv/bin/python -m pytest -q tests`)
 </details>
+
+## Support
+
+SimpleQuant is free and open source, and every feature is available to everyone. Questions and suggestions are welcome in [Discussions](https://github.com/AllenPan-Git/SimpleQuant/discussions); please report bugs in Issues. A Star on GitHub is also appreciated.
 
 ## License
 

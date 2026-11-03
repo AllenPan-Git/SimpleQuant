@@ -1793,6 +1793,50 @@ async def test_new_ui_timing_errors_and_saved(user: User, lib_dir):
     assert "ok" in user.find(marker="prog:setup").elements.pop().classes
 
 
+async def test_new_ui_entries_open_workbench(user: User, lib_dir):
+    """新版界面下各入口都到择时工作台并停在对应的位置：首页「开始新的工作」（设置展开、对应的编写方式）、
+    经典回测页的「编辑或新建策略」（带着选中的策略）、首页「打开回测报告」（恢复策略并重新运行）、
+    参数优化页「以最优参数回测」（带着最优参数）"""
+    from gui import common, history
+    common.set_ui("new")
+    history.clear()
+    _save_prices(n=700)
+    S = state.strategy
+    BT = lambda: state.STATE.get("bt", {})
+
+    await user.open("/")
+    user.find(marker="start:code").click()
+    await user.should_see(marker="timing_strategy")
+    assert S()["mode"] == "code" and _expanded(user, "bt_setup")
+
+    await user.open("/backtest")                             # 经典回测页在新版界面下仍能打开
+    user.find(marker="bt_strategy").elements.pop().set_value("tpl:boll_breakout")
+    await settle()
+    user.find("编辑或新建策略").click()
+    await user.should_see(marker="timing_strategy")
+    assert S()["mode"] == "template" and S()["tpl_key"] == "boll_breakout" and _expanded(user, "bt_setup")
+    user.find(marker="run").click()
+    assert await _wait(lambda: BT().get("result") is not None)
+    assert history.recent()[0]["restore"]["spec"]["template"] == "boll_breakout"
+
+    state.reset()                                            # 相当于重启
+    await user.open("/")
+    user.find(marker="open_report").click()
+    await user.should_see(marker="timing_strategy")
+    assert await _wait(lambda: BT().get("result") is not None)
+    assert S()["mode"] == "template" and S()["tpl_key"] == "boll_breakout"
+
+    _opt_setup()
+    await user.open("/optimize")
+    user.find(marker="opt_run").click()
+    assert await _wait(lambda: state.STATE["opt"].get("result"))
+    best = state.STATE["opt"]["result"]["best_spec"]
+    await user.should_see(marker="use_best")                 # 结果区下一轮才画出来
+    user.find(marker="use_best").click()
+    await user.should_see(marker="timing_strategy")
+    assert S()["tpl_key"] == "sma_cross" and S()["tpl_params"]["sma_cross"] == best["params"]
+
+
 def _body_classes(user: User) -> list:
     """ui.query("body") 加到 body 上的 class"""
     from nicegui.elements.query import QueryElement

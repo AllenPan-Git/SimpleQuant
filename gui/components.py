@@ -14,7 +14,7 @@ from simplequant.engine import BrokerConfig, COST_PRESETS
 from simplequant.rules import INDICATORS, required_columns, macro_columns, requires_of
 from simplequant.rules.schema import BARS_PER_YEAR
 from simplequant.strategies import TEMPLATES
-from gui import state
+from gui import state, routes
 from gui.common import t, p, lang
 from gui.widgets import section, notice
 from ui import shared
@@ -252,7 +252,8 @@ def strategy_selector(key: str, on_change, on_broker=None) -> dict:
         ui.select(options, label=t("bt.pick_strategy"), value=choice, on_change=on_pick) \
             .props(DENSE).classes("w-full").mark(f"{key}_strategy")
         desc = ui.label().classes("sq-code w-full")
-        ui.button(t("bt.edit_strategy"), icon="edit", on_click=lambda: ui.navigate.to("/strategy")) \
+        ui.button(t("bt.edit_strategy"), icon="edit", on_click=lambda: ui.navigate.to(
+            routes.timing("strategy", spec={"name": out["name"], **out["spec"]}))) \
             .props("flat no-caps dense color=primary").classes("self-start")
     resolve(choice)
     return out

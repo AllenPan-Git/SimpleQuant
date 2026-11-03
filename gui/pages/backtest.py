@@ -17,7 +17,7 @@ from simplequant.engine.credibility import check_backtest, check_phase
 from simplequant.engine.phase import run_timing, timing_cycle, phases
 from simplequant.engine.native_plot import render as render_native, MAX_BARS as NATIVE_MAX_BARS
 from simplequant.export import PLATFORMS
-from gui import state, history, support
+from gui import state, history, support, routes
 from gui.plan_io import import_button, export_bytes, plan_filename, plan_check_notice
 from simplequant import plan as plan_mod
 from gui.common import t, p, lang
@@ -53,12 +53,13 @@ def page():
             ui.timer(0.05, bar.run, once=True)
 
 
-def report(BT: dict, exp_menu):
-    """回测报告：分别回测是分布与明细，否则是完整报告；还没有结果时什么都不画"""
+def report(BT: dict, exp_menu, to_verify=None):
+    """回测报告：分别回测是分布与明细，否则是完整报告；还没有结果时什么都不画。
+    to_verify()：右侧「下一步」的参数优化（默认去优化页；择时工作台切到「验证」标签）"""
     if BT.get("batch") is not None:
         _batch_results(BT)
     elif BT.get("result") is not None:
-        _results(BT, exp_menu)
+        _results(BT, exp_menu, to_verify or (lambda: _to_optimize(BT)))
 
 
 def setup_bar(by_id: dict, BT: dict, strategy_part, sticky: bool = False, open_: bool | None = None) -> SimpleNamespace:
@@ -447,8 +448,9 @@ def _open_single(BT: dict, name: str | None):
     S = state.STATE
     S["bt_ids"], S["bt_mode"], S["bt_autorun"] = [BT["ids"][name]], "portfolio", True
     S.pop("bt_range", None)
+    spec = {"name": BT.get("name") or "", **BT["spec"]}
     BT.clear()
-    ui.navigate.to("/backtest")
+    ui.navigate.to(routes.timing("backtest", spec=spec))
 
 
 def _remember(BT: dict, by_id: dict, pick, strat: dict):
@@ -525,7 +527,7 @@ def _checks(BT: dict):
     draw()
 
 
-def _results(BT: dict, exp_menu):
+def _results(BT: dict, exp_menu, to_verify):
     lg = lang()
     res = BT["result"]
     label, names, freq = BT["title"]
@@ -589,7 +591,7 @@ def _results(BT: dict, exp_menu):
         # ---------------- 右侧：下一步 + 最近平仓 ----------------
         with ui.column().classes("gap-0 min-w-0"):
             _rule_title(t("bt.next"))
-            _next("04", t("bt.next_opt"), t("bt.next_opt_body"), _to_optimize, rec=True).mark("next_opt")
+            _next("04", t("bt.next_opt"), t("bt.next_opt_body"), to_verify, rec=True).mark("next_opt")
             _next("05", t("bt.next_paper"), t("bt.next_paper_body"), lambda: ui.navigate.to("/paper"))
             _next("↗", t("bt.next_export"), t("bt.next_export_body"), exp_menu.open)
             _explain(BT, explain_out)
@@ -642,13 +644,14 @@ def _next(no: str, title: str, body: str, on_click, rec: bool = False):
     return el
 
 
-def _to_optimize():
-    """带着当前的数据、区间和策略去参数优化页"""
+def _to_optimize(BT: dict):
+    """带着当前的数据、区间和策略去参数优化页（新版界面：择时工作台的「验证」标签，策略放进编辑器）"""
     S = state.STATE
     for k in ("ids", "range", "strategy"):
         if f"bt_{k}" in S:
             S[f"opt_{k}"] = S[f"bt_{k}"]
-    ui.navigate.to("/optimize")
+    spec = {"name": BT.get("name") or "", **BT["spec"]} if BT.get("spec") else None
+    ui.navigate.to(routes.timing("verify", spec=spec))
 
 
 def _explain(BT: dict, out):

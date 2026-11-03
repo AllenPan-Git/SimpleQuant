@@ -8,7 +8,7 @@ from simplequant.rules import INDICATORS, GROUPS, OPS, CROSS_OPS, LOGICS, valida
 from simplequant.rules.schema import MAX_DAYS, MAX_COOLDOWN, MAX_ADDS, ADD_WHEN
 from simplequant.rules.hints import condition_notes, wording_hints, rule_signature
 from simplequant.strategies import TEMPLATES, code_strategy
-from gui import state
+from gui import state, routes
 from gui.common import t, p, lang
 from gui.layout import frame, page_title
 from gui.widgets import section, code_editor, notice
@@ -70,7 +70,7 @@ def page():
                 ids = [m.id for m in library.list_datasets() if m.symbol in S["ai_symbols"]]
                 if ids:
                     state.STATE["bt_ids"] = ids
-            ui.navigate.to("/backtest")
+            ui.navigate.to(routes.timing("backtest"))       # 新版：工作台（编辑器内容与这里共用）
 
         saved_list = saved_strategies(S, ctx)
         ctx.changed()

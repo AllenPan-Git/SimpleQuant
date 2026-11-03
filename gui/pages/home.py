@@ -9,7 +9,7 @@ from simplequant import migrate
 from simplequant.data import library
 from simplequant.paper import list_accounts, load_calendar, health, schedule
 from simplequant.strategies import list_strategies
-from gui import history, state
+from gui import history, state, routes
 from gui.common import t, lang, new_ui
 from gui.components import accounts_table, strategy_progress
 from gui.layout import frame
@@ -115,8 +115,10 @@ def _section(title: str, note: str):
 
 
 def _start(key: str, route: str):
+    """开始新的工作：模板 / AI / 代码 → 编辑策略（新版：择时工作台，设置区展开到对应的编写方式）"""
     if key in ("template", "ai", "code"):
         state.strategy()["mode"] = key
+        route = routes.timing("strategy")
     ui.navigate.to(route)
 
 
@@ -177,13 +179,12 @@ def _continue_buttons(e: dict, sel: bool):
         if sel:
             ui.button(t("home.to_paper"), on_click=lambda: ui.navigate.to("/paper")).props("outline no-caps")
         else:
-            ui.button(t("home.try_optimize"), on_click=lambda: (reopen(e, go=False), ui.navigate.to("/optimize"))) \
+            ui.button(t("home.try_optimize"), on_click=lambda: reopen(e, step="verify")) \
                 .props("outline no-caps")
 
 
 def _continue_new(e: dict, accounts: list):
-    """新版：继续上次的工作 = 策略名 + 四步进度（设置 / 回测 / 验证 / 模拟盘），点一步去对应的地方。
-    工作台（4.2）做好前，各步先指向经典的页面"""
+    """新版：继续上次的工作 = 策略名 + 四步进度（设置 / 回测 / 验证 / 模拟盘），点一步去工作台对应的地方"""
     sel = e.get("kind") == "sel"
     spec = _entry_spec(e)
     try:
@@ -241,25 +242,24 @@ def _entry_verify(e: dict, spec: dict | None) -> dict | None:
 
 
 def _open_step(e: dict, key: str):
-    """点进度的一步：设置、回测 → 恢复设置回到回测页；验证 → 优化页（选股：滚动优化标签）；模拟盘 → 模拟盘页"""
+    """点进度的一步：恢复设置去择时工作台——设置 → 展开设置区；回测 → 重新运行看报告；验证 → 验证标签；
+    选股：回测 / 滚动优化标签；模拟盘 → 模拟盘页"""
     if key == "paper":
         ui.navigate.to("/paper")
     elif e.get("kind") == "sel":
         state.STATE["sp_tab"] = "wf" if key == "verify" else "bt"
         ui.navigate.to("/selection")
-    elif key == "verify":
-        reopen(e, go=False)
-        ui.navigate.to("/optimize")
     else:
-        reopen(e)
+        reopen(e, step={"setup": "strategy", "verify": "verify"}.get(key, "backtest"))
 
 
-def reopen(e: dict, go: bool = True):
-    """恢复这份报告的设置；回到回测页时自动重新运行（通常不到 1 秒）"""
+def reopen(e: dict, go: bool = True, step: str = "backtest"):
+    """恢复这份报告的设置，去择时策略的 step 一步（routes.timing：新版是工作台，经典是回测 / 优化页）；
+    回测会自动重新运行（通常不到 1 秒），只有新版「编辑策略」一步不运行（运行完设置区会收起）"""
     r = e.get("restore")
     if e.get("kind") == "sel" or not r:
         if go:
-            ui.navigate.to("/selection" if e.get("kind") == "sel" else "/backtest")
+            ui.navigate.to("/selection" if e.get("kind") == "sel" else routes.timing(step))
         return
     S = state.STATE
     same = S.get("bt", {}).get("time") == e["time"]
@@ -269,10 +269,11 @@ def reopen(e: dict, go: bool = True):
         S[f"{key}_ids"] = list(r["ids"])
         S[f"{key}_range"] = tuple(dt.date.fromisoformat(x) for x in r["range"])
     S["bt_broker"] = dict(r["broker"])
-    if not same:
+    if not same and step != "strategy":
         S["bt_autorun"] = e["time"]
+    target = routes.timing(step, spec=r["spec"])          # 新版：策略放进工作台的编辑器
     if go:
-        ui.navigate.to("/backtest")
+        ui.navigate.to(target)
 
 
 # ---------------- 模拟账户 ----------------

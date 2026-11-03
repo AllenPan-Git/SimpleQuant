@@ -14,7 +14,7 @@ from simplequant.engine.optimize import (optimize, value_range, build_grid, spli
                                          apply_combo, yearly_ranks, TARGET_METRICS, MAX_COMBOS, default_workers)
 from simplequant.engine.walkforward import (walk_forward, make_windows, count_backtests, STITCH_MODES,
                                             MAX_BACKTESTS as WF_MAX)
-from gui import state
+from gui import state, routes
 from gui.common import t, lang
 from gui.components import (require_data, data_selector, strategy_selector, broker_settings, load_prices,
                             prepare_prices, metric_tile, walkforward_results, dividend_notices,
@@ -441,7 +441,7 @@ def _grid_results(res: dict):
             state.STATE["current_spec"] = {"name": (name.value or "").strip() or t("opt.tuned"), **res["best_spec"]}
             state.STATE["tuned"] = {"spec": res["best_spec"], "n": res.get("tried", 0)}     # 回测页据此提示
             state.STATE["bt_strategy"] = "__current__"
-            ui.navigate.to("/backtest")
+            ui.navigate.to(routes.timing("backtest", spec=state.STATE["current_spec"]))
         ui.button(t("strat.save"), icon="save", on_click=save).props("outline no-caps")
         ui.button(t("opt.use_best"), icon="play_arrow", on_click=use_best).props("unelevated no-caps") \
             .mark("use_best")

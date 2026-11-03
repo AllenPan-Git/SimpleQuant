@@ -186,7 +186,8 @@ def apply(plan: dict, metas: list):
                     "provider": any(P.provider_differs(a, m) for a, m in zip(plan["assets"], metas))}
     S["bt_autorun"] = True
     S.pop("bt", None)
-    ui.navigate.to("/backtest")
+    from gui import routes
+    ui.navigate.to(routes.timing("backtest", spec={"name": name, **spec}))
 
 
 # ---------------- 多因子选股方案 ----------------

@@ -24,6 +24,10 @@ PAPER, DARK_PAGE = "#F5F1EA", "#191714"
 DARK_CARD = "#211E1A"
 SANS_PLOT = "Segoe UI, Inter, Microsoft YaHei UI, PingFang SC, sans-serif"
 
+# 新版界面的侧栏：宽度、图标列宽度；窗口窄于 SIDE_MINI_BELOW 时折成图标列
+SIDE_W, SIDE_MINI_W, SIDE_MINI_BELOW = 200, 64, 1100
+_MINI = "body.sq-new:not(.sq-side-open)"      # 窄窗口、没有手动展开时 = 图标列
+
 CSS = f"""
 @font-face {{ font-family: 'Inter'; font-weight: 100 900; font-display: swap;
   src: url('/static/fonts/inter-latin-wght-normal.woff2') format('woff2'); }}
@@ -182,15 +186,50 @@ code, pre {{ font-family: var(--sq-mono); }}
 .q-panel-parent:has(.sq-setup-actions) {{ overflow: clip; }}
 .q-panel-parent:has(.sq-setup-actions) > .q-panel {{ overflow: visible; }}
 
-/* 新版界面（body.sq-new）：左侧栏。4.0 只是骨架，研报风格的细节、窄窗口折叠在 4.1.1 做 */
+/* 新版界面（body.sq-new）：左侧栏。守住研报风格：纸色底、细线分组、宋体标志，当前栏目浅红底 + 左侧红条（同 .sq-next-rec）。
+   没有顶栏，吸顶元素的 top 取 0。
+   窄窗口折成图标列不用 Quasar 抽屉的 mini 属性：它只能由 Python 设定，Python 不知道窗口多宽，要等浏览器回报，
+   每次换页都会先宽后窄闪一下。改用 @media 盖掉抽屉和内容区的内联宽度（!important 优先于内联样式）；
+   用户在窄窗口点「展开侧栏」后 body 加 sq-side-open，恢复原宽度，内容区跟着让开 */
 body.sq-new {{ --sq-header-h: 0px; }}
-.sq-new .sq-side {{ background: var(--sq-sunk); border-color: var(--sq-border) !important; padding: 22px 10px 14px; gap: 2px; }}
-.sq-new .sq-side .sq-logo {{ padding: 0 12px 18px; cursor: pointer; }}
-.sq-new .sq-side-item {{ gap: 12px; min-height: 42px; padding: 0 12px; cursor: pointer; color: var(--sq-text2);
-  border-left: 2px solid transparent; }}
+.sq-new .q-drawer {{ background: var(--sq-sunk); border-color: var(--sq-border) !important; }}
+.sq-new .sq-side {{ background: var(--sq-sunk); padding: 24px 8px 12px; overflow-x: hidden; align-items: stretch; }}
+.sq-new .sq-side .sq-logo {{ padding: 0 14px 18px; font-size: 22px; }}
+.sq-new .sq-logo-mini {{ display: none; }}
+.sq-new .sq-side-nav {{ flex: 1 0 auto; display: flex; flex-direction: column; gap: 2px; }}
+.sq-new .sq-side-item {{ display: flex; align-items: center; gap: 12px; min-height: 42px; padding: 0 12px; white-space: nowrap;
+  color: var(--sq-text2); text-decoration: none; border-left: 2px solid transparent; }}
 .sq-new .sq-side-item:hover {{ color: var(--sq-text); background: rgba(127, 120, 110, .08); }}
+.sq-new .sq-side-item:focus-visible {{ outline: 1px solid var(--sq-text); outline-offset: -1px; }}
 .sq-new .sq-side-item.on {{ color: var(--sq-red); background: var(--sq-red-soft); border-left-color: var(--sq-red);
   font-weight: 600; }}
+.sq-new .sq-side-label {{ min-width: 0; overflow: hidden; text-overflow: ellipsis; }}
+.sq-new .sq-side-badge {{ margin-left: auto; min-width: 18px; padding: 0 5px; border-radius: 9px; background: var(--sq-red);
+  color: #fff; font-size: 11px; line-height: 18px; text-align: center; font-weight: 400; }}
+.sq-new .sq-side-sep {{ flex-shrink: 0; height: 1px; margin: 8px 12px; background: var(--sq-border); }}
+.sq-new .sq-side-space {{ flex-grow: 1; min-height: 20px; }}
+.sq-new .sq-side-foot {{ display: flex; align-items: center; gap: 4px; padding: 10px 6px 0 14px; }}
+.sq-new .sq-side-foot > :first-child {{ margin-right: auto; }}
+.sq-new .sq-side-toggle {{ display: none; }}
+.q-tooltip.sq-tip {{ background: var(--sq-text); color: var(--sq-page); border-radius: 2px; font-size: 12px; padding: 4px 10px; }}
+@media (min-width: {SIDE_MINI_BELOW}px) {{ .sq-side-tip {{ display: none; }} }}
+body.sq-side-open .sq-side-tip {{ display: none; }}
+@media (max-width: {SIDE_MINI_BELOW - .02}px) {{
+  .sq-new .sq-side-toggle {{ display: inline-flex; }}
+  {_MINI} .q-drawer {{ width: {SIDE_MINI_W}px !important; }}
+  {_MINI} .q-page-container {{ padding-left: {SIDE_MINI_W}px !important; }}
+  {_MINI} .sq-side {{ padding: 18px 6px 10px; }}
+  {_MINI} .sq-side .sq-logo {{ padding: 0 0 14px; text-align: center; }}
+  {_MINI} .sq-logo-full {{ display: none; }}
+  {_MINI} .sq-logo-mini {{ display: block; }}
+  {_MINI} .sq-side-item {{ position: relative; justify-content: center; padding: 0; }}
+  {_MINI} .sq-side-label {{ display: none; }}
+  {_MINI} .sq-side-badge {{ position: absolute; top: 9px; right: 11px; width: 8px; height: 8px; min-width: 0; padding: 0;
+    font-size: 0; }}
+  {_MINI} .sq-side-sep {{ margin: 6px 10px; }}
+  {_MINI} .sq-side-foot {{ flex-direction: column; padding: 8px 0 0; }}
+  {_MINI} .sq-side-foot > :first-child {{ margin-right: 0; }}
+}}
 
 /* 按钮：直角；主按钮墨色实底 */
 .q-btn {{ border-radius: 2px; letter-spacing: 0; }}

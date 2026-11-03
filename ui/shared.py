@@ -126,6 +126,29 @@ def lots(size: float, lot: int) -> int:
 _ATTENTION = {"failed", "unreadable", "stale"}
 
 
+def _pending(acc, st: dict) -> int:
+    """待执行交易笔数：暂停的账户不会执行上次留下的信号；组合账户不足一手的调整不下单，模拟盘页也不列出"""
+    if acc.status != "active":
+        return 0
+    sig = st.get("signals") or []
+    if acc.kind == "portfolio":
+        sig = [s for s in sig if lots(s["size"], s.get("lot", 100))]
+    return len(sig)
+
+
+def pending_trades(accounts: list) -> int:
+    """全部模拟账户的待执行交易合计，等于一览表各行相加，但只读 state.json（新版侧栏每页都要算）；读坏的账户不计"""
+    n = 0
+    for acc in accounts:
+        try:
+            st = acc.state()
+            if st and "value" in st:
+                n += _pending(acc, st)
+        except Exception:  # noqa: BLE001 - 与一览表一致：读不出的账户待执行交易为 0
+            continue
+    return n
+
+
 def account_row(acc, calendar: pd.DatetimeIndex | None, now=None) -> dict:
     """一个模拟账户在一览表里的一行；读不出时 status 为 unreadable，不抛异常"""
     from simplequant.paper import health
@@ -139,13 +162,10 @@ def account_row(acc, calendar: pd.DatetimeIndex | None, now=None) -> dict:
             base = float(nav["invested"].iloc[-1]) if "invested" in nav and len(nav) else acc.broker["cash"]
             row["value"] = float(st["value"])
             row["ret"] = row["value"] / base - 1 if base else None
-            sig = st.get("signals") or []
-            if acc.kind == "portfolio":   # 组合账户：不足一手的调整不下单，模拟盘页也不列出
-                sig = [s for s in sig if lots(s["size"], s.get("lot", 100))]
-            row["trades"] = len(sig)
+            row["trades"] = _pending(acc, st)
             row["execute_on"] = st.get("execute_on", "")
         if acc.status != "active":
-            row["status"], row["trades"] = "paused", 0     # 暂停的账户不会执行上次留下的信号
+            row["status"] = "paused"
         elif err := acc.error():
             row["status"], row["error"] = "failed", err.get("message", "")
         elif not st or "value" not in st:

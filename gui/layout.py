@@ -1,4 +1,4 @@
-"""每页共用的外框：报头（标志、择时 / 选股切换、步骤条、语言、主题）"""
+"""每页共用的外框：经典界面是报头（标志、择时 / 选股切换、步骤条、语言、主题），新版界面是左侧栏"""
 
 from contextlib import contextmanager
 from html import escape
@@ -36,17 +36,18 @@ STEP_KEY = {"/data": "step.data", "/strategy": "step.strategy", "/backtest": "st
 
 _THEMES = [(None, "brightness_auto"), (False, "light_mode"), (True, "dark_mode")]
 
-# 新版界面的侧栏（界面重构计划 4.1）：(路由, 文字键, 图标, 也算本栏目的其他路由)
-# 还没做的新页面先不放（因子实验室 2.7.0 加）；择时工作台做好前「择时策略」先指向经典的回测页
+# 新版界面的侧栏（界面重构计划 4.1）：(路由, 文字键, 图标, 分组, 也算本栏目的其他路由)
+# 分组变化处画一条细线；"bottom" 组贴在侧栏底部。还没做的新页面先不放（因子实验室 2.7.0 加在「资产配置」后面）；
+# 择时工作台做好前「择时策略」先指向经典的回测页
 NAV = [
-    ("/", "side.today", "today", ()),
-    ("/backtest", "side.timing", "show_chart", ("/strategy", "/optimize")),
-    ("/selection", "side.selection", "filter_list", ()),
-    ("/allocation", "side.allocation", "pie_chart", ()),
-    ("/paper", "side.paper", "account_balance_wallet", ()),
-    ("/data", "side.data", "storage", ()),
-    ("/tools", "side.tools", "build", ()),
-    ("/settings", "side.settings", "settings", ()),
+    ("/", "side.today", "today", "today", ()),
+    ("/backtest", "side.timing", "show_chart", "work", ("/strategy", "/optimize")),
+    ("/selection", "side.selection", "filter_list", "work", ()),
+    ("/allocation", "side.allocation", "pie_chart", "work", ()),
+    ("/paper", "side.paper", "account_balance_wallet", "paper", ()),
+    ("/data", "side.data", "storage", "data", ()),
+    ("/tools", "side.tools", "build", "data", ()),
+    ("/settings", "side.settings", "settings", "bottom", ()),
 ]
 
 
@@ -136,7 +137,8 @@ def frame(route: str):
     """用法：with frame("/data"): ...页面内容..."""
     theme.apply(dark())
     if new_ui():
-        ui.query("body").classes("sq-new")       # 新版界面的样式都写在 body.sq-new 下，经典界面不受影响
+        # 新版界面的样式都写在 body.sq-new 下，经典界面不受影响；sq-side-open：窄窗口下侧栏保持展开
+        ui.query("body").classes("sq-new" + (" sq-side-open" if side_open() else ""))
         _sidebar(route)
     else:
         _header(route)
@@ -171,22 +173,75 @@ def _theme_button():
         .classes("sq-muted").tooltip(t("gui.theme"))
 
 
+def side_open() -> bool:
+    """窄窗口下侧栏是否保持展开（用户点过「展开侧栏」）；宽窗口一直显示文字，不看这个设置"""
+    return bool(app.storage.general.get("side_open"))
+
+
+def _paper_pending() -> int:
+    """侧栏「模拟盘」旁的数字：全部模拟账户的待执行交易合计；读不出时为 0（不显示）"""
+    try:
+        from simplequant.paper import list_accounts
+        from ui.shared import pending_trades
+        return pending_trades(list_accounts())
+    except Exception:  # noqa: BLE001 - 侧栏只是提示，读坏了不影响页面
+        return 0
+
+
 def _sidebar(route: str):
-    """新版界面：左侧栏（4.0 先搭骨架，样式、窄窗口折叠、待执行交易数字在 4.1.1 做）"""
-    with ui.left_drawer(value=True, fixed=True, bordered=True).props("width=200 behavior=desktop") \
+    """新版界面：左侧栏。窗口窄于 theme.SIDE_MINI_BELOW 时折成图标列、悬停显示名称（纯 CSS，见 theme.py 的说明）；
+    窄窗口下点底部的箭头可以展开回原宽度，记在 app.storage.general["side_open"]"""
+    pending = _paper_pending()
+    with ui.left_drawer(value=True, fixed=True, bordered=True).props(f"width={theme.SIDE_W} behavior=desktop") \
             .classes("sq-side column no-wrap").mark("sq_sidebar"):
         with ui.element("div").classes("sq-logo").on("click", lambda: ui.navigate.to("/")).mark("logo"):
-            ui.html("Simple<span>Quant</span>")
-        for r, key, icon, also in NAV:
-            on = route == r or route in also
-            with ui.row().classes("sq-side-item items-center no-wrap" + (" on" if on else "")) \
-                    .on("click", lambda r=r: ui.navigate.to(r)).mark(f"nav:{r}"):
-                ui.icon(icon, size="18px")
-                ui.label(t(key))
-        ui.space()
-        with ui.row().classes("items-center justify-between no-wrap px-3"):
+            ui.html("<div class='sq-logo-full'>Simple<span>Quant</span></div><div class='sq-logo-mini'>S<span>Q</span></div>")
+        nav = ui.element("nav").classes("sq-side-nav")
+        nav.props["aria-label"] = t("side.nav")
+        with nav:
+            for i, (r, key, icon, group, also) in enumerate(NAV):
+                if i and group != NAV[i - 1][3]:
+                    ui.element("div").classes("sq-side-space" if group == "bottom" else "sq-side-sep")
+                _side_item(r, t(key), icon, on=route == r or route in also, n=pending if r == "/paper" else 0)
+        with ui.element("div").classes("sq-side-foot"):
             _lang_switch()
             _theme_button()
+            _side_toggle()
+
+
+def _side_item(route: str, name: str, icon: str, on: bool, n: int = 0):
+    """侧栏的一个栏目：真正的链接（键盘 Tab 能选中）；n > 0 时名称后面显示数字，图标列下变成小红点"""
+    label = f"{name} · {t('side.pending', n=n)}" if n else name
+    link = ui.link(target=route).classes(remove="nicegui-link") \
+        .classes("sq-side-item" + (" on" if on else "")).mark(f"nav:{route}")
+    link.props["aria-label"] = label
+    if on:
+        link.props["aria-current"] = "page"
+    with link:
+        ui.icon(icon, size="18px")
+        ui.label(name).classes("sq-side-label")
+        if n:
+            ui.label(str(n)).classes("sq-side-badge").mark("nav_badge")
+        # 只在图标列下显示（宽窗口、窄窗口展开时由 CSS 隐藏）
+        ui.tooltip(label).classes("sq-tip sq-side-tip").props('anchor="center right" self="center left" :offset="[8, 0]"')
+
+
+def _side_toggle():
+    """窄窗口下展开 / 收起侧栏（宽窗口不显示）。只改 body 的 class，不重画页面"""
+    def flip():
+        is_open = not side_open()
+        app.storage.general["side_open"] = is_open
+        if is_open:
+            ui.query("body").classes(add="sq-side-open")
+        else:
+            ui.query("body").classes(remove="sq-side-open")
+        btn.set_icon("chevron_left" if is_open else "chevron_right")
+        tip.set_text(t("side.collapse" if is_open else "side.expand"))
+    is_open = side_open()
+    btn = ui.button(icon="chevron_left" if is_open else "chevron_right", on_click=flip) \
+        .props("flat round dense size=sm").classes("sq-muted sq-side-toggle").mark("nav_collapse")
+    with btn:
+        tip = ui.tooltip(t("side.collapse" if is_open else "side.expand")).classes("sq-tip")
 
 
 def _header(route: str):

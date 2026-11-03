@@ -1966,6 +1966,10 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
     "side.data": L("数据", "Data"),
     "side.tools": L("工具", "Tools"),
     "side.settings": L("设置", "Settings"),
+    "side.nav": L("主导航", "Main navigation"),
+    "side.pending": L("{n} 笔待执行交易", "Pending trades: {n}"),
+    "side.expand": L("展开侧栏", "Expand sidebar"),
+    "side.collapse": L("收起侧栏", "Collapse sidebar"),
     # 设置页：界面版本
     "set.ui": L("界面", "Interface"),
     "set.ui_classic": L("经典", "Classic"),

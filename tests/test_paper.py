@@ -273,7 +273,7 @@ def test_account_rows_status_and_order():
     """模拟账户一览：状态、待执行交易、定投按累计投入算收益、组合账户不计不足一手的调整；
     排序为 需要处理 → 有待执行交易 → 其他 → 暂停；一个账户读坏了不影响其它行"""
     import datetime as dt
-    from ui.shared import account_rows
+    from ui.shared import account_rows, pending_trades
     cal = pd.to_datetime(["2026-09-28", "2026-09-29", "2026-09-30", "2026-10-08", "2026-10-09"])
     now = dt.datetime(2026, 10, 3, 10, 0)
     sig = {"symbol": "510300", "side": "buy", "size": 1000, "ref_price": 4.0}
@@ -317,6 +317,9 @@ def test_account_rows_status_and_order():
     assert ranks == sorted(ranks) and order[-1] == "暂停"
     # 组合账户：不足一手（30 股）的调整不计入
     assert account_rows([pf], cal, now)[0]["trades"] == 1
+    # 侧栏的待执行交易合计（只读 state）与一览表各行相加一致
+    assert pending_trades(list_accounts()) == sum(r["trades"] for r in rows) > 0
+    assert pending_trades([pf]) == 1
     # 没有交易日历时不判断是否过期
     assert account_rows([stale], None)[0]["status"] == "ok"
 

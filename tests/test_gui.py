@@ -41,9 +41,10 @@ async def settle():
 
 @pytest.fixture(autouse=True)
 def isolated(tmp_path, monkeypatch):
-    """每个测试：界面状态清空；保存的策略写到临时目录；界面版本回到「没选过」"""
+    """每个测试：界面状态清空；保存的策略写到临时目录；界面版本回到「没选过」、侧栏回到默认"""
     from nicegui import app
     app.storage.general.pop("ui", None)
+    app.storage.general.pop("side_open", None)
     state.reset()
     d = tmp_path / "strategies"
     for fn in (strategies.save_strategy, strategies.list_strategies, strategies.delete_strategy,
@@ -56,6 +57,7 @@ def isolated(tmp_path, monkeypatch):
     custom_factors.load_all()
     yield
     app.storage.general.pop("ui", None)
+    app.storage.general.pop("side_open", None)
     state.reset()
     monkeypatch.undo()
     custom_factors.load_all()
@@ -1642,6 +1644,57 @@ async def test_settings_switch_ui(user: User):
     await user.open("/")
     await user.should_see(marker="flow:timing")
     await user.should_not_see(marker="sq_sidebar")
+
+
+def _body_classes(user: User) -> list:
+    """ui.query("body") 加到 body 上的 class"""
+    from nicegui.elements.query import QueryElement
+    return next(e.props["classes"] for e in user.client.elements.values()
+                if isinstance(e, QueryElement) and e.props["selector"] == "body")
+
+
+async def test_new_ui_sidebar(user: User, paper_dir):
+    """新版侧栏：当前栏目高亮；模拟盘旁显示全部账户的待执行交易合计（暂停的不算，没有时不显示）；
+    窄窗口的展开 / 收起记住状态，换页后仍然有效"""
+    from nicegui import app
+    from gui import common
+    from simplequant.engine import BrokerConfig
+    from simplequant.paper import create_account
+    common.set_ui("new")
+    spec = {"kind": "template", "template": "buy_hold", "params": {}}
+    asset = [{"source": "akshare", "symbol": "510300", "asset": "etf", "name": "510300"}]
+
+    def make(name, signals, status="active"):
+        acc = create_account(name, spec, BrokerConfig(), "2026-01-05", assets=asset)
+        acc.status = status
+        acc.save()
+        acc.save_state({"as_of": "2026-01-20", "execute_on": "2026-01-21", "value": 100_000.0, "positions": [],
+                        "signals": [{"symbol": "510300", "side": "buy", "size": 100, "ref_price": 4.0}] * signals})
+
+    await user.open("/")
+    await user.should_see(marker="sq_sidebar")
+    await user.should_not_see(marker="nav_badge")              # 没有模拟账户
+    assert "on" in user.find(marker="nav:/").elements.pop().classes
+
+    make("两笔", 2)
+    make("一笔", 1)
+    make("暂停", 4, status="paused")
+    await user.open("/data")
+    assert user.find(marker="nav_badge").elements.pop().text == "3"
+    paper = user.find(marker="nav:/paper").elements.pop()
+    assert paper.props["aria-label"] == "模拟盘 · 3 笔待执行交易" and "aria-current" not in paper.props
+    assert user.find(marker="nav:/data").elements.pop().props["aria-current"] == "page"
+
+    assert "sq-side-open" not in _body_classes(user)
+    user.find(marker="nav_collapse").click()                  # 展开
+    assert app.storage.general["side_open"] is True
+    assert "sq-side-open" in _body_classes(user)
+    user.find(marker="nav:/tools").click()                    # 换页后仍是展开的
+    await user.should_see(marker="tools_tabs")
+    assert "sq-side-open" in _body_classes(user)
+    user.find(marker="nav_collapse").click()                  # 收起
+    assert app.storage.general["side_open"] is False
+    assert "sq-side-open" not in _body_classes(user)
 
 
 async def test_settings_preset_and_save(user: User, monkeypatch, tmp_path):

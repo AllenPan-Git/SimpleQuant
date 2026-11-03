@@ -79,6 +79,8 @@ A risk assessment modelled on broker suitability questionnaires (C1 conservative
 
 The interface is available in **Chinese and English**, with light and dark themes.
 
+**New interface (preview, from 2.6.0)**: choose "New (preview)" under Settings → Interface and the page reloads in the new layout. It uses a sidebar, and "Timing strategies" opens the Timing workbench, which puts writing the strategy, data and capital, the backtest report and validation (credibility assessment, parameter and walk-forward optimization and more) on one page instead of several; Stock selection, Asset allocation and the other sections still open their existing pages for now. The new interface is still being built: switch back to "Classic" in the same place at any time; strategies, data and paper accounts are shared by both. Feedback is welcome in [Discussions](https://github.com/AllenPan-Git/SimpleQuant/discussions).
+
 ## Installation
 
 SimpleQuant runs on Windows 10 / 11 (64-bit), macOS 11 or later (Apple silicon) and Linux (x86_64). Download the file for your system from this repository's **Releases** page:

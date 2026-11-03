@@ -1646,6 +1646,23 @@ async def test_settings_switch_ui(user: User):
     await user.should_not_see(marker="sq_sidebar")
 
 
+async def test_new_ui_page_eyebrow(user: User):
+    """页面眉标：经典界面是「流程 · 第几步」；新版是所在栏目，与标题相同时用英文大写"""
+    from gui import common
+
+    async def eyebrow(route):
+        await user.open(route)
+        await user.should_see(marker="page_eyebrow")
+        return user.find(marker="page_eyebrow").elements.pop().text
+
+    assert await eyebrow("/strategy") == "择时策略 · 第 2 步"
+    common.set_ui("new")
+    assert await eyebrow("/strategy") == "择时策略"
+    assert await eyebrow("/backtest") == "择时策略"
+    assert await eyebrow("/paper") == "PAPER TRADING"
+    assert await eyebrow("/settings") == "SETTINGS"
+
+
 def _body_classes(user: User) -> list:
     """ui.query("body") 加到 body 上的 class"""
     from nicegui.elements.query import QueryElement

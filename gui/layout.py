@@ -173,6 +173,11 @@ def _theme_button():
         .classes("sq-muted").tooltip(t("gui.theme"))
 
 
+def nav_section(route: str) -> str | None:
+    """新版侧栏里 route 属于哪个栏目（文字键）；不在侧栏里时为 None"""
+    return next((key for r, key, _, _, also in NAV if route == r or route in also), None)
+
+
 def side_open() -> bool:
     """窄窗口下侧栏是否保持展开（用户点过「展开侧栏」）；宽窗口一直显示文字，不看这个设置"""
     return bool(app.storage.general.get("side_open"))
@@ -192,6 +197,7 @@ def _sidebar(route: str):
     """新版界面：左侧栏。窗口窄于 theme.SIDE_MINI_BELOW 时折成图标列、悬停显示名称（纯 CSS，见 theme.py 的说明）；
     窄窗口下点底部的箭头可以展开回原宽度，记在 app.storage.general["side_open"]"""
     pending = _paper_pending()
+    cur = nav_section(route)
     with ui.left_drawer(value=True, fixed=True, bordered=True).props(f"width={theme.SIDE_W} behavior=desktop") \
             .classes("sq-side column no-wrap").mark("sq_sidebar"):
         with ui.element("div").classes("sq-logo").on("click", lambda: ui.navigate.to("/")).mark("logo"):
@@ -199,10 +205,10 @@ def _sidebar(route: str):
         nav = ui.element("nav").classes("sq-side-nav")
         nav.props["aria-label"] = t("side.nav")
         with nav:
-            for i, (r, key, icon, group, also) in enumerate(NAV):
+            for i, (r, key, icon, group, _) in enumerate(NAV):
                 if i and group != NAV[i - 1][3]:
                     ui.element("div").classes("sq-side-space" if group == "bottom" else "sq-side-sep")
-                _side_item(r, t(key), icon, on=route == r or route in also, n=pending if r == "/paper" else 0)
+                _side_item(r, t(key), icon, on=key == cur, n=pending if r == "/paper" else 0)
         with ui.element("div").classes("sq-side-foot"):
             _lang_switch()
             _theme_button()
@@ -272,13 +278,19 @@ def page_title(route: str, subtitle: str | None = None, subtitle_full: str | Non
 
     给了 subtitle_full 时，说明只显示 subtitle 一行，点「详细说明」看全文（widgets.hint）"""
     key = next(k for pth, k, _ in PAGES if pth == route)
-    flow = app.storage.general.get("flow", "timing")
-    steps = FLOWS.get(flow, [])
-    eyebrow = t("step.eyebrow", flow=t(f"flow.{flow}"), n=steps.index(route) + 1) if route in steps \
-        else tr(key, "en").split(". ", 1)[-1].upper()
+    title = t(key).split(". ", 1)[-1]
+    decor = tr(key, "en").split(". ", 1)[-1].upper()      # 不在流程里的页面：英文大写作装饰
+    if new_ui():
+        # 新版：眉标是所在栏目（回测页 → 择时策略）；栏目名和标题相同时（模拟盘、设置等）用英文大写，免得上下重复
+        sec = nav_section(route)
+        eyebrow = t(sec) if sec and t(sec) != title else decor
+    else:
+        flow = app.storage.general.get("flow", "timing")
+        steps = FLOWS.get(flow, [])
+        eyebrow = t("step.eyebrow", flow=t(f"flow.{flow}"), n=steps.index(route) + 1) if route in steps else decor
     with ui.column().classes("gap-1 pb-1"):
-        ui.label(eyebrow).classes("sq-eyebrow")
-        ui.label(t(key).split(". ", 1)[-1]).classes("sq-title")
+        ui.label(eyebrow).classes("sq-eyebrow").mark("page_eyebrow")
+        ui.label(title).classes("sq-title")
         if subtitle and subtitle_full:
             from gui.widgets import hint
             hint(subtitle, subtitle_full, classes="sq-subtitle", mark="page_hint")

@@ -8,10 +8,10 @@ Changes in each release. `tools/release.py` copies the matching section into the
 ## 未发布
 
 ### 更新内容
-- 新增：设置页「界面」可在「经典」与「新版（预览）」之间切换。新版界面采用左侧导航，并将逐步把择时策略的设置、回测与验证集中到同一页；目前为预览版，可随时切回经典界面，策略、数据与模拟账户在两套界面中通用。设置页附有反馈入口（GitHub Discussions）。新版左侧栏按用途分组，「模拟盘」旁显示全部账户待执行交易的笔数；窗口宽度小于 1100 像素时侧栏收成图标列，鼠标悬停显示栏目名称，点击底部箭头可展开
+- 新增：设置页「界面」可在「经典」与「新版（预览）」之间切换。新版界面采用左侧导航，并将逐步把择时策略的设置、回测与验证集中到同一页；目前为预览版，可随时切回经典界面，策略、数据与模拟账户在两套界面中通用。设置页附有反馈入口（GitHub Discussions）。新版左侧栏按用途分组，「模拟盘」旁显示全部账户待执行交易的笔数；窗口宽度小于 1100 像素时侧栏收成图标列，鼠标悬停显示栏目名称，点击底部箭头可展开；页面标题上方的小字改为所在栏目（如回测页显示「择时策略」），不再显示「第几步」
 
 ### Changes
-- New: Settings → Interface switches between "Classic" and "New (preview)". The new interface uses a sidebar and will gradually bring a timing strategy's settings, backtest and validation onto one page. It is a preview: you can switch back at any time, and strategies, data and paper accounts are shared by both. A feedback link (GitHub Discussions) is provided. The new sidebar groups pages by purpose and shows the number of pending paper trades next to "Paper trading"; in windows narrower than 1100 px it collapses to icons, with names shown on hover and an arrow at the bottom to expand it
+- New: Settings → Interface switches between "Classic" and "New (preview)". The new interface uses a sidebar and will gradually bring a timing strategy's settings, backtest and validation onto one page. It is a preview: you can switch back at any time, and strategies, data and paper accounts are shared by both. A feedback link (GitHub Discussions) is provided. The new sidebar groups pages by purpose and shows the number of pending paper trades next to "Paper trading"; in windows narrower than 1100 px it collapses to icons, with names shown on hover and an arrow at the bottom to expand it. The small label above each page title now shows the section (e.g. "Timing strategies" on the Backtest page) instead of the step number
 
 ## 2.5.0（2026-11-03）
 

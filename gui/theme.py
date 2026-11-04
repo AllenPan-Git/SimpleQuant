@@ -163,6 +163,8 @@ code, pre {{ font-family: var(--sq-mono); }}
 .sq-pipe .v.sq-fig {{ font-family: var(--sq-sans); font-weight: 500; font-size: 15px; }}
 .sq-pipe .ok .k::before {{ content: "✓ "; color: var(--sq-down); }}
 .sq-pipe .next {{ background: var(--sq-red-soft); box-shadow: inset 0 3px 0 var(--sq-red); }}
+/* 第一格平时贴齐页面左边；铺了底色时、或每格都能点（工作台的策略进度，看起来是一排按钮）时，第一格与其余各格留同样的左边距 */
+.sq-pipe > .next:first-child, .sq-progress > div:first-child {{ padding-left: 14px; }}
 .sq-pipe .next .k {{ color: var(--sq-red); letter-spacing: .04em; }}
 /* 新版界面的策略进度（components.strategy_progress）：格子可点时悬停给下划线 */
 .sq-progress-link {{ cursor: pointer; }}

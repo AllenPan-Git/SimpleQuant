@@ -412,15 +412,21 @@ def percentile_warnings(by_id: dict, pick: DataPick, spec: dict) -> list[tuple[s
     return ([(t("bt.pct_warm", start=f"{start:%Y-%m-%d}"), "info")] if earlier else []) + out
 
 
-def missing_factor_warnings(by_id: dict, ids: list, spec: dict) -> list[str]:
-    """规则用到估值/换手因子，但所选数据没有对应列时的提示"""
+def rates_missing(spec: dict) -> bool:
+    """规则用到利率 / 利差条件，但还没有中债利率数据"""
+    if spec.get("kind") != "rule" or not macro_columns(spec["rule"]):
+        return False
+    from simplequant.bonds.rates import RatesStore
+    return not RatesStore().ready()
+
+
+def missing_factor_warnings(by_id: dict, ids: list, spec: dict, rates: bool = True) -> list[str]:
+    """规则用到估值/换手因子，但所选数据没有对应列时的提示；rates=False 时不提示缺利率（新版界面就地下载）"""
     if spec.get("kind") != "rule":
         return []
     need, out = required_columns(spec["rule"]) - macro_columns(spec["rule"]), []
-    if macro_columns(spec["rule"]):
-        from simplequant.bonds.rates import RatesStore
-        if not RatesStore().ready():
-            out.append(t("rates.need"))
+    if rates and rates_missing(spec):
+        out.append(t("rates.need"))
     for i in ids:
         lacking = sorted(need - set(library.load(i).columns))
         if lacking:

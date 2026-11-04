@@ -2020,6 +2020,22 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
     "spv.phase_na": L("当前策略的调仓频率无法错开调仓日（例如每天调仓），不进行调仓日检验。",
                       "The rebalance days of this strategy cannot be shifted (for example, daily rebalancing), so the "
                       "rebalance-day test does not apply."),
+    # 新版界面：缺数据时就地下载（gui/missing_data.py）
+    "md.download": L("下载", "Download"),
+    "md.busy": L("另一项下载正在进行（BaoStock 同一时间只能下载一项），完成后即可下载。",
+                 "Another download is in progress (BaoStock allows only one at a time); this one can start when it finishes."),
+    "md.failed": L("下载失败：{e}", "Download failed: {e}"),
+    "md.fin_factor": L("{u}尚无财务数据，所选因子需要。", "{u} has no financial data yet, which the selected factor needs."),
+    "md.div_factor": L("{u}尚无分红数据，所选因子需要；没有分红数据的股票不参与该因子排名。",
+                       "{u} has no dividend data yet, which the selected factor needs; stocks without it are not ranked on it."),
+    "md.div_cash": L("{u}尚无分红数据，按现金分红计算需要。", "{u} has no dividend data yet, which cash dividends need."),
+    "md.risk_screen": L("{u}尚无排雷数据，所用的排雷因子或排雷条件需要。",
+                        "{u} has no risk data yet, which the risk factors or screens in use need."),
+    "md.risk_factor": L("{u}尚无排雷数据，所选因子需要。", "{u} has no risk data yet, which the selected factor needs."),
+    "md.market": L("本地尚无行情数据。可先下载沪深300ETF（510300）2015 年以来的日线作为示例，或前往「数据」页下载其他标的。",
+                   "There is no market data yet. Download daily bars of the CSI 300 ETF (510300) since 2015 as a "
+                   "sample, or download other symbols on the Data page."),
+    "md.market_go": L("下载 {sym} 日线", "Download {sym} daily bars"),
     # 新版界面：数据中心的标签
     "data.tab_market": L("行情", "Market data"),
     "data.tab_stocks": L("选股数据", "Selection data"),

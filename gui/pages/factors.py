@@ -96,5 +96,6 @@ def page():
         def reload_all():
             bar.sync()
             background_tasks.create(load_panel(), name="lab load panel")
+        ctx.reload_all = reload_all
 
         reload_all()

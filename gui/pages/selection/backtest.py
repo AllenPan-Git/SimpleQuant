@@ -23,6 +23,7 @@ from simplequant.bonds.panel import CB_FILTERS, CB_DEFAULT_FILTERS
 from simplequant.system import open_folder
 from gui import state, history, support
 from gui.common import t, p, lang, new_ui
+from gui.missing_data import stock_bar
 from gui.components import broker_settings, metric_tiles, metric_tile, credibility_box, bench_label
 from gui.pages.stock_overview import picks_dialog
 from gui.plan_io import import_button, export_selection_bytes, plan_filename, plan_check_notice, restore_broker
@@ -355,6 +356,7 @@ def _backtest_form(SP, ctx, rebuild):
                       value=[f["key"] for f in SP["factors"]], multiple=True, with_input=True, on_change=on_factors) \
                 .props(DENSE + " use-chips").classes("w-full").mark("sp_factors")
             fin_warn = ui.column().classes("w-full")
+            warn_shown = {}                  # 新版：上次画的缺数据提示条（种类没变时不重画）
             with ui.row().classes("w-full items-center gap-4"):
                 def on_weighting(e):
                     SP["weighting"] = e.value
@@ -579,20 +581,39 @@ def _backtest_form(SP, ctx, rebuild):
         save_btn.set_enabled(has and bool(SP["name"].strip()))
         run_btn.set_enabled(has)
         exp_btn.set_enabled(has)
-        fin_warn.clear()
-        if not panel.has_fin and needs_fin(spec):
-            with fin_warn:
-                notice(t("sp.need_fin"), "warning", "warning")
-        if not panel.div_codes and any(FACTORS[f["key"]].get("requires_div") for f in SP["factors"]):
-            with fin_warn:
-                notice(t("sp.need_div_factor"), "warning", "warning")
-        if panel.kind == "stock" and not panel.has_risk and needs_risk(spec):
-            with fin_warn:
-                notice(t("sp.need_risk"), "warning", "warning")
-        div_warn.clear()
-        if SP.get("dividend") == "cash" and not panel.div_codes and panel.kind == "stock":
-            with div_warn:
-                notice(t("sp.need_div"), "warning", "warning")
+        need_fin_ = not panel.has_fin and needs_fin(spec)
+        need_div_ = not panel.div_codes and any(FACTORS[f["key"]].get("requires_div") for f in SP["factors"])
+        need_risk_ = panel.kind == "stock" and not panel.has_risk and needs_risk(spec)
+        need_cash_ = SP.get("dividend") == "cash" and not panel.div_codes and panel.kind == "stock"
+        if new_ui() and panel.kind == "stock" and ctx.lo is not None:
+            # 新版：缺什么就地下载（gui/missing_data.py）；缺的种类没变时不重画，下载中的提示条不被冲掉
+            want = ([("fin", "factor")] * need_fin_ + [("div", "factor")] * need_div_
+                    + [("risk", "screen")] * need_risk_, need_cash_)
+            if want != warn_shown.get("want"):
+                warn_shown["want"] = want
+                fin_warn.clear()
+                with fin_warn:
+                    for part, reason in want[0]:
+                        stock_bar(part, SP["universe"], ctx.lo.year - 1, reason, on_done=ctx.reload_all)
+                div_warn.clear()
+                if need_cash_:
+                    with div_warn:
+                        stock_bar("div", SP["universe"], ctx.lo.year - 1, "cash", on_done=ctx.reload_all)
+        else:
+            fin_warn.clear()
+            if need_fin_:
+                with fin_warn:
+                    notice(t("sp.need_fin"), "warning", "warning")
+            if need_div_:
+                with fin_warn:
+                    notice(t("sp.need_div_factor"), "warning", "warning")
+            if need_risk_:
+                with fin_warn:
+                    notice(t("sp.need_risk"), "warning", "warning")
+            div_warn.clear()
+            if need_cash_:
+                with div_warn:
+                    notice(t("sp.need_div"), "warning", "warning")
         rules_adv_update(_adv_rule_items(SP, panel.kind, lg))
         factor_adv_update(_adv_factor_items(SP))
         draw_chips()

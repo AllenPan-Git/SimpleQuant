@@ -1,6 +1,7 @@
 """NiceGUI 界面测试"""
 
 import asyncio
+import importlib
 import time
 from pathlib import Path
 
@@ -2691,6 +2692,140 @@ async def test_new_ui_selection_lab_jumps(user: User):
     user.find(marker="lab_use_factor").click()
     assert await _wait(lambda: _has(user, "sp_run"), n=2400)
     assert [f["key"] for f in SP["factors"]] == ["ep", "ret20", "vol60"]
+
+
+class _FakeStockStore:
+    """缺数据提示条用的假 StockStore：记下调用；gate 设了时下载要等它放行（模拟下载进行中）"""
+
+    def __init__(self, fail: bool = False):
+        import threading
+        self.calls, self.fail, self.gate = [], fail, threading.Event()
+        self.gate.set()
+
+    def load_universe(self, name):
+        return pd.DataFrame({"code": ["600000.SH", "000001.SZ"], "date": ["2020-01-01"] * 2})
+
+    def risk_requests(self, codes, year):
+        return 90_000
+
+    def update_industry(self):
+        self.calls.append(("industry",))
+
+    def _run(self, part, codes, year, progress):
+        self.gate.wait(10)
+        if self.fail:
+            raise RuntimeError("网络中断")
+        for i in range(1, len(codes) + 1):
+            progress(i, len(codes))
+        self.calls.append((part, list(codes), year))
+        return {"600000.SH": "暂无数据"} if part == "div" else {}
+
+    def update_fundamentals(self, codes, year, progress=None):
+        return self._run("fin", codes, year, progress)
+
+    def update_dividends(self, codes, year, progress=None):
+        return self._run("div", codes, year, progress)
+
+    def update_risk(self, codes, year, progress=None):
+        return self._run("risk", codes, year, progress)
+
+
+async def test_missing_data_bar(user: User):
+    """缺数据提示条：点「下载」在原地下载（只下这一类）并显示进度，成功后调用 on_done；同一时间只允许一项下载，
+    另一项按钮变灰；出错的股票、失败原因显示在提示条里；排雷数据给出要几天的估计"""
+    import sys
+    from nicegui import ui
+    from gui.common import t
+    md = importlib.import_module("gui.missing_data")
+    md._JOBS.clear()
+    ok, bad, done = _FakeStockStore(), _FakeStockStore(fail=True), []
+
+    @ui.page("/_md_test")
+    def _page():
+        md.stock_bar("fin", "hs300", 2018, "factor", on_done=lambda: done.append("fin"), store=ok)
+        md.stock_bar("div", "hs300", 2018, "cash", on_done=lambda: done.append("div"), store=ok)
+        md.stock_bar("risk", "hs300", 2018, "screen", on_done=lambda: done.append("risk"), store=bad)
+    await user.open("/_md_test")
+    await user.should_see("沪深300尚无财务数据，所选因子需要。")
+    await user.should_see("约需 2 天")                             # 排雷数据：9 万次请求 ÷ 每天 4.5 万
+    ok.gate.clear()                                               # 财务数据下载「进行中」
+    user.find(marker="md:fin_go").click()
+    assert await _wait(lambda: md.busy() == "stock:hs300:fin")
+    await asyncio.sleep(0.5)                                      # 页面定时器发现另一项在进行
+    assert not user.find(marker="md:div_go").elements.pop().enabled
+    assert not user.find(marker="md:fin_go").elements.pop().enabled
+    await user.should_see(t("md.busy"))
+    ok.gate.set()
+    assert await _wait(lambda: done == ["fin"])
+    assert ok.calls == [("industry",), ("fin", ["000001.SZ", "600000.SH"], 2018)]     # 只下财务（含行业）
+    await asyncio.sleep(0.5)
+    assert user.find(marker="md:div_go").elements.pop().enabled
+
+    user.find(marker="md:div_go").click()                         # 有出错的股票：仍算完成，列出出错的
+    assert await _wait(lambda: done == ["fin", "div"])
+    await user.should_see("600000.SH: 暂无数据")
+    user.find(marker="md:risk_go").click()                        # 整个失败：显示原因，不调用 on_done
+    assert await _wait(lambda: not md.busy() and md._JOBS["stock:hs300:risk"]["result"] is not None)
+    await asyncio.sleep(0.5)
+    await user.should_see("下载失败：RuntimeError: 网络中断")
+    assert done == ["fin", "div"]
+    md._JOBS.clear()
+
+
+@needs_stocks
+async def test_new_ui_selection_missing_risk(user: User, monkeypatch):
+    """新版选股回测：用了排雷条件但面板没有排雷数据时，显示就地下载的提示条（经典是去数据页的提示）；
+    下载只补排雷数据，起始年为数据首年的前一年，完成后重新载入面板"""
+    import sys
+    from gui import common
+    from simplequant.stocks import StockStore, universe as U
+    md = importlib.import_module("gui.missing_data")
+    md._JOBS.clear()
+    fake = _FakeStockStore()
+    common.set_ui("new")
+    SP = await _open_selection(user, "bt")
+    key = state.STATE["sp_panel_key"]
+    panel = next(v for k, v in sys.modules["gui.sel_panel"]._PANELS.items() if k[:3] == key)
+    monkeypatch.setattr(panel, "has_risk", False)               # 当作没有排雷数据（测试结束恢复）
+    monkeypatch.setattr(md, "_store", lambda: fake)
+    SP["riskf"]["max_debt_ratio"] = 70.0
+    state.STATE.pop("sp_panel_key")
+    await user.open("/selection")
+    assert await _wait(lambda: state.STATE.get("sp_panel_key") is not None, n=400)
+    await settle()
+    await user.should_see(marker="md:risk")
+    await user.should_not_see(marker="md:fin")
+    state.STATE.pop("sp_panel_key")
+    user.find(marker="md:risk_go").click()
+    assert await _wait(lambda: fake.calls, n=200)
+    lo = U.load_benchmark("hs300", StockStore()).index[0]
+    assert fake.calls == [("risk", ["000001.SZ", "600000.SH"], lo.year - 1)]     # 只补排雷，从数据首年的前一年起
+    assert await _wait(lambda: state.STATE.get("sp_panel_key") is not None, n=400), "下载完没有重新载入面板"
+    md._JOBS.clear()
+
+
+async def test_new_ui_timing_downloads_sample(user: User, lib_dir, monkeypatch):
+    """择时工作台：本地没有行情时就地下载 510300 示例日线，下载完回到工作台可以回测；经典回测页照旧提示去数据页"""
+    import sys
+    from gui import common
+    from simplequant import data as data_mod
+    md = importlib.import_module("gui.missing_data")
+    md._JOBS.clear()
+    calls = []
+
+    def fake_fetch(src, sym, start, end, **kw):
+        calls.append((src, sym, start, kw.get("freq"), kw.get("adjust"), kw.get("asset")))
+        return _save_prices()
+    monkeypatch.setattr(data_mod, "fetch_to_library", fake_fetch)
+    common.set_ui("new")
+    await user.open("/timing")
+    await user.should_see(marker="md:market")
+    await user.should_see(marker="bt_save_name")                   # 没有数据也能先写策略、保存
+    user.find(marker="md:market_go").click()
+    assert await _wait(lambda: _has(user, "run"), n=400)           # 下载完重新打开工作台
+    assert calls == [("akshare", "510300", "2015-01-01", "1d", "hfq", "etf")]
+    await user.should_not_see(marker="md:market")
+    md._JOBS.clear()
 
 
 def _has(user: User, marker: str) -> bool:

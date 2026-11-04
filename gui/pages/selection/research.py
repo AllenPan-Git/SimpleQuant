@@ -5,7 +5,8 @@ from nicegui import run, ui
 
 from simplequant.stocks import FACTORS, analyze, compute, factor_zscores, factor_correlation, sample_dates
 from simplequant.stocks import factors_for
-from gui.common import t, p, lang
+from gui.common import t, p, lang, new_ui
+from gui.missing_data import stock_bar
 from gui.components import metric_tile
 from gui.widgets import df_table, fmt_table, plot, notice, Progress
 from ui.charts import ic_chart, quantile_chart, group_bar, corr_heatmap
@@ -50,19 +51,26 @@ def _research(SP, ctx):
         if not panel.has_fin and panel.kind == "stock":
             ui.label(t("sp.no_fin")).classes("sq-muted text-sm")
         hint_box = ui.column().classes("w-full")
+        shown = {}
 
         def hints():
-            hint_box.clear()
             fsel.tooltip(p(FACTORS[R["fkey"]].get("desc", "")) or "")
-            if FACTORS[R["fkey"]].get("requires_fin") and not panel.has_fin:
-                with hint_box:
-                    notice(t("sp.need_fin"), "warning", "warning")
-            if FACTORS[R["fkey"]].get("requires_div") and not panel.div_codes:
-                with hint_box:
-                    notice(t("sp.need_div_factor"), "warning", "warning")
-            if FACTORS[R["fkey"]].get("requires_risk") and not panel.has_risk:
-                with hint_box:
-                    notice(t("sp.need_risk"), "warning", "warning")
+            f = FACTORS[R["fkey"]]
+            parts = [k for k, need in (("fin", f.get("requires_fin") and not panel.has_fin),
+                                       ("div", f.get("requires_div") and not panel.div_codes),
+                                       ("risk", f.get("requires_risk") and not panel.has_risk)) if need]
+            if parts == shown.get("parts"):      # 没变：不重画（下载中的提示条不被冲掉）
+                return
+            shown["parts"] = parts
+            hint_box.clear()
+            with hint_box:
+                if new_ui() and panel.kind == "stock" and ctx.lo is not None and ctx.reload_all:
+                    for part in parts:           # 新版：就地下载（gui/missing_data.py）
+                        stock_bar(part, SP["universe"], ctx.lo.year - 1, "factor", on_done=ctx.reload_all)
+                    return
+                for part in parts:
+                    notice(t({"fin": "sp.need_fin", "div": "sp.need_div_factor", "risk": "sp.need_risk"}[part]),
+                           "warning", "warning")
         hints()
 
         def factor_values(k, mask):

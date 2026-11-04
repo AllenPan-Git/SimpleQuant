@@ -13,7 +13,8 @@ from simplequant import strategies
 from simplequant.data import library
 from gui import state
 from gui.common import t, lang
-from gui.components import require_data, strategy_progress, credibility_box
+from gui.components import strategy_progress, credibility_box
+from gui.missing_data import market_bar
 from gui.layout import frame, page_title
 from gui.plan_io import import_button
 from gui.pages.strategy import Ctx, strategy_editor, editor_spec, code_ok, saved_strategies, load_spec
@@ -28,12 +29,21 @@ def page():
     with frame("/timing"):
         page_title("/timing", t("timing.subtitle"))
         _take_handoff(S)
-        by_id = require_data()
+        by_id = _data_or_download()
         if by_id is None:            # 没有数据也能先写策略、保存
             import_button().classes("mt-2")
             _editor_only(S)
             return
         _workbench(S, by_id)
+
+
+def _data_or_download() -> dict | None:
+    """本地数据库里的全部数据 {id: 元数据}；一条都没有时就地提供示例数据下载（gui/missing_data.py），下载完重新打开本页"""
+    metas = library.list_datasets()
+    if metas:
+        return {m.id: m for m in metas}
+    market_bar(on_done=lambda: ui.navigate.to("/timing"))
+    return None
 
 
 def _take_handoff(S):

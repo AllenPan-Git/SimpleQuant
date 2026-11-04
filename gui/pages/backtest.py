@@ -20,9 +20,10 @@ from simplequant.export import PLATFORMS
 from gui import state, history, support, routes
 from gui.plan_io import import_button, export_bytes, plan_filename, plan_check_notice
 from simplequant import plan as plan_mod
-from gui.common import t, p, lang
+from gui.common import t, p, lang, new_ui
+from gui.missing_data import rates_bar
 from gui.components import (require_data, data_selector, strategy_selector, broker_settings, prepare_prices,
-                            metric_tiles, metric_tile, missing_factor_warnings, dividend_notices,
+                            metric_tiles, metric_tile, missing_factor_warnings, rates_missing, dividend_notices,
                             unadjusted_warning, fallback_warning, percentile_warnings, warm_start, credibility_box)
 from gui.layout import frame, page_title
 from gui.widgets import df_table, fmt_table, plot, notice, download_btn
@@ -184,7 +185,9 @@ def setup_bar(by_id: dict, BT: dict, strategy_part, sticky: bool = False, open_:
                 notice(t("bt.batch_need_single", n=need), "warning", "warning")
             elif pick.ids and len(pick.ids) < need:
                 notice(t("bt.need_assets", n=need), "warning", "warning")
-            for w in missing_factor_warnings(by_id, pick.ids, strat["spec"]):
+            if new_ui() and rates_missing(strat["spec"]):      # 新版：就地更新利率，完成后重新检查
+                rates_bar(on_done=check)
+            for w in missing_factor_warnings(by_id, pick.ids, strat["spec"], rates=not new_ui()):
                 notice(w, "warning", "warning")
             if w := unadjusted_warning(by_id, pick.ids):
                 notice(w, "warning", "warning")

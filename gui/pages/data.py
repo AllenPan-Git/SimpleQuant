@@ -15,11 +15,12 @@ from simplequant.data.base import freq_label, EXTRA_COLUMNS
 from simplequant.data.ratio_adjust import is_additive
 from simplequant.data.csv_src import read_csv_any, is_snapshot
 from simplequant.data.tdx_local_src import DEFAULT_TDX_DIR
+from simplequant.i18n import TEXT
 from simplequant.rules import INDICATORS
 from gui import state
 from gui.common import t, p, lang, new_ui
 from gui.layout import frame, page_title
-from gui.widgets import df_table, plot, Progress
+from gui.widgets import df_table, plot, Progress, hint
 from ui.charts import preview_chart
 from ui.shared import POPULAR, ADJUST, parse_symbols, import_csv, dataset_label, sina_fallback
 
@@ -133,7 +134,7 @@ def _download_tab(on_change, rates: bool = True):
 
     with ui.card().classes("w-full gap-3"):
         src_key = ui.radio({k: p(s.label) for k, s in online.items()}, value=next(iter(online))).props("inline")
-        desc = ui.label().classes("text-sm sq-muted -mt-2")
+        desc = ui.column().classes("w-full gap-0 -mt-2")
 
         with ui.row().classes("w-full items-start gap-4 no-wrap"):
             picks = ui.select({c: f"{c} {p(n)}" for c, n in POPULAR.items()}, label=t("data.popular"),
@@ -154,7 +155,13 @@ def _download_tab(on_change, rates: bool = True):
 
         def on_source():
             s = online[src_key.value]
-            desc.text = p(s.description)
+            desc.clear()
+            with desc:      # 长说明收成一行（只有写了短句的来源）
+                if f"data.src_short_{src_key.value}" in TEXT:
+                    hint(t(f"data.src_short_{src_key.value}"), p(s.description), classes="text-sm sq-muted",
+                         mark="data_src_hint")
+                else:
+                    ui.label(p(s.description)).classes("text-sm sq-muted")
             freq.options = {f: freq_label(f, lg) for f in s.freqs}
             freq.value = s.freqs[0]
             freq.update()
@@ -217,7 +224,7 @@ def _rates_card():
         with ui.row().classes("items-center gap-2"):
             ui.icon("percent").classes("text-primary")
             ui.label(t("rates.title")).classes("font-semibold")
-        ui.label(t("rates.note", year=FIRST_YEAR)).classes("text-sm sq-muted")
+        hint(t("rates.note_short"), t("rates.note", year=FIRST_YEAR), classes="text-sm sq-muted", mark="rates_hint")
         status = ui.label().classes("text-sm")
         prog = Progress()
 

@@ -966,6 +966,22 @@ async def test_selection_hints(user: User):
     assert text.text == t("sp.market_help_short", index=index)
 
 
+async def test_site_hints(user: User, lib_dir, paper_dir):
+    """4.6 全站说明收短：模拟盘、资产配置的页面说明，数据页的 AKShare 来源与利率说明，都先显示短句"""
+    from gui.common import t
+    from simplequant.data import SOURCES
+    for route, key in (("/paper", "pp.intro"), ("/allocation", "al.intro")):
+        await user.open(route)
+        assert user.find(marker="page_hint_text").elements.pop().text == t(f"{key}_short")
+    await user.open("/data")
+    text = user.find(marker="data_src_hint_text").elements.pop()
+    assert text.text == t("data.src_short_akshare")
+    user.find(marker="data_src_hint_toggle").click()
+    await settle()
+    assert text.text == SOURCES["akshare"].description["zh"]
+    assert user.find(marker="rates_hint_text").elements.pop().text == t("rates.note_short")
+
+
 @needs_stocks
 async def test_selection_research(user: User):
     SP = await _open_selection(user, "res")

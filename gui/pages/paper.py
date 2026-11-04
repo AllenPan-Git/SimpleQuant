@@ -22,7 +22,7 @@ from gui.common import t, p, lang
 from gui.components import accounts_table, broker_settings, metric_tile, dividend_notices, bench_label
 from gui.plan_io import restore_broker
 from gui.layout import frame, page_title
-from gui.widgets import df_table, fmt_table, plot, notice, download_btn, LogBox
+from gui.widgets import df_table, fmt_table, plot, notice, download_btn, LogBox, hint
 from ui.charts import equity_chart
 from ui.shared import pct, num, account_rows, lots as _lots
 
@@ -41,7 +41,7 @@ def page():
     if opened:
         PP["account"] = opened
     with frame("/paper"):
-        page_title("/paper", t("pp.intro"))
+        page_title("/paper", t("pp.intro_short"), t("pp.intro"))
         logs = None
 
         async def run_accounts(accounts, refresh=True):
@@ -383,7 +383,7 @@ def _account_view(PP, run_accounts, redraw):
                 df_table(fmt_table(df, {t("pp.col_ref_price"): "{:.3f}", t("pp.col_est_value"): "{:,.0f}"}))
                 download_btn(t("pp.download_signals"), lambda: df.to_csv(index=False).encode("utf-8-sig"),
                              f"signals_{acc.name}_{st['execute_on']}.csv", "text/csv")
-            ui.label(t("pp.signals_note")).classes("sq-muted text-xs")
+            hint(t("pp.signals_note_short"), t("pp.signals_note"), classes="sq-muted text-xs")
         with ui.tab_panel(tab_pos).classes("px-0 gap-2"):
             pos = st["positions"]
             if not pos:
@@ -472,7 +472,7 @@ def _portfolio_tabs(acc, st, nav, lg):
                              f"signals_{acc.name}_{st['execute_on']}.csv", "text/csv")
             if small:
                 ui.label(t("pf.small_skipped", n=small)).classes("sq-muted text-xs").mark("pf_small")
-            ui.label(t("pf.signals_note")).classes("sq-muted text-xs")
+            hint(t("pf.signals_note_short"), t("pf.signals_note"), classes="sq-muted text-xs")
         with ui.tab_panel(tab_pos).classes("px-0 gap-2"):
             ui.label(t("pf.sleeves_title")).classes("font-semibold")
             dfs = pd.DataFrame([{
@@ -521,7 +521,7 @@ def _portfolio_tabs(acc, st, nav, lg):
 def _schedule_box(PP):
     with ui.expansion(t("pp.schedule", tool=t(f"pp.sched.{schedule.backend()}")), icon="schedule") \
             .classes("w-full q-card").mark("pp_schedule"):
-        ui.label(t("pp.schedule_note")).classes("sq-muted text-sm")
+        hint(t("pp.schedule_note_short"), t("pp.schedule_note"), classes="sq-muted text-sm")
 
         @ui.refreshable
         def box():

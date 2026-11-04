@@ -12,7 +12,7 @@ from gui import state
 from gui.common import t, p, lang
 from gui.components import credibility_box
 from gui.layout import frame, page_title
-from gui.widgets import section, plot, notice
+from gui.widgets import section, plot, notice, hint
 from ui.charts import equity_chart, corr_heatmap
 from ui.shared import pct, num
 
@@ -22,7 +22,7 @@ GRID = "display: grid; align-items: center; column-gap: 12px; row-gap: 6px; min-
 
 def page():
     with frame("/allocation"):
-        page_title("/allocation", t("al.intro"))
+        page_title("/allocation", t("al.intro_short"), t("al.intro"))
         AL = state.STATE.setdefault("al", {"answers": {}})
         ui.label(t("al.disclaimer")).classes("sq-muted text-xs")
 
@@ -154,7 +154,7 @@ def _sleeves(AL, redraw, do_run):
     items = A.all_sleeves(cfg)
     custom_ids = {s["id"] for s in cfg["custom"]}
     with section(t("al.sleeves"), "category"):
-        ui.label(t("al.sleeves_help")).classes("sq-muted text-xs")
+        hint(t("al.sleeves_help_short"), t("al.sleeves_help"), classes="sq-muted text-xs")
         with ui.element("div").classes("w-full overflow-x-auto"):
             with ui.element("div").style(GRID + "; grid-template-columns: 40px 2fr 1.4fr 1.2fr 1.6fr 60px"):
                 for k in ("", "name", "class", "kind", "data", ""):
@@ -355,7 +355,8 @@ def _paper_form(AL, r):
                              "past": str(dt.date.today() - dt.timedelta(days=180))})
     with ui.expansion(t("pf.new"), icon="add_circle").classes("w-full q-card mt-4").mark("al_paper"):
         with ui.column().classes("w-full gap-3"):
-            ui.label(t("pf.new_help", reb=t(f"al.reb_{r['rebalance']}"))).classes("sq-muted text-sm")
+            reb = t(f"al.reb_{r['rebalance']}")
+            hint(t("pf.new_help_short", reb=reb), t("pf.new_help", reb=reb), classes="sq-muted text-sm")
             with ui.row().classes("w-full items-center gap-6"):
                 with ui.column().classes("gap-0"):
                     ui.label(t("pp.start_mode")).classes("text-xs sq-muted")
@@ -427,7 +428,7 @@ def _weights_table(r, names, rerun):
     total = sum(r["weights"].values()) or 1
     edit = {sid: round(w / total * 100, 1) for sid, w in r["weights"].items()}
     ui.label(t("al.weights_title")).classes("font-semibold pt-4")
-    ui.label(t("al.weights_help")).classes("sq-muted text-xs")
+    hint(t("al.weights_help_short"), t("al.weights_help"), classes="sq-muted text-xs")
     cols = ["name", "class", "risk", "weight", "cagr", "volatility", "max_drawdown", "return_contrib", "risk_contrib"]
     with ui.element("div").classes("w-full overflow-x-auto"):
         with ui.element("div").style(GRID + "; grid-template-columns: 2fr 1.2fr 0.7fr 110px repeat(5, 1fr)") \

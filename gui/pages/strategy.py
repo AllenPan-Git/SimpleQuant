@@ -11,7 +11,7 @@ from simplequant.strategies import TEMPLATES, code_strategy
 from gui import state, routes
 from gui.common import t, p, lang
 from gui.layout import frame, page_title
-from gui.widgets import section, code_editor, notice
+from gui.widgets import section, code_editor, notice, hint
 from ui.shared import PRESETS, cond, clean, with_ids
 
 GROUP_ORDER = list(GROUPS)
@@ -500,7 +500,8 @@ def _pacing_editor(rule: dict, changed):
                                   on_change=set_field("pct", float)).props("outlined dense").classes("w-36")
                     else:
                         scale.pop("pct", None)
-                ui.label(t("strat.scale_help", parts=scale["adds"] + 1)).classes("sq-muted text-xs")
+                hint(t("strat.scale_help_short", parts=scale["adds"] + 1), t("strat.scale_help", parts=scale["adds"] + 1),
+                     classes="sq-muted text-xs")
         draw()
 
 
@@ -518,7 +519,7 @@ def _code_editor(S, ctx):
     with ui.card().classes("w-full gap-3"):
         with ui.row().classes("w-full items-center gap-2 no-wrap sq-note py-2"):
             ui.icon("info").classes("text-primary")
-            ui.label(t("code.intro")).classes("text-sm")
+            hint(t("code.intro_short"), t("code.intro"), classes="text-sm")
         with ui.row().classes("w-full items-end gap-3"):
             start = ui.select(starts, label=t("code.start_from"), value="skeleton").props(DENSE).classes("grow")                 .mark("code_start")
 
@@ -570,7 +571,7 @@ def _ai_condition_notes(rule: dict, S):
                         .props("outline").tooltip(t(f"ai.kind_{n['kind']}_help"))
                     ui.label(f"{t('rule.' + n['side'])}：{n['text']}" if lg == "zh" else
                              f"{t('rule.' + n['side'])}: {n['text']}").classes("text-sm")
-            ui.label(t("ai.kind_legend")).classes("sq-muted text-xs")
+            hint(t("ai.kind_legend_short"), t("ai.kind_legend"), classes="sq-muted text-xs")
     for key in wording_hints(rule, S.get("ai_text", "")):
         notice(t(key), "compare_arrows", "warning")
     if S.get("ai_changed"):

@@ -1774,6 +1774,54 @@ async def test_new_ui_timing_workbench(user: User, lib_dir):
     assert len(BT()["spec"]["rule"]["buy"]["conditions"]) == n - 1
 
 
+async def test_new_ui_run_compare(user: User, lib_dir):
+    """择时工作台「与上次相比」：第一次运行不显示；再运行一次写「策略未改动」；换成规则策略后写出换了什么；
+    「最近 n 次运行」弹窗列出每次运行；经典回测页跑出的报告没有编号，回到工作台也不显示对比"""
+    from gui import common
+    from ui.shared import run_diff
+    common.set_ui("new")
+    _save_prices()
+    BT = lambda: state.STATE.get("bt", {})
+    runs = lambda: state.STATE["runs"]["timing"]
+
+    async def run_once():
+        before = BT().get("result")
+        user.find(marker="run").click()
+        assert await _wait(lambda: BT().get("result") is not None and BT()["result"] is not before)
+        await settle()
+
+    await user.open("/timing")
+    await run_once()
+    await user.should_not_see(marker="run_diff")             # 只运行过一次
+    await run_once()
+    await user.should_see(marker="run_diff")
+    await user.should_see("策略未改动")
+
+    user.find(marker="prog:setup").click()
+    await settle()
+    user.find(marker="mode").elements.pop().set_value("rule")
+    await settle()
+    await run_once()
+    lines = run_diff(runs()[1], runs()[0], "zh")
+    assert lines[0].endswith("→ 规则策略") and lines[-1].startswith("年化收益率")
+    await user.should_see(lines[0])
+
+    user.find(marker="run_history").click()
+    await settle()
+    await user.should_see(marker="run_history_dialog")
+    await user.should_see("最近 3 次运行")
+    await user.should_see("本次启动后的第一次运行")
+    assert len(user.find(marker="run_item:2").elements) == 1
+
+    common.set_ui("classic")                                  # 经典回测页跑一次：报告没有编号
+    await user.open("/backtest")
+    await run_once()
+    assert "run_no" not in BT() and len(runs()) == 3
+    common.set_ui("new")
+    await user.open("/timing")
+    await user.should_not_see(marker="run_diff")
+
+
 async def test_new_ui_timing_errors_and_saved(user: User, lib_dir):
     """工作台：规则有错时不能运行；载入已保存的策略恢复它的资金；没有数据时只显示编辑器，也能保存"""
     from gui import common

@@ -71,7 +71,8 @@ def setup_bar(by_id: dict, BT: dict, strategy_part, sticky: bool = False, open_:
     strategy_part(on_change, on_broker) 画出设置区里的「策略」一块，返回 {"spec", "label", "name"}（原地更新）；
     其中可以有 "errors"（有错时不能运行、导出）和 "full_check"（运行、保存前调用，返回 False 时取消）。
     sticky：右边的按钮跟着页面滚动（设置区很长时，择时工作台用），「正在回测」放在按钮下面；open_：设置区是否展开（默认没有结果时展开）。
-    返回的对象：pick / strat / make_broker / setup / setup_row / save_name / exp_menu、check()、ready()、run()；
+    返回的对象：pick / strat / make_broker / setup / setup_row / save_name / exp_menu、check()、ready()、run()、
+    chip_items()（摘要条各格 [(键, 值)]）；
     调用方可以替换这些回调（默认什么都不做）：.report()（运行开始时清空报告、结束时画出新报告）、.on_ran(ok)（回测结束）、
     .on_phase()（调仓日检验完成）、.on_check()（设置改动、提示重画之后）、.on_saved(name)（保存了策略）、.on_name(text)（改了策略名称）
     """
@@ -139,8 +140,8 @@ def setup_bar(by_id: dict, BT: dict, strategy_part, sticky: bool = False, open_:
         state.STATE["bt_mode"] = v
         check()
 
-    def draw_chips():
-        chips.clear()
+    def chip_items() -> list[tuple[str, str]]:
+        """摘要条的各格 [(键, 值)]：数据 · 策略 · 区间 · 资金"""
         b = state.STATE.get("bt_broker", {})
         preset = COST_PRESETS.get(b.get("preset"), {})
         items = [
@@ -156,8 +157,12 @@ def setup_bar(by_id: dict, BT: dict, strategy_part, sticky: bool = False, open_:
                           else t("bt.contrib_monthly"))
                 if b.get("contribution") else "")),
         ]
+        return items
+
+    def draw_chips():
+        chips.clear()
         with chips:
-            for k, v in items:
+            for k, v in chip_items():
                 with ui.element("div").classes("sq-chip"):
                     ui.label(t(f"bt.chip_{k}")).classes("k")
                     ui.label(v).classes("v")
@@ -348,7 +353,8 @@ def setup_bar(by_id: dict, BT: dict, strategy_part, sticky: bool = False, open_:
         bar.on_ran(BT.get("batch") is not None)
 
     bar.__dict__.update(pick=pick, strat=strat, make_broker=make_broker, setup=setup, setup_row=setup_row,
-                        save_name=save_name, exp_menu=exp_menu, check=check, ready=ready, run=do_run)
+                        save_name=save_name, exp_menu=exp_menu, check=check, ready=ready, run=do_run,
+                        chip_items=chip_items)
     return bar
 
 

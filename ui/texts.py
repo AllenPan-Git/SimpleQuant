@@ -2001,6 +2001,10 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
     "diff.pp": L("{d} 个百分点", "{d} pp"),
     "diff.flat": L("持平", "unchanged"),
     "diff.metric": L("{m} {a} → {b}（{d}）", "{m} {a} → {b} ({d})"),
+    "diff.title": L("与上次相比 · 上次 {time}", "Compared with the previous run · {time}"),
+    "diff.history": L("最近 {n} 次运行 →", "Last {n} runs →"),
+    "diff.history_title": L("最近 {n} 次运行", "Last {n} runs"),
+    "diff.first": L("本次启动后的第一次运行", "First run since the app started"),
     # 新版界面：择时工作台（策略 + 回测 + 验证）
     "nav.timing": L("择时工作台", "Timing workbench"),
     "timing.subtitle": L("在同一页编写策略、回测并检验结果。修改设置后点击「开始回测」，报告在下方更新。",

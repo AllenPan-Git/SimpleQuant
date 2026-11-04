@@ -21,7 +21,7 @@ from simplequant.stocks.selection import ic_history_short, skip_months, needs_fi
 from simplequant.stocks.panel import STOCK_FILTERS, RISK_FILTERS
 from simplequant.bonds.panel import CB_FILTERS, CB_DEFAULT_FILTERS
 from simplequant.system import open_folder
-from gui import state, history, support
+from gui import state, history, support, run_log
 from gui.common import t, p, lang, new_ui
 from gui.missing_data import stock_bar
 from gui.components import broker_settings, metric_tiles, metric_tile, credibility_box, bench_label
@@ -645,6 +645,11 @@ def _backtest_form(SP, ctx, rebuild):
             history.add("sel", title, f"{uni} · {ctx.start} ~ {ctx.end}", res.metrics, restore={"spec": spec},
                         data=uni, strategy=title,
                         verify={"credibility": True, "phase": False, "walkforward": False})   # 之后做了检验再补记
+            SP["run_no"] = None     # 经典界面跑出的结果没有编号，切到新版也不显示对比
+            if new_ui():            # 报告顶部「与上次相比」（区间、资金不在 spec 里，另记）
+                money = next(v for k, _, v in _chip_items(SP, panel.kind, lg) if k == "broker")
+                SP["run_no"] = run_log.record("sel", title, spec, res.metrics,
+                                              {"range": f"{ctx.start} ~ {ctx.end}", "broker": money})
             support.after_run()
             ok = True
         except Exception as ex:  # noqa: BLE001
@@ -739,7 +744,7 @@ def _backtest_form(SP, ctx, rebuild):
     @ui.refreshable
     def results():
         if SP.get("result"):
-            _selection_results(SP, ctx)
+            _selection_results(SP, ctx, top=lambda: run_log.compare("sel", SP.get("run_no")) if new_ui() else None)
     results()
     if SP.get("autorun") and SP["factors"]:          # 导入方案后自动回测一次
         ui.timer(0.1, do_run, once=True)
@@ -843,12 +848,15 @@ def _sel_checks(SP, base: list[dict], ctx=None):
     draw()
 
 
-def _selection_results(SP, ctx):
+def _selection_results(SP, ctx, top=None):
+    """选股回测结果；top()：标题下面先画的一块（新版界面的「与上次相比」）"""
     lg = lang()
     panel = ctx.panel
     res, rspec, secs = SP["result"]
     with ui.element("div").classes("sq-sec"):
         ui.label(t("bt.results")).classes("sq-h2")
+    if top:
+        top()
     with ui.column().classes("gap-1"):
         ui.label(strategies.describe(rspec, lg).replace("\n", " · ") + " · " + t("sp.took", s=f"{secs:.1f}")) \
             .classes("sq-muted text-sm")

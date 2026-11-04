@@ -204,6 +204,13 @@ code, pre {{ font-family: var(--sq-mono); }}
   width: calc(100% + 12px); }}
 .sq-next-rec i, .sq-next-rec .sq-next-title {{ color: var(--sq-red); }}
 
+/* 报告顶部「与上次相比」（gui/run_log.py）：上下细线夹着的一段，像报纸的更正栏 */
+.sq-run-diff {{ border-top: 1px solid var(--sq-text); border-bottom: 1px solid var(--sq-border2); padding: 8px 0 10px;
+  margin-bottom: 12px; }}
+.sq-run-diff-line {{ line-height: 1.6; }}
+.sq-run-diff-more {{ color: var(--sq-muted); font-size: 12.5px; }}
+.sq-run-item + .sq-run-item {{ border-top: 1px solid var(--sq-border2); }}
+
 /* 回测设置折叠区：标题行就是摘要条 */
 .sq-setup > .q-expansion-item__container > .q-item {{ padding: 0; min-height: 0; font-family: var(--sq-sans); font-weight: 400;
   border-top: 1px solid var(--sq-text); border-bottom: 1px solid var(--sq-border); }}

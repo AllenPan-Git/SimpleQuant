@@ -220,6 +220,36 @@ def test_run_diff_selection_factor_added():
     assert shared.run_diff(_run(s1), _run({**s1, "cost": 0.001}), "zh") == ["策略的其他设置有改动"]
 
 
+def test_run_diff_selection_only_changed_parts():
+    """一段说明里只改了一项（持有数）：只写这一项，不整段重复"""
+    s1 = {"kind": "selection", "universe": "hs300", "factors": [{"key": "ep", "weight": 1, "direction": 1}],
+          "top_n": 10, "rebalance": "monthly", "position_pct": 95}
+    assert shared.run_diff(_run(s1), _run({**s1, "top_n": 20}), "zh") == ["选股：持有前 10 只 → 持有前 20 只"]
+
+
+def test_run_diff_setup():
+    """策略之外的设置（数据、区间、资金）：逐项写出改了的，策略没改仍写「策略未改动」"""
+    spec = {"kind": "template", "template": "rsi_reversion"}
+    old = {"spec": spec, "setup": {"data": "沪深300ETF", "range": "2020-01-01 ~ 2024-12-31", "broker": "10 万"}}
+    new = {"spec": spec, "setup": {"data": "沪深300ETF", "range": "2018-01-01 ~ 2024-12-31", "broker": "10 万"}}
+    assert shared.run_diff(old, new, "zh") == ["策略未改动", "区间：2020-01-01 ~ 2024-12-31 → 2018-01-01 ~ 2024-12-31"]
+    assert shared.run_diff(old, {"spec": spec, "setup": {**old["setup"], "broker": "1 万"}}, "en")[1] == \
+        "Capital & costs: 10 万 → 1 万"
+    assert shared.run_diff(old, old, "zh") == ["策略未改动"]
+
+
+def test_run_diff_without_metrics():
+    spec = {"kind": "template", "template": "rsi_reversion"}
+    assert shared.run_diff(_run(spec, cagr=0.1), _run(spec, cagr=0.2), "zh", metrics=False) == ["策略未改动"]
+
+
+def test_push_run_keeps_latest():
+    runs = []
+    for i in range(7):
+        shared.push_run(runs, {"no": i})
+    assert [r["no"] for r in runs] == [6, 5, 4, 3, 2]
+
+
 def test_run_diff_metrics():
     spec = {"kind": "template", "template": "rsi_reversion"}
     out = shared.run_diff(_run(spec, cagr=0.10, max_drawdown=-0.20), _run(spec, cagr=0.123, max_drawdown=-0.185), "zh")

@@ -318,6 +318,15 @@ def _sections(text: str) -> dict[str, str]:
     return out
 
 
+def _changed_parts(a: str, b: str) -> tuple[str, str]:
+    """一段说明由「 · 」分成几项、两边项数相同时，只留变了的项（「沪深300 · 每月 · 持有前 10 只」→「持有前 10 只」）"""
+    pa, pb = a.split(" · "), b.split(" · ")
+    if len(pa) == len(pb) > 1:
+        keep = [i for i, (x, y) in enumerate(zip(pa, pb)) if x != y]
+        return " · ".join(pa[i] for i in keep), " · ".join(pb[i] for i in keep)
+    return a, b
+
+
 def _spec_changes(old: dict, new: dict, lg: str) -> list[str]:
     if spec_key(old) == spec_key(new):
         return []
@@ -342,6 +351,7 @@ def _spec_changes(old: dict, new: dict, lg: str) -> list[str]:
     for k in list(sa) + [k for k in sb if k not in sa]:
         a, b = sa.get(k, tr("diff.none", lg)), sb.get(k, tr("diff.none", lg))
         if a != b:
+            a, b = _changed_parts(a, b)
             head = (f"{k}：" if lg == "zh" else f"{k}: ") if k else ""
             out.append(head + a + arrow + b)
     return out or [tr("diff.other", lg)]   # 改的是说明里没写的设置
@@ -359,15 +369,36 @@ def _metric_changes(old: dict, new: dict, lg: str) -> list[str]:
     return out
 
 
-def run_diff(old: dict, new: dict, lg: str) -> list[str]:
-    """两次运行对比：old / new 为 {"spec": 策略, "metrics": 指标}。
-    返回几行文字：先是策略改了什么（没改为「策略未改动」），最后一行是年化与最大回撤的差（两次都有时）。
-    指标写出两次的值和差（最大回撤是负数，只写差的话「+1.5 个百分点」容易被看成回撤变大）"""
+def _setup_changes(old: dict, new: dict, lg: str) -> list[str]:
+    """策略之外的设置（数据、区间、资金与费率……）：{键: 摘要文字}，键的名称取 bt.chip_{键}"""
+    out = []
+    for k in list(old) + [k for k in new if k not in old]:
+        a, b = old.get(k) or "—", new.get(k) or "—"
+        if a != b:
+            out.append(f"{tr(f'bt.chip_{k}', lg)}{'：' if lg == 'zh' else ': '}{a} → {b}")
+    return out
+
+
+def run_diff(old: dict, new: dict, lg: str, metrics: bool = True) -> list[str]:
+    """两次运行对比：old / new 为 {"spec": 策略, "metrics": 指标, "setup": {键: 摘要}（可省略）}。
+    返回几行文字：先是策略改了什么（没改为「策略未改动」），再是其他设置改了什么，最后一行是年化与最大回撤的差
+    （两次都有、且 metrics=True 时）。指标写出两次的值和差（最大回撤是负数，只写差的话「+1.5 个百分点」容易被看成回撤变大）"""
     lines = _spec_changes(old.get("spec") or {}, new.get("spec") or {}, lg) or [tr("diff.same", lg)]
+    lines += _setup_changes(old.get("setup") or {}, new.get("setup") or {}, lg)
     sep = "，" if lg == "zh" else ", "
-    if m := _metric_changes(old.get("metrics") or {}, new.get("metrics") or {}, lg):
+    if metrics and (m := _metric_changes(old.get("metrics") or {}, new.get("metrics") or {}, lg)):
         lines.append(sep.join(m))
     return lines
+
+
+RUNS_KEEP = 5
+
+
+def push_run(runs: list, entry: dict, keep: int = RUNS_KEEP) -> list:
+    """记下一次运行（最新的在最前），只留最近 keep 次；原地修改并返回 runs"""
+    runs.insert(0, entry)
+    del runs[keep:]
+    return runs
 
 
 PCT_METRICS = {"total_return", "cagr", "volatility", "max_drawdown", "win_rate", "benchmark_return", "excess_return",

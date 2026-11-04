@@ -11,7 +11,7 @@ from nicegui import ui
 
 from simplequant import strategies
 from simplequant.data import library
-from gui import state
+from gui import state, run_log
 from gui.common import t, lang
 from gui.components import strategy_progress, credibility_box
 from gui.missing_data import market_bar
@@ -86,13 +86,22 @@ def _workbench(S, by_id: dict):
             ui.label(t("timing.no_report")).classes("sq-muted text-sm py-4")
         report(BT, bar.exp_menu, to_verify=lambda: show_verify("optimize"))
 
+    @ui.refreshable
+    def compare():
+        run_log.compare("timing", BT.get("run_no"))
+
     with panels:
         with ui.tab_panel("report").classes("px-0 pt-4"):
             with ui.column().classes("w-full gap-0").mark("timing_report") as report_box:
+                compare()
                 results()
         with ui.tab_panel("verify").classes("px-0 pt-4"):
             vf = _verify_tab(S, BT, by_id, bar, lambda spec, tuned: use_best(spec, tuned))
-    bar.report = results.refresh
+
+    def redraw_report():
+        compare.refresh()
+        results.refresh()
+    bar.report = redraw_report
 
     def show_verify(item: str | None = None):
         if item:
@@ -147,8 +156,12 @@ def _workbench(S, by_id: dict):
         refresh_all()
 
     def on_ran(ok: bool):
+        if BT.get("result") is not None:       # 分别回测没有单一的指标，不记
+            BT["run_no"] = run_log.record("timing", BT.get("name") or BT["title"][0], BT["spec"],
+                                          BT["result"].metrics, _run_setup(bar))
         if bar.setup.is_deleted:
             return
+        compare.refresh()
         if ok:
             _scroll_into_view(bar.setup_row, away_only=True)       # 设置已收起，摘要条下面就是报告
         else:
@@ -329,6 +342,11 @@ def _editor_only(S):
 
     saved_list = saved_strategies(S, ctx)
     ctx.changed()
+
+
+def _run_setup(bar) -> dict:
+    """记进「最近几次运行」的设置：摘要条里策略以外的几格（数据 · 区间 · 资金）"""
+    return {k: v for k, v in bar.chip_items() if k != "strategy"}
 
 
 def _accounts() -> list:

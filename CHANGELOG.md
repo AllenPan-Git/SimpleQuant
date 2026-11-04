@@ -5,6 +5,16 @@
 
 Changes in each release. `tools/release.py` copies the matching section into the GitHub release notes.
 
+## 未发布
+
+### 更新内容
+- 改进（新版界面）：数据中心的「行情」标签不再分为三个子标签，自上而下依次为本地数据库（标题旁显示数据集个数；预览图表、下载 CSV、删除收进表格下方的折叠区）、在线下载、导入 CSV（折叠）
+- 改进（新版界面）：择时工作台中规则用到利率而尚无利率数据时，提示文字改为「本地尚无中债利率数据」，不再提示前往「数据」页（旁边即有更新按钮）
+
+### Changes
+- Improved (new interface): the Market data tab of the data center no longer has three sub-tabs. It now shows, from top to bottom, the local library (with the number of datasets next to the heading; the preview chart, CSV download and delete are in a collapsible section below the table), Download, and Import CSV (collapsed)
+- Improved (new interface): in the Timing workbench, when a rule uses interest rates but there is no rate data yet, the notice now says that ChinaBond rate data is missing instead of pointing to the Data page (the update button is right next to it)
+
 ## 2.7.0（2026-11-04）
 
 ### 更新内容

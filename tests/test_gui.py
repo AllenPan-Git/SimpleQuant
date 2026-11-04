@@ -2585,6 +2585,9 @@ async def test_new_ui_data_center(user: User, monkeypatch):
     panels = lambda: user.find(marker="data_tabs").elements.pop()
     assert panels().value == "market"
     await user.should_see(t("data.tab_download"))
+    await user.should_see(marker="data_lib")                 # 行情：本地数据库、在线下载、导入 CSV 三个区块，不再套标签
+    await user.should_see(marker="data_csv")
+    await user.should_see(t("data.lib_count", n=len(data_globals["library"].list_datasets())))
     for tab in ("stocks", "cb", "rates"):
         await user.should_see(t(f"data.tab_{tab}"))
     await user.should_see(marker="rates_update")             # 利率标签
@@ -2726,6 +2729,44 @@ async def test_new_ui_selection_workbench(user: User):
     user.find(marker="spv_go_backtest").click()
     await settle()
     assert tab() == "bt"
+
+
+@needs_stocks
+async def test_new_ui_selection_run_diff(user: User):
+    """新版选股页报告顶部「与上次相比」：第一次没有；改持有数再跑，写出选股设置的变化和指标；
+    经典界面跑出的结果没有编号，切回新版不显示对比"""
+    from gui import common
+    from ui.shared import run_diff
+    common.set_ui("new")
+    runs = lambda: state.STATE["runs"]["sel"]
+    SP = await _open_selection(user)
+
+    async def run_once():
+        before = SP.get("result")
+        assert await _wait(lambda: _has(user, "sp_run"), n=2400)        # 换页后面板可能还在载入
+        user.find(marker="sp_run").click()
+        assert await _wait(lambda: SP.get("result") is not None and SP["result"] is not before, n=1200)
+        await settle()
+
+    await run_once()
+    await user.should_not_see(marker="run_diff")             # 只运行过一次
+    user.find(marker="sp_top_n").elements.pop().set_value(SP["top_n"] + 5)
+    await settle()
+    await run_once()
+    await user.should_see(marker="run_diff")
+    lines = run_diff(runs()[1], runs()[0], "zh")
+    assert any("持有前" in x and "→" in x for x in lines), lines
+    for line in lines:
+        await user.should_see(line)
+
+    common.set_ui("classic")                                  # 经典界面跑一次：没有编号，不新增记录
+    SP = await _open_selection(user)
+    await run_once()
+    assert SP["run_no"] is None and len(runs()) == 2
+    common.set_ui("new")
+    await _open_selection(user)
+    assert await _wait(lambda: _has(user, "sp_run"), n=2400)
+    await user.should_not_see(marker="run_diff")
 
 
 @needs_stocks
@@ -2889,6 +2930,39 @@ async def test_new_ui_timing_downloads_sample(user: User, lib_dir, monkeypatch):
     assert await _wait(lambda: _has(user, "run"), n=400)           # 下载完重新打开工作台
     assert calls == [("akshare", "510300", "2015-01-01", "1d", "hfq", "etf")]
     await user.should_not_see(marker="md:market")
+    md._JOBS.clear()
+
+
+async def test_new_ui_timing_updates_rates(user: User, lib_dir, monkeypatch):
+    """择时工作台：规则用到利率但本地没有利率数据时，设置区下面就地更新利率，更新完提示消失"""
+    from gui import common
+    from gui.common import t
+    from simplequant.bonds import rates as rates_mod
+    from simplequant.rules import make_ind
+    from ui.shared import with_ids
+    md = importlib.import_module("gui.missing_data")
+    md._JOBS.clear()
+    have, calls = {"ok": False}, []
+
+    def fake_update(self, first_year=rates_mod.FIRST_YEAR, today=None, progress=None):
+        calls.append(first_year)
+        have["ok"] = True
+    monkeypatch.setattr(rates_mod.RatesStore, "ready", lambda self: have["ok"])
+    monkeypatch.setattr(rates_mod.RatesStore, "update", fake_update)
+    common.set_ui("new")
+    _save_prices()
+    S = state.strategy()
+    S["mode"] = "rule"
+    S["rule"] = with_ids({"buy": {"logic": "all", "conditions": [{"left": make_ind("cgb10y"), "op": "<", "right": {"value": 2.5}}]},
+                 "sell": {"logic": "all", "conditions": [{"left": make_ind("cgb10y"), "op": ">", "right": {"value": 3}}]},
+                 "position_pct": 90})
+    await user.open("/timing")
+    await user.should_see(marker="md:rates")
+    await user.should_see(t("md.rates"))
+    await user.should_not_see(t("rates.need"))                     # 不再叫人去「数据」页
+    user.find(marker="md:rates_go").click()
+    assert await _wait(lambda: not _has(user, "md:rates"), n=400)  # 更新完重新检查，提示消失
+    assert calls == [rates_mod.FIRST_YEAR]
     md._JOBS.clear()
 
 

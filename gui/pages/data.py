@@ -3,6 +3,7 @@
 新版界面是数据中心（界面重构计划 4.4.1）：行情（上面三项）/ 选股数据 / 可转债 / 利率四个标签，
 选股数据与可转债用选股包的下载构件（selection/data_tab.py）。"""
 
+import contextlib
 import datetime as dt
 import io
 import os
@@ -70,7 +71,7 @@ def _center():
             ui.tab(k, t(key), icon=icon)
     with ui.tab_panels(tabs, value=cur).classes("w-full bg-transparent").mark("data_tabs") as panels:
         with ui.tab_panel("market").classes("px-0 gap-4"):
-            _market(rates=False)
+            _market_blocks()
         with ui.tab_panel("stocks").classes("px-0 gap-4"):
             _stock_data()
         with ui.tab_panel("cb").classes("px-0 gap-4"):
@@ -78,6 +79,34 @@ def _center():
         with ui.tab_panel("rates").classes("px-0 gap-4"):
             _rates_card()
     panels.on_value_change(lambda e: state.STATE.__setitem__("data_tab", e.value))
+
+
+def _market_blocks():
+    """新版「行情」标签：不再套一层标签，自上而下是本地数据库 → 在线下载 → 导入 CSV（用得少，折叠）"""
+    lib_head = _block_head(t("data.tab_library"), mark="data_lib_head", first=True)
+    lib_box = ui.column().classes("w-full gap-2").mark("data_lib")
+
+    def refresh_lib():
+        lib_box.clear()
+        lib_head.text = t("data.lib_count", n=len(library.list_datasets()))
+        with lib_box:
+            _library_view(refresh_lib, fold=True)
+
+    _block_head(t("data.tab_download"))
+    _download_tab(on_change=refresh_lib, rates=False)
+    with ui.expansion(t("data.tab_csv"), icon="upload_file").classes("w-full mt-4").mark("data_csv"):
+        _csv_tab(on_change=refresh_lib)
+    refresh_lib()
+
+
+def _block_head(title: str, mark: str | None = None, first: bool = False):
+    """区块标题（.sq-sec：宋体标题 + 右侧灰色小字），返回小字标签；first：紧接标签栏，不留上边距"""
+    with ui.element("div").classes("sq-sec").style("margin-top: 4px" if first else ""):
+        ui.label(title).classes("sq-h2")
+        note = ui.label().classes("sq-muted text-sm")
+    if mark:
+        note.mark(mark)
+    return note
 
 
 def _stock_data():
@@ -360,7 +389,8 @@ def _csv_tab(on_change):
 
 
 # ---------------- 本地数据库 ----------------
-def _library_view(refresh):
+def _library_view(refresh, fold: bool = False):
+    """fold：预览（图表、下载 CSV、删除）收进折叠区（新版「行情」标签：免得图表把下面的在线下载挤远）"""
     lg = lang()
     metas = library.list_datasets()
     if not metas:
@@ -375,9 +405,11 @@ def _library_view(refresh):
         t("lib.rows"): m.rows, t("lib.updated"): m.created} for m in metas]))
 
     by_id = {m.id: m for m in metas}
-    sel = ui.select({i: dataset_label(m, lg) for i, m in by_id.items()}, label=t("lib.preview"),
-                    value=next(iter(by_id))).props("outlined dense").classes("w-full")
-    detail = ui.column().classes("w-full gap-2")
+    box = ui.expansion(t("lib.preview_fold"), icon="show_chart").props("dense").classes("w-full sq-adv")         .mark("data_lib_preview") if fold else contextlib.nullcontext()
+    with box:
+        sel = ui.select({i: dataset_label(m, lg) for i, m in by_id.items()}, label=t("lib.preview"),
+                        value=next(iter(by_id))).props("outlined dense").classes("w-full")
+        detail = ui.column().classes("w-full gap-2")
 
     def show():
         detail.clear()
@@ -392,8 +424,7 @@ def _library_view(refresh):
                 ui.button(t("lib.download_csv"), icon="download", on_click=lambda: ui.download.content(
                     df.rename_axis("date").reset_index().to_csv(index=False).encode("utf-8-sig"),
                     f"{m.symbol}.csv", "text/csv")).props("outline no-caps")
-                ui.button(t("lib.delete"), icon="delete", on_click=lambda: confirm_delete(m, refresh)) \
-                    .props("outline no-caps color=negative")
+                ui.button(t("lib.delete"), icon="delete", on_click=lambda: confirm_delete(m, refresh))                     .props("outline no-caps color=negative")
     sel.on_value_change(show)
     show()
 

@@ -126,6 +126,8 @@ TEXT.update({
     "rates.need": L("规则用到了利率或信用利差，请先在「数据」页下载利率数据", "The rule uses rates or credit spreads; download rates on the Data page first"),
     "data.tab_csv": L("导入 CSV", "Import CSV"),
     "data.tab_library": L("本地数据库", "Local library"),
+    "lib.preview_fold": L("预览图表 · 下载 CSV · 删除", "Preview chart · download CSV · delete"),
+    "data.lib_count": L("共 {n} 个数据集", "Datasets: {n}"),
     "data.source": L("数据源", "Data source"),
     "data.popular": L("常用标的", "Popular symbols"),
     "data.other_codes": L("其他代码（6 位，以逗号分隔）", "Other codes (6 digits, comma-separated)"),
@@ -2063,6 +2065,7 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
                       "rebalance-day test does not apply."),
     # 新版界面：缺数据时就地下载（gui/missing_data.py）
     "md.download": L("下载", "Download"),
+    "md.rates": L("规则用到了利率或信用利差，本地尚无中债利率数据。", "The rule uses rates or credit spreads, but there is no ChinaBond rates data yet."),
     "md.busy": L("另一项下载正在进行（BaoStock 同一时间只能下载一项），完成后即可下载。",
                  "Another download is in progress (BaoStock allows only one at a time); this one can start when it finishes."),
     "md.failed": L("下载失败：{e}", "Download failed: {e}"),

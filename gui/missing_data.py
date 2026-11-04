@@ -184,4 +184,4 @@ def rates_bar(on_done=None):
     def work(progress):
         RatesStore().update(FIRST_YEAR, None, lambda i, n: progress(i / max(n, 1), f"{i}/{n}"))
         return None
-    download_bar("rates", t("rates.need"), t("rates.update"), work, on_done, mark="md:rates")
+    download_bar("rates", t("md.rates"), t("rates.update"), work, on_done, mark="md:rates")

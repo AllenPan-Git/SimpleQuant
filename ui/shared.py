@@ -13,7 +13,7 @@ import pandas as pd
 from simplequant.data import library
 from simplequant.data.base import freq_label
 from simplequant.data.ratio_adjust import is_additive
-from simplequant.i18n import L, render, tr
+from simplequant.i18n import L, pick, render, tr
 from simplequant.rules import make_ind
 from ui import texts  # noqa: F401  注册界面文字
 
@@ -293,6 +293,81 @@ def progress_steps(lg: str, saved: str | None, dirty: bool, ret: float | None,
         tone = ("up" if ret >= 0 else "down") if k == "backtest" and ret is not None and k != nxt else ""
         out.append({"key": k, "done": done, "next": k == nxt, "k": label, "v": value, "title": title, "tone": tone})
     return out
+
+
+# ---------------- 两次运行对比（报告顶部「与上次相比」）----------------
+DIFF_METRICS = ("cagr", "max_drawdown")
+
+
+def _strategy_name(spec: dict, lg: str) -> str:
+    """换了策略种类 / 模板时显示的名字"""
+    if spec.get("kind") == "template":
+        from simplequant.strategies import TEMPLATES
+        tpl = TEMPLATES.get(spec.get("template"))
+        return pick(tpl.label, lg) if tpl else str(spec.get("template"))
+    return tr(f"diff.kind_{spec.get('kind', 'rule')}", lg)
+
+
+def _sections(text: str) -> dict[str, str]:
+    """把 describe() 的说明按「【标题】内容」拆开；没有标题的行记在 "" 下"""
+    out: dict[str, str] = {}
+    for line in text.splitlines():
+        m = re.match(r"【(.+?)】(.*)", line)
+        key, body = (m.group(1), m.group(2)) if m else ("", line)
+        out[key] = f"{out[key]}；{body}" if key in out else body
+    return out
+
+
+def _spec_changes(old: dict, new: dict, lg: str) -> list[str]:
+    if spec_key(old) == spec_key(new):
+        return []
+    arrow = " → "
+    if old.get("kind") != new.get("kind") or old.get("template") != new.get("template"):
+        return [tr("diff.strategy", lg, a=_strategy_name(old, lg), b=_strategy_name(new, lg))]
+    if new.get("kind") == "template":
+        from simplequant.strategies import TEMPLATES
+        tpl = TEMPLATES.get(new.get("template"))
+        if tpl is not None:
+            a = {**tpl.defaults(), **(old.get("params") or {})}
+            b = {**tpl.defaults(), **(new.get("params") or {})}
+            out = [f"{pick(p.label, lg)} {float(a[p.name]):g}{arrow}{float(b[p.name]):g}"
+                   for p in tpl.params if float(a[p.name]) != float(b[p.name])]
+            return out or [tr("diff.other", lg)]
+    from simplequant.strategies import describe
+    try:
+        sa, sb = _sections(describe(old, lg)), _sections(describe(new, lg))
+    except Exception:  # noqa: BLE001 - 说明写不出来（例如引用了已删除的因子）时只说改了
+        return [tr("diff.other", lg)]
+    out = []
+    for k in list(sa) + [k for k in sb if k not in sa]:
+        a, b = sa.get(k, tr("diff.none", lg)), sb.get(k, tr("diff.none", lg))
+        if a != b:
+            head = (f"{k}：" if lg == "zh" else f"{k}: ") if k else ""
+            out.append(head + a + arrow + b)
+    return out or [tr("diff.other", lg)]   # 改的是说明里没写的设置
+
+
+def _metric_changes(old: dict, new: dict, lg: str) -> list[str]:
+    out = []
+    for k in DIFF_METRICS:
+        a, b = old.get(k), new.get(k)
+        if not all(isinstance(v, (int, float)) and math.isfinite(v) for v in (a, b)):
+            continue
+        d = round((b - a) * 100, 1)        # 比率之差用「个百分点」：10% → 12% 是多了 2 个百分点，不是 2%
+        change = tr("diff.flat", lg) if d == 0 else tr("diff.pp", lg, d=f"{d:+.1f}")
+        out.append(tr("diff.metric", lg, m=tr(f"m.{k}", lg), a=pct(a, 1), b=pct(b, 1), d=change))
+    return out
+
+
+def run_diff(old: dict, new: dict, lg: str) -> list[str]:
+    """两次运行对比：old / new 为 {"spec": 策略, "metrics": 指标}。
+    返回几行文字：先是策略改了什么（没改为「策略未改动」），最后一行是年化与最大回撤的差（两次都有时）。
+    指标写出两次的值和差（最大回撤是负数，只写差的话「+1.5 个百分点」容易被看成回撤变大）"""
+    lines = _spec_changes(old.get("spec") or {}, new.get("spec") or {}, lg) or [tr("diff.same", lg)]
+    sep = "，" if lg == "zh" else ", "
+    if m := _metric_changes(old.get("metrics") or {}, new.get("metrics") or {}, lg):
+        lines.append(sep.join(m))
+    return lines
 
 
 PCT_METRICS = {"total_return", "cagr", "volatility", "max_drawdown", "win_rate", "benchmark_return", "excess_return",

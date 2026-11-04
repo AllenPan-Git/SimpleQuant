@@ -172,3 +172,64 @@ def test_progress_steps():
     assert run(verify=None)["verify"]["title"] == "03 验证"     # 不知道做了哪些：只写步骤名
     en = {x["key"]: x for x in shared.progress_steps("en", None, False, None, None, 0)}
     assert en["setup"]["k"] == "Suggested next · 01" and en["backtest"]["k"] == "02 Backtest"
+
+
+# ---------------- 两次运行对比 ----------------
+def _run(spec, **metrics):
+    return {"spec": spec, "metrics": metrics}
+
+
+def test_run_diff_same_strategy():
+    spec = {"kind": "template", "template": "rsi_reversion", "params": {}}
+    assert shared.run_diff(_run(spec), _run({**spec, "name": "改了名字"}), "zh") == ["策略未改动"]
+
+
+def test_run_diff_template_param_and_defaults():
+    old = {"kind": "template", "template": "rsi_reversion", "params": {}}
+    same = {"kind": "template", "template": "rsi_reversion", "params": {"low": 30.0}}   # 写上默认值 = 没改
+    assert shared.run_diff(_run(old), _run(same), "zh") == ["策略未改动"]
+    new = {"kind": "template", "template": "rsi_reversion", "params": {"low": 25}}
+    assert shared.run_diff(_run(old), _run(new), "zh") == ["超卖线（低于则买入） 30 → 25"]
+
+
+def test_run_diff_switch_strategy():
+    old = {"kind": "template", "template": "rsi_reversion"}
+    assert shared.run_diff(_run(old), _run({"kind": "template", "template": "sma_cross"}), "zh") == \
+        ["策略：RSI 超买超卖 → 双均线交叉"]
+    rule = {"kind": "rule", "rule": shared.PRESETS["rsi"]()}
+    assert shared.run_diff(_run(old), _run(rule), "en") == ["Strategy: RSI mean reversion → Rule strategy"]
+
+
+def test_run_diff_rule_condition_added():
+    import copy
+    from simplequant.rules import make_ind
+    r1 = shared.PRESETS["rsi"]()
+    r2 = copy.deepcopy(r1)
+    r2["buy"]["conditions"].append(shared.cond(make_ind("close"), ">", make_ind("sma", period=60)))
+    out = shared.run_diff(_run({"kind": "rule", "rule": r1}), _run({"kind": "rule", "rule": r2}), "zh")
+    assert len(out) == 1 and out[0].startswith("买入：RSI(14) 上穿 30 → ") and "MA(60)" in out[0]
+
+
+def test_run_diff_selection_factor_added():
+    s1 = {"kind": "selection", "universe": "hs300", "factors": [{"key": "ep", "weight": 1, "direction": 1}],
+          "top_n": 10, "rebalance": "monthly", "position_pct": 95}
+    s2 = {**s1, "factors": s1["factors"] + [{"key": "roe", "weight": 1, "direction": 1}]}
+    out = shared.run_diff(_run(s1), _run(s2), "zh")
+    assert len(out) == 1 and out[0].startswith("因子：") and "ROE" in out[0].split(" → ")[1]
+    # 改的是说明里没写的设置：仍然说「有改动」，不说「未改动」
+    assert shared.run_diff(_run(s1), _run({**s1, "cost": 0.001}), "zh") == ["策略的其他设置有改动"]
+
+
+def test_run_diff_metrics():
+    spec = {"kind": "template", "template": "rsi_reversion"}
+    out = shared.run_diff(_run(spec, cagr=0.10, max_drawdown=-0.20), _run(spec, cagr=0.123, max_drawdown=-0.185), "zh")
+    assert out == ["策略未改动", "年化收益率 10.0% → 12.3%（+2.3 个百分点），最大回撤 -20.0% → -18.5%（+1.5 个百分点）"]
+    out = shared.run_diff(_run(spec, cagr=0.10), _run(spec, cagr=0.1001), "en")
+    assert out[1] == "CAGR 10.0% → 10.0% (unchanged)"
+
+
+def test_run_diff_skips_missing_metrics():
+    spec = {"kind": "template", "template": "rsi_reversion"}
+    out = shared.run_diff(_run(spec, cagr=float("nan"), max_drawdown=-0.2), _run(spec, cagr=0.1), "zh")
+    assert out == ["策略未改动"]                      # 一边是 NaN、一边没有：都不比
+    assert shared.run_diff({}, {}, "zh") == ["策略未改动"]

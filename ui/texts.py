@@ -1990,6 +1990,17 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
     "prog.not_run": L("未运行", "Not run"),
     "prog.verify_n": L("{n} / {of} 项", "{n} of {of} checks"),
     "prog.paper_n": L("{n} 个账户", "Accounts: {n}"),
+    # 新版界面：两次运行对比（ui/shared.run_diff）
+    "diff.same": L("策略未改动", "Strategy unchanged"),
+    "diff.other": L("策略的其他设置有改动", "Other strategy settings changed"),
+    "diff.strategy": L("策略：{a} → {b}", "Strategy: {a} → {b}"),
+    "diff.none": L("（无）", "(none)"),
+    "diff.kind_rule": L("规则策略", "Rule strategy"),
+    "diff.kind_code": L("自定义代码", "Custom code"),
+    "diff.kind_selection": L("多因子选股", "Multi-factor selection"),
+    "diff.pp": L("{d} 个百分点", "{d} pp"),
+    "diff.flat": L("持平", "unchanged"),
+    "diff.metric": L("{m} {a} → {b}（{d}）", "{m} {a} → {b} ({d})"),
     # 新版界面：择时工作台（策略 + 回测 + 验证）
     "nav.timing": L("择时工作台", "Timing workbench"),
     "timing.subtitle": L("在同一页编写策略、回测并检验结果。修改设置后点击「开始回测」，报告在下方更新。",

@@ -22,7 +22,7 @@ from simplequant.stocks.panel import STOCK_FILTERS, RISK_FILTERS
 from simplequant.bonds.panel import CB_FILTERS, CB_DEFAULT_FILTERS
 from simplequant.system import open_folder
 from gui import state, history, support
-from gui.common import t, p, lang
+from gui.common import t, p, lang, new_ui
 from gui.components import broker_settings, metric_tiles, metric_tile, credibility_box, bench_label
 from gui.pages.stock_overview import picks_dialog
 from gui.plan_io import import_button, export_selection_bytes, plan_filename, plan_check_notice, restore_broker
@@ -393,7 +393,17 @@ def _backtest_form(SP, ctx, rebuild):
                             .props("outlined dense").classes("w-28")
                         ui.toggle({1: t("sel.dir_up"), -1: t("sel.dir_down")}, value=int(f["direction"]),
                                   on_change=on_d).props("dense no-caps unelevated toggle-color=primary")
+                        if new_ui():         # 因子研究在因子实验室（另一页）
+                            ui.button(icon="science", on_click=lambda k=f["key"]: to_lab(k)) \
+                                .props("flat round dense size=sm").classes("sq-muted") \
+                                .tooltip(t("sp.to_lab")).mark(f"sp_to_lab:{f['key']}")
             factor_rows()
+
+            def to_lab(k):
+                """去因子实验室检验这个因子：打开因子研究并选好它"""
+                SP["res"]["fkey"] = k
+                state.STATE["lab_tab"] = "res"
+                ui.navigate.to("/factors")
 
             def note_text():
                 if SP["weighting"] == "ml":

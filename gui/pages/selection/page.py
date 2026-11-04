@@ -53,6 +53,9 @@ def page():
     cur = _start_tab(new)
     with frame("/selection"):
         page_title("/selection", t("sp.intro_short"), t("sp.intro"))
+        msg = state.STATE.pop("sp_notify", None)       # 其他页面带来的提示（因子实验室「用这个因子回测」）
+        if msg:
+            ui.notify(msg[0], type=msg[1])
         if new:
             accounts = _accounts()
 

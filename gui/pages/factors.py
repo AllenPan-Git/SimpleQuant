@@ -10,7 +10,8 @@ from nicegui import background_tasks, ui
 from gui import state
 from gui.common import t
 from gui.layout import frame, page_title
-from gui.pages.selection.common import Ctx, sp_state, prune_factors
+from simplequant.stocks import FACTORS
+from gui.pages.selection.common import Ctx, sp_state, prune_factors, factor_label
 from gui.pages.selection.universe_bar import universe_bar, panel_loader
 from gui.pages.selection.research import _research
 from gui.pages.selection.custom import _custom_factors
@@ -22,6 +23,30 @@ TABS = ("res", "cf", "mine")
 def _go_download():
     """数据中心（4.4.1）做好之前，选股数据在选股页的「数据」标签下载"""
     state.STATE["sp_tab"] = "data"
+    ui.navigate.to("/selection")
+
+
+def add_factor(SP, key: str) -> bool:
+    """把因子加进选股回测的因子列表（已有的不重复加，返回 False）。方向：因子研究刚分析过这个因子时按 IC 的正负，
+    否则用因子的默认方向；权重 1"""
+    if any(f["key"] == key for f in SP["factors"]):
+        return False
+    rep = SP.get("report")
+    if rep and rep[0] == key:
+        direction = 1 if rep[2].summary.mean > 0 else -1
+    else:
+        direction = FACTORS[key]["direction"]
+    SP["factors"].append({"key": key, "weight": 1.0, "direction": direction})
+    return True
+
+
+def _to_backtest(SP, key: str):
+    """「用这个因子回测」：加进因子列表，回到选股页的选股回测标签（设置区展开，看得到新加的因子）"""
+    added = add_factor(SP, key)          # 提示由选股页打开后显示（跳转后这一页的提示会消失）
+    state.STATE["sp_notify"] = (t("lab.factor_added" if added else "lab.factor_exists", name=factor_label(key)),
+                                "positive" if added else "info")
+    state.STATE["sp_tab"] = "bt"
+    SP["setup_open"] = True
     ui.navigate.to("/selection")
 
 
@@ -61,6 +86,7 @@ def page():
             rebuild(res_box, _research)
         ctx.factors_changed = factors_changed
         ctx.reload_cf = lambda: rebuild(cf_box, _custom_factors)     # AI 因子挖掘保存了因子
+        ctx.to_backtest = lambda key: _to_backtest(SP, key)
 
         def on_empty(box):
             ui.button(t("lab.go_download"), icon="download", on_click=_go_download) \

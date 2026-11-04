@@ -116,6 +116,9 @@ def _research(SP, ctx):
                 .mark("sp_analyze")
             b2 = ui.button(t("sp.overview"), icon="table_chart", on_click=do_overview).props("outline no-caps") \
                 .tooltip(t("sp.overview_help")).mark("sp_overview")
+            if ctx.to_backtest:          # 因子实验室：回到选股页用这个因子回测
+                ui.button(t("lab.use_factor"), icon="query_stats", on_click=lambda: ctx.to_backtest(R["fkey"])) \
+                    .props("flat no-caps color=primary").tooltip(t("lab.use_factor_help")).mark("lab_use_factor")
 
     @ui.refreshable
     def overview():

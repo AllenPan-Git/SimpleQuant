@@ -2605,6 +2605,36 @@ async def test_new_ui_selection_workbench(user: User):
     assert tab() == "bt"
 
 
+@needs_stocks
+async def test_new_ui_selection_lab_jumps(user: User):
+    """选股设置里的因子「去实验室检验」：打开因子研究并选好它；实验室「用这个因子回测」：加进因子列表（方向按 IC 正负，
+    已有的不重复加），回到选股页的选股回测"""
+    from gui import common
+    common.set_ui("new")
+    SP = await _open_selection(user, "bt")
+    assert [f["key"] for f in SP["factors"]] == ["ep", "ret20"]
+    user.find(marker="sp_to_lab:ret20").click()
+    assert await _wait(lambda: _has(user, "sp_analyze"), n=2400)
+    assert user.find(marker="lab_tabs").elements.pop().value == "res"
+    assert user.find(marker="sp_res_factor").elements.pop().value == "ret20"
+
+    user.find(marker="sp_res_factor").elements.pop().set_value("vol60")
+    user.find(marker="sp_analyze").click()
+    assert await _wait(lambda: SP.get("report") and SP["report"][0] == "vol60", n=1200)
+    want = 1 if SP["report"][2].summary.mean > 0 else -1
+    user.find(marker="lab_use_factor").click()
+    assert await _wait(lambda: _has(user, "sp_run"), n=2400)
+    assert user.find(marker="sp_tabs").elements.pop().value == "bt"
+    assert SP["factors"][-1] == {"key": "vol60", "weight": 1.0, "direction": want}
+    assert "sp_notify" not in state.STATE                     # 提示已在选股页显示
+
+    user.find(marker="sp_to_lab:ep").click()                  # 再加一次已有的因子：不重复
+    assert await _wait(lambda: _has(user, "lab_use_factor"), n=2400)
+    user.find(marker="lab_use_factor").click()
+    assert await _wait(lambda: _has(user, "sp_run"), n=2400)
+    assert [f["key"] for f in SP["factors"]] == ["ep", "ret20", "vol60"]
+
+
 def _has(user: User, marker: str) -> bool:
     try:
         return bool(user.find(marker=marker).elements)

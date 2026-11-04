@@ -2020,6 +2020,13 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
     "spv.phase_na": L("当前策略的调仓频率无法错开调仓日（例如每天调仓），不进行调仓日检验。",
                       "The rebalance days of this strategy cannot be shifted (for example, daily rebalancing), so the "
                       "rebalance-day test does not apply."),
+    "lab.use_factor": L("用这个因子回测", "Backtest with this factor"),
+    "lab.use_factor_help": L("加入「多因子选股」的因子列表并前往选股回测；已分析过时按 IC 的正负设定方向",
+                             "Adds the factor to Stock selection and opens the backtest; if it has been analyzed, "
+                             "the direction follows the sign of the IC"),
+    "lab.factor_added": L("已加入选股回测的因子：{name}", "Added to the selection backtest: {name}"),
+    "lab.factor_exists": L("选股回测中已有该因子：{name}", "Already in the selection backtest: {name}"),
+    "sp.to_lab": L("去因子实验室检验", "Test in the Factor lab"),
     "lab.go_download": L("前往下载选股数据", "Download selection data"),
     "timing.tab_report": L("回测报告", "Backtest report"),
     "timing.tab_verify": L("验证", "Validation"),

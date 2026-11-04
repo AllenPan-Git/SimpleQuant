@@ -16,8 +16,9 @@ from gui.sel_panel import store
 
 
 # ================= 数据 =================
-def _data_tab(SP, ctx, reload_all):
-    universe = SP["universe"]
+def _data_tab(SP, ctx, reload_all, universe: str | None = None):
+    """universe：下载哪个股票池（新版数据中心自己选）；为空时用选股页当前的股票池。ctx 只用 lo / hi（是否已有数据）"""
+    universe = universe or SP["universe"]
     if U.kind(universe) == "cb":
         _cb_data_tab(SP, ctx, reload_all)
         return

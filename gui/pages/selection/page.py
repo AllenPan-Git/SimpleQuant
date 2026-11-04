@@ -1,13 +1,13 @@
 """选股页入口：股票池与区间、标签页
 
 经典界面六个标签（数据 / 因子研究 / 自定义因子 / AI 因子挖掘 / 选股回测 / 滚动优化）；
-新版界面（界面重构计划 4.3.2）顶部是这个策略的四步进度，只留「选股回测 / 验证 / 数据」：研究类三个在因子实验室，
-滚动优化与调仓日检验在「验证」里（verify.py）；「数据」等 4.4.1 数据中心做好后移走。
+新版界面（界面重构计划 4.3.2）顶部是这个策略的四步进度，只留「选股回测 / 验证」：研究类三个在因子实验室，
+滚动优化与调仓日检验在「验证」里（verify.py），数据在数据中心（/data 的「选股数据」「可转债」标签）。
 """
 
 from nicegui import background_tasks, ui
 
-from gui import state
+from gui import routes, state
 from gui.common import t, new_ui
 from gui.components import strategy_progress
 from gui.layout import frame, page_title
@@ -25,8 +25,7 @@ from .verify import verify_tab, progress as progress_steps
 CLASSIC_TABS = [("data", "sp.tab_data", "storage"), ("res", "sp.tab_research", "science"),
                 ("cf", "sp.tab_custom", "functions"), ("mine", "sp.tab_mine", "auto_awesome"),
                 ("bt", "sp.tab_backtest", "query_stats"), ("wf", "sp.tab_wf", "timeline")]
-NEW_TABS = [("bt", "sp.tab_backtest", "query_stats"), ("verify", "timing.tab_verify", "fact_check"),
-            ("data", "sp.tab_data", "storage")]
+NEW_TABS = [("bt", "sp.tab_backtest", "query_stats"), ("verify", "timing.tab_verify", "fact_check")]
 
 
 def _accounts():
@@ -76,7 +75,7 @@ def page():
             for k, _, _ in tab_defs:
                 with ui.tab_panel(tab_els[k]).classes("px-0 gap-4"):
                     boxes[k] = ui.column().classes("w-full gap-4")
-        data_box, bt_box = boxes["data"], boxes["bt"]
+        data_box, bt_box = boxes.get("data"), boxes["bt"]
         res_box, cf_box, mine_box, wf_box = (boxes.get(k) for k in ("res", "cf", "mine", "wf"))
         vf = {"tab": None}               # 新版的「验证」标签（面板载入后才画）
 
@@ -141,6 +140,8 @@ def page():
         ctx.reload_cf = reload_cf
 
         def on_empty(box):
+            if new:                      # 新版没有数据标签：去数据中心下载
+                ui.button(t("lab.go_download"), icon="download", on_click=lambda: ui.navigate.to(routes.download()))                     .props("outline no-caps").classes("self-start").mark("sp_go_download")
             if box is bt_box:            # 没有数据也能导入方案（导入时下载）
                 import_button().classes("self-start")
         if new:
@@ -152,9 +153,10 @@ def page():
 
         def reload_all():
             bar.sync()
-            data_box.clear()
-            with data_box:
-                _data_tab(SP, ctx, reload_all)
+            if data_box is not None:
+                data_box.clear()
+                with data_box:
+                    _data_tab(SP, ctx, reload_all)
             background_tasks.create(load_panel(), name="sp load panel")
         ctx.reload_all = reload_all
 

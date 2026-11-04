@@ -7,7 +7,7 @@
 
 from nicegui import background_tasks, ui
 
-from gui import state
+from gui import routes, state
 from gui.common import t
 from gui.layout import frame, page_title
 from simplequant.stocks import FACTORS
@@ -21,9 +21,8 @@ TABS = ("res", "cf", "mine")
 
 
 def _go_download():
-    """数据中心（4.4.1）做好之前，选股数据在选股页的「数据」标签下载"""
-    state.STATE["sp_tab"] = "data"
-    ui.navigate.to("/selection")
+    """去下载当前股票池的选股数据（新版是数据中心，经典是选股页的数据标签）"""
+    ui.navigate.to(routes.download())
 
 
 def add_factor(SP, key: str) -> bool:

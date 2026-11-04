@@ -2471,7 +2471,8 @@ def _shown(user: User, marker: str) -> bool:
 
 
 async def test_new_ui_factor_lab_no_data(user: User, monkeypatch):
-    """因子实验室：股票池没有数据时三个标签都提示下载，按钮到选股页的数据标签；侧栏「因子实验室」高亮，标签记住"""
+    """因子实验室：股票池没有数据时三个标签都提示下载，按钮到数据中心的「选股数据」并选好股票池；
+    侧栏「因子实验室」高亮，标签记住"""
     from gui import common
     from gui.common import t
     bar_globals = routes()["/factors"].__globals__["universe_bar"].__globals__    # 页面实际用的那个模块
@@ -2489,11 +2490,68 @@ async def test_new_ui_factor_lab_no_data(user: User, monkeypatch):
 
     def tab_value():
         try:
-            return user.find(marker="sp_tabs").elements.pop().value
+            return user.find(marker="data_tabs").elements.pop().value
         except AssertionError:          # 页面正在切换
             return None
-    assert await _wait(lambda: tab_value() == "data")         # 跳转是后台任务：等新页面画出来
-    assert state.STATE["sp_tab"] == "data"
+    assert await _wait(lambda: tab_value() == "stocks")       # 跳转是后台任务：等新页面画出来
+    assert state.STATE["data_uni"] == "hs300"
+    assert user.find(marker="data_uni").elements.pop().value == "hs300"
+
+
+async def test_new_ui_data_center(user: User, monkeypatch):
+    """新版数据中心：行情 / 选股数据 / 可转债 / 利率四个标签，标签记住；选股数据可换股票池（不改选股页的股票池）；
+    新版选股页没有数据标签，没有数据时给出去数据中心的按钮；经典数据页不变"""
+    from gui import common, routes as R
+    from gui.common import t
+    from gui.pages.selection import sp_state
+    common.set_ui("classic")
+    await user.open("/data")
+    await user.should_see(t("data.tab_download"))
+    await user.should_not_see(marker="data_tabs")
+    await user.should_see(marker="rates_update")             # 经典：利率卡片在在线下载下面
+
+    common.set_ui("new")
+    import sys
+    data_globals = routes()["/data"].__globals__
+    monkeypatch.setitem(sys.modules["gui.sel_panel"].__dict__, "universe_ready", lambda u: False)   # 当作都没有数据
+    bar_globals = routes()["/selection"].__globals__["universe_bar"].__globals__
+    monkeypatch.setitem(bar_globals, "universe_ready", lambda u: False)
+    await user.open("/data")
+    panels = lambda: user.find(marker="data_tabs").elements.pop()
+    assert panels().value == "market"
+    await user.should_see(t("data.tab_download"))
+    for tab in ("stocks", "cb", "rates"):
+        await user.should_see(t(f"data.tab_{tab}"))
+    await user.should_see(marker="rates_update")             # 利率标签
+    await user.should_see(marker="sp_download")               # 选股数据标签
+    await user.should_see(marker="cb_download")               # 可转债标签
+    assert user.find(marker="data_uni").elements.pop().value == "hs300"
+    user.find(marker="data_uni").elements.pop().set_value("zz500")
+    await settle()
+    assert state.STATE["data_uni"] == "zz500" and sp_state()["universe"] == "hs300"
+    panels().set_value("cb")
+    await settle()
+    assert state.STATE["data_tab"] == "cb"
+    await user.open("/data")
+    assert panels().value == "cb"                            # 记住标签
+    assert data_globals["new_ui"]()
+
+    # routes.download：可转债股票池去「可转债」标签；经典界面去选股页的数据标签
+    sp_state()["universe"] = "cb"
+    assert R.download() == "/data" and state.STATE["data_tab"] == "cb"
+    assert R.download("sz50") == "/data" and state.STATE["data_tab"] == "stocks" and state.STATE["data_uni"] == "sz50"
+    common.set_ui("classic")
+    assert R.download() == "/selection" and state.STATE["sp_tab"] == "data"
+    common.set_ui("new")
+    sp_state()["universe"] = "hs300"
+
+    # 新版选股页：没有数据标签；没有数据时「前往下载」去数据中心
+    state.STATE["sp_tab"] = "data"
+    await user.open("/selection")
+    await user.should_see(marker="sp_tabs")
+    assert user.find(marker="sp_tabs").elements.pop().value == "bt"
+    await user.should_not_see(marker="sp_download")
+    await user.should_see(marker="sp_go_download")
 
 
 @needs_stocks

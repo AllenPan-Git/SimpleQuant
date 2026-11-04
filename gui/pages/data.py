@@ -1,4 +1,7 @@
-"""第 1 页：数据（在线下载 / 导入 CSV / 本地数据库）"""
+"""第 1 页：数据（在线下载 / 导入 CSV / 本地数据库）
+
+新版界面是数据中心（界面重构计划 4.4.1）：行情（上面三项）/ 选股数据 / 可转债 / 利率四个标签，
+选股数据与可转债用选股包的下载构件（selection/data_tab.py）。"""
 
 import datetime as dt
 import io
@@ -13,38 +16,117 @@ from simplequant.data.ratio_adjust import is_additive
 from simplequant.data.csv_src import read_csv_any, is_snapshot
 from simplequant.data.tdx_local_src import DEFAULT_TDX_DIR
 from simplequant.rules import INDICATORS
-from gui.common import t, p, lang
+from gui import state
+from gui.common import t, p, lang, new_ui
 from gui.layout import frame, page_title
 from gui.widgets import df_table, plot, Progress
 from ui.charts import preview_chart
 from ui.shared import POPULAR, ADJUST, parse_symbols, import_csv, dataset_label, sina_fallback
 
 
+CENTER_TABS = (("market", "data.tab_market", "candlestick_chart"), ("stocks", "data.tab_stocks", "filter_list"),
+               ("cb", "data.tab_cb", "receipt_long"), ("rates", "data.tab_rates", "percent"))
+
+
 def page():
     with frame("/data"):
         page_title("/data")
-        with ui.tabs().classes("w-full").props("align=left no-caps") as tabs:
-            tab_dl = ui.tab("dl", t("data.tab_download"), icon="download")
-            tab_csv = ui.tab("csv", t("data.tab_csv"), icon="upload_file")
-            tab_lib = ui.tab("lib", t("data.tab_library"), icon="inventory_2")
-        with ui.tab_panels(tabs, value=tab_dl).classes("w-full bg-transparent"):
-            with ui.tab_panel(tab_dl).classes("px-0"):
-                _download_tab(on_change=lambda: refresh_lib())
-            with ui.tab_panel(tab_csv).classes("px-0"):
-                _csv_tab(on_change=lambda: refresh_lib())
-            with ui.tab_panel(tab_lib).classes("px-0"):
-                lib_box = ui.column().classes("w-full gap-2")
+        if new_ui():
+            _center()
+        else:
+            _market(rates=True)
 
-        def refresh_lib():
-            """本页的数据库列表重画（每次打开页面各自一份，不用模块级 refreshable）"""
-            lib_box.clear()
-            with lib_box:
-                _library_view(refresh_lib)
-        refresh_lib()
+
+def _market(rates: bool):
+    """行情：在线下载 / 导入 CSV / 本地数据库（经典界面的整页；新版数据中心的「行情」标签）"""
+    with ui.tabs().classes("w-full").props("align=left no-caps") as tabs:
+        tab_dl = ui.tab("dl", t("data.tab_download"), icon="download")
+        tab_csv = ui.tab("csv", t("data.tab_csv"), icon="upload_file")
+        tab_lib = ui.tab("lib", t("data.tab_library"), icon="inventory_2")
+    with ui.tab_panels(tabs, value=tab_dl).classes("w-full bg-transparent"):
+        with ui.tab_panel(tab_dl).classes("px-0"):
+            _download_tab(on_change=lambda: refresh_lib(), rates=rates)
+        with ui.tab_panel(tab_csv).classes("px-0"):
+            _csv_tab(on_change=lambda: refresh_lib())
+        with ui.tab_panel(tab_lib).classes("px-0"):
+            lib_box = ui.column().classes("w-full gap-2")
+
+    def refresh_lib():
+        """本页的数据库列表重画（每次打开页面各自一份，不用模块级 refreshable）"""
+        lib_box.clear()
+        with lib_box:
+            _library_view(refresh_lib)
+    refresh_lib()
+
+
+# ---------------- 新版界面：数据中心（界面重构计划 4.4.1） ----------------
+def _center():
+    """按数据类型分标签：行情 / 选股数据 / 可转债 / 利率；当前标签记在 state.STATE["data_tab"]"""
+    keys = [k for k, _, _ in CENTER_TABS]
+    cur = state.STATE.get("data_tab") if state.STATE.get("data_tab") in keys else "market"
+    with ui.tabs().classes("w-full").props("align=left no-caps") as tabs:
+        for k, key, icon in CENTER_TABS:
+            ui.tab(k, t(key), icon=icon)
+    with ui.tab_panels(tabs, value=cur).classes("w-full bg-transparent").mark("data_tabs") as panels:
+        with ui.tab_panel("market").classes("px-0 gap-4"):
+            _market(rates=False)
+        with ui.tab_panel("stocks").classes("px-0 gap-4"):
+            _stock_data()
+        with ui.tab_panel("cb").classes("px-0 gap-4"):
+            _universe_data("cb")
+        with ui.tab_panel("rates").classes("px-0 gap-4"):
+            _rates_card()
+    panels.on_value_change(lambda e: state.STATE.__setitem__("data_tab", e.value))
+
+
+def _stock_data():
+    """选股数据：先选股票池（单独记在 state.STATE["data_uni"]，不改选股页当前的股票池），下面是下载与数据包"""
+    from simplequant.stocks import UNIVERSES, universe as U
+    stock = [u for u in UNIVERSES if U.kind(u) == "stock"]
+    if state.STATE.get("data_uni") not in stock:
+        sp_uni = (state.STATE.get("sp") or {}).get("universe")
+        state.STATE["data_uni"] = sp_uni if sp_uni in stock else stock[0]
+
+    sel = ui.select({u: p(UNIVERSES[u]["label"]) for u in stock}, label=t("sp.universe"),
+                    value=state.STATE["data_uni"]).props("outlined dense options-dense").classes("w-48").mark("data_uni")
+
+    box = ui.column().classes("w-full gap-4")
+    body = _universe_data(lambda: state.STATE["data_uni"], box)
+
+    def on_uni(e):
+        state.STATE["data_uni"] = e.value
+        body()
+    sel.on_value_change(on_uni)
+
+
+def _universe_data(universe, box=None):
+    """一个股票池的数据状态与下载（选股包的 _data_tab）。universe：股票池或返回股票池的函数；
+    返回重画函数：下载、导入数据包完成后（以及换股票池时）整块重画，重新判断有没有数据"""
+    from gui.pages.selection import sp_state
+    from gui.pages.selection.common import Ctx
+    from gui.pages.selection.data_tab import _data_tab
+    from gui.sel_panel import store, universe_ready
+    from simplequant.stocks import universe as U
+    box = box or ui.column().classes("w-full gap-4")
+
+    def draw():
+        if box.is_deleted:
+            return
+        u = universe() if callable(universe) else universe
+        ctx = Ctx()
+        if universe_ready(u):
+            idx = U.load_benchmark(u, store())
+            ctx.lo, ctx.hi = idx.index[0].date(), idx.index[-1].date()
+        box.clear()
+        with box:
+            _data_tab(sp_state(), ctx, draw, universe=u)
+    draw()
+    return draw
 
 
 # ---------------- 在线下载 ----------------
-def _download_tab(on_change):
+def _download_tab(on_change, rates: bool = True):
+    """rates：下面接利率卡片（经典界面；新版数据中心的利率是单独的标签）"""
     lg = lang()
     online = {k: s for k, s in SOURCES.items() if k != "csv"}
     today = dt.date.today()
@@ -123,7 +205,8 @@ def _download_tab(on_change):
 
         btn = ui.button(t("data.download"), icon="download", on_click=download).props("unelevated no-caps")
 
-    _rates_card()
+    if rates:
+        _rates_card()
 
 
 def _rates_card():

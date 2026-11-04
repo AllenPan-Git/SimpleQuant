@@ -15,6 +15,7 @@ Changes in each release. `tools/release.py` copies the matching section into the
 - 新增（新版界面）：缺少数据时就地下载。选股回测与因子实验室用到的因子或条件缺少财务、分红或排雷数据时，提示处直接提供「下载」按钮，只补下载缺少的这一类并在原地显示进度（排雷数据同时给出按每日额度约需几天的估计），完成后自动重新整理数据；择时工作台在本地尚无行情数据时可直接下载沪深300ETF（510300）日线作为示例，规则用到利率或利差条件而尚无利率数据时可直接更新。下载在后台进行，离开页面后回来仍显示进度；因 BaoStock 只能单连接，同一时间只进行一项下载
 - 新增（新版界面）：择时工作台与「多因子选股」页的回测报告顶部显示「与上次相比」：列出与本次启动后上一次运行相比策略改了什么（如「超卖线（低于则买入） 30 → 25」「选股：持有前 10 只 → 持有前 20 只」，未改动时写「策略未改动」）、数据、区间、资金与费率的变化，以及年化收益率、最大回撤的前后数值与差（以「个百分点」表示）；点击「最近 5 次运行」可查看本次启动后最近 5 次运行的指标与每次的改动。记录只保存在本次启动期间，关闭程序后清空
 - 修复（新版界面）：择时工作台与「多因子选股」页顶部的四步进度中，第一格的文字紧贴左边，与其余三格不一致
+- 改进：深色模式下的文字颜色调暗，卡片、对话框、菜单、输入框与列表中的文字不再显示为纯白，图表文字同步调整，长时间阅读不再刺眼
 
 ### Changes
 - New (new interface): the Factor lab, a new item in the Research group of the sidebar. Factor research, custom factors and AI factor mining are gathered on this page; the universe, date range and prepared data are shared with the Stock selection page, so switching between the two does not prepare the data again and research results are kept. Saved custom factors can be used directly in selection backtests. If the universe has no data yet, a button next to the notice leads to the download
@@ -24,6 +25,7 @@ Changes in each release. `tools/release.py` copies the matching section into the
 - New (new interface): missing data can be downloaded in place. When a factor or condition in the selection backtest or the Factor lab needs financial, dividend or risk data that is missing, the notice now has a Download button that fetches only that kind of data and shows progress right there (for risk data, with an estimate of how many days the daily quota requires), then reloads the data automatically. In the Timing workbench, when there is no market data yet, daily bars of the CSI 300 ETF (510300) can be downloaded as a sample, and when a rule uses interest-rate or spread conditions without rate data, the rates can be updated in place. Downloads run in the background and their progress is still shown after leaving and returning to the page; since BaoStock allows only one connection, only one download runs at a time
 - New (new interface): backtest reports in the Timing workbench and on the Stock selection page now start with "Compared with the previous run": what changed in the strategy since the previous run in this session (e.g. "Oversold (buy below) 30 → 25", or "Strategy unchanged"), changes to the data, period, capital and costs, and CAGR and maximum drawdown before and after with the difference in percentage points. "Last 5 runs" lists the metrics and changes of the five most recent runs. The record is kept only while the app is running
 - Fixed (new interface): in the four-step progress at the top of the Timing workbench and the Stock selection page, the text of the first step sat flush against its left edge, unlike the other three steps
+- Improved: text in dark mode is slightly dimmer, and text in cards, dialogs, menus, input fields and lists is no longer pure white (chart text adjusted to match), making long reading sessions easier on the eyes
 
 ## 2.6.0（2026-11-03）
 

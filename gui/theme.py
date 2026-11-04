@@ -16,7 +16,7 @@ from nicegui import app, ui
 
 STATIC = Path(__file__).with_name("static")
 
-INK, INK_DARK = "#1D1B18", "#EDE6DA"          # 主色 = 墨色（深色模式下换成米色）
+INK, INK_DARK = "#1D1B18", "#D8D0C2"          # 主色 = 墨色（深色模式下换成米色；不要太亮，深底上刺眼）
 RED, RED_DARK = "#B42318", "#E0584A"          # 点缀色（朱红）
 GREEN, GREEN_DARK = "#1E7A4C", "#4DB380"
 GOLD = "#9A6B1F"
@@ -83,7 +83,7 @@ CSS = f"""
   --sq-mono: 'JetBrains Mono', 'Cascadia Mono', Consolas, monospace;
 }}
 .body--dark {{
-  --sq-page: {DARK_PAGE}; --sq-card: {DARK_CARD}; --sq-sunk: #2A2621; --sq-text: {INK_DARK}; --sq-text2: #CFC7BA;
+  --sq-page: {DARK_PAGE}; --sq-card: {DARK_CARD}; --sq-sunk: #2A2621; --sq-text: {INK_DARK}; --sq-text2: #C0B8AB;
   --sq-muted: #9B9387; --sq-faint: #6F685E; --sq-border: #3A352E; --sq-border2: #2E2A25; --sq-shadow: #141210;
   --sq-red: {RED_DARK}; --sq-red-soft: rgba(224, 88, 74, .10); --sq-up: {RED_DARK}; --sq-down: {GREEN_DARK}; --sq-gold: #C9A05A;
   --q-primary: {INK_DARK} !important; --q-positive: {GREEN_DARK} !important; --q-negative: {RED_DARK} !important;
@@ -92,6 +92,14 @@ CSS = f"""
 body, .q-field, .q-btn, .q-item, .q-tab, .q-menu {{ font-family: var(--sq-sans); }}
 body {{ background: var(--sq-page); color: var(--sq-text); font-size: 14.5px; -webkit-font-smoothing: antialiased;
   font-variant-numeric: tabular-nums; }}
+/* Quasar 深色模式把文字写死成纯白（body.body--dark、.q-dark、输入框、列表等，选择器比上面的 body 更具体），
+   纯白在深色纸面上刺眼：一律改回米色墨（--sq-text） */
+html body.body--dark, .body--dark .q-dark, .body--dark .q-list--dark, .body--dark .q-item--dark,
+.body--dark .q-field--dark .q-field__native, .body--dark .q-field--dark .q-field__prefix,
+.body--dark .q-field--dark .q-field__suffix, .body--dark .q-field--dark .q-field__input,
+.body--dark .q-timeline--dark, .body--dark .q-tree--dark .q-tree__node-header-content,
+.body--dark .q-uploader--dark .q-uploader__overlay {{ color: var(--sq-text); }}
+.body--dark .q-field--dark .q-field__control:hover:before {{ border-color: var(--sq-muted); }}
 .q-page-container {{ background: var(--sq-page); }}
 
 /* 字体角色 */
@@ -443,7 +451,7 @@ def apply(dark: bool | None):
 
 def style_fig(fig, dark: bool | None):
     """plotly 图：透明底、主题字体、跟随明暗的文字和网格（跟随系统时用深浅两种背景上都清楚的暖灰）"""
-    text, grid = {True: ("#CFC7BA", "rgba(237, 230, 218, .10)"), False: ("#3C3833", "rgba(29, 27, 24, .08)"),
+    text, grid = {True: ("#C0B8AB", "rgba(216, 208, 194, .10)"), False: ("#3C3833", "rgba(29, 27, 24, .08)"),
                   None: ("#8A8276", "rgba(138, 130, 118, .20)")}[dark]
     fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                       font=dict(family=SANS_PLOT, color=text, size=12),

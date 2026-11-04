@@ -554,6 +554,7 @@ def _backtest_form(SP, ctx, rebuild):
                     ui.label(v).classes("v")
             ui.space()
             ui.label(t("bt.edit_setup")).classes("sq-muted text-xs self-center pr-2 whitespace-nowrap")
+        ctx.changed()
 
     def set_sp(k, v, cast=None):
         if v is None:
@@ -589,6 +590,7 @@ def _backtest_form(SP, ctx, rebuild):
     def save():
         strategies.save_strategy(SP["name"].strip(), {**current_spec(SP), "broker": asdict(make_broker())})
         ui.notify(t("strat.saved", name=SP["name"].strip()), type="positive")
+        ctx.changed()
 
     async def do_run():
         spec, broker = current_spec(SP), make_broker()
@@ -620,6 +622,7 @@ def _backtest_form(SP, ctx, rebuild):
         finally:
             run_btn.enable()
             running.set_visibility(False)
+        ctx.changed()
         if setup.is_deleted:                # 回测期间表单被重画（换了股票池 / 载入了策略）
             return
         setup.value = not ok                # 成功：收起设置看结果；出错：展开，方便改设置
@@ -755,11 +758,22 @@ def _chip_items(SP, kind: str, lg: str) -> list[tuple[str, str, str]]:
             ("broker", t("bt.chip_broker"), money)]
 
 
-def _sel_checks(SP, base: list[dict]):
+def base_checks(res) -> list[dict]:
+    """选股回测随回测完成的可信度检查（不含调仓日检验）"""
+    ml_info = res.schedule.ml if res.schedule else None
+    return check_backtest(res.metrics, res.trades, positions=res.positions) + (check_ml(ml_info["summary"]) if ml_info else [])
+
+
+def phase_keys(spec: dict) -> list:
+    """调仓日检验要错开的各个相位；空 = 不适用（例如每天调仓）"""
+    return phases(selection_cycle(spec))
+
+
+def _sel_checks(SP, base: list[dict], ctx=None):
     """可信度检查 + 调仓日检验（选股回测较慢，点按钮才做）。SP["phase"]：{res, prog, stop, found}；
     检验进行时每 0.5 秒重画一次"""
     res, rspec, _ = SP["result"]
-    ks = phases(selection_cycle(rspec))
+    ks = phase_keys(rspec)
     box = ui.column().classes("w-full gap-2")
 
     def draw():
@@ -793,6 +807,8 @@ def _sel_checks(SP, base: list[dict]):
         if not ph["found"] and SP.get("phase") is ph:      # 停得太早，相位不够下结论：恢复按钮
             SP.pop("phase", None)
         draw()
+        if ctx:
+            ctx.changed()
     draw()
 
 
@@ -825,8 +841,7 @@ def _selection_results(SP, ctx):
         eg = sep.join(f"{res.names.get(r.code, r.code)} {r.ex_date:%Y-%m-%d} {r.cash:g}" for r in cash.head(5).itertuples())
         notice(t("sp.div_patched", n=len(cash), m=len(rights), eg=eg + ("…" if len(cash) > 5 else "")), "info", "info")
     ml_info = res.schedule.ml if res.schedule else None
-    _sel_checks(SP, check_backtest(res.metrics, res.trades, positions=res.positions)
-                + (check_ml(ml_info["summary"]) if ml_info else []))
+    _sel_checks(SP, base_checks(res), ctx)
     _explain(SP, rspec, res)
     if ml_info:
         _ml_results(ml_info, rspec)

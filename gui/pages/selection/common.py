@@ -149,3 +149,8 @@ class Ctx:
     panel = None
     start = end = panel_start = None
     lo = hi = None
+    on_progress = None      # 新版界面：设置、回测结果、检验有变化时重画顶部进度与「验证」标签的状态
+
+    def changed(self):
+        if self.on_progress:
+            self.on_progress()

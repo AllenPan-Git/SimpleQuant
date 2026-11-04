@@ -2004,6 +2004,22 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
                    "Test whether a factor separates strong stocks from weak ones, and write or AI-mine new factors. "
                    "The universe and date range are shared with the Stock selection page, and saved custom factors "
                    "can be used directly in selection backtests."),
+    # 新版界面：选股页的「验证」标签
+    "spv.credibility_body": L("检查已平仓交易是否过少、收益是否集中于少数几笔交易等常见问题。随每次选股回测自动完成，结果同时显示在回测结果中。",
+                              "Checks common issues such as too few closed trades and returns concentrated in a handful "
+                              "of trades. Runs automatically with every selection backtest; the findings also appear in "
+                              "the backtest results."),
+    "spv.phase_body": L("规则与区间不变，仅将调仓日依次错开重新回测，检验结果是否依赖碰巧选中的调仓日。选股回测较慢，需在回测后点击下方按钮开始。",
+                        "Reruns the backtest with the same rules and period but with the rebalance days shifted one "
+                        "by one, to check whether the result depends on the rebalance days happening to fall where "
+                        "they did. Selection backtests are slow, so start it with the button below after a backtest."),
+    "spv.need_run": L("当前设置尚未回测，请先完成选股回测。", "The current settings have not been backtested yet. Run the selection backtest first."),
+    "spv.go_backtest": L("前往选股回测", "Go to Backtest"),
+    "spv.st_after_run": L("回测后可进行", "Available after a backtest"),
+    "spv.st_na": L("不适用于当前策略", "Not applicable to this strategy"),
+    "spv.phase_na": L("当前策略的调仓频率无法错开调仓日（例如每天调仓），不进行调仓日检验。",
+                      "The rebalance days of this strategy cannot be shifted (for example, daily rebalancing), so the "
+                      "rebalance-day test does not apply."),
     "lab.go_download": L("前往下载选股数据", "Download selection data"),
     "timing.tab_report": L("回测报告", "Backtest report"),
     "timing.tab_verify": L("验证", "Validation"),

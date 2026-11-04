@@ -2518,12 +2518,13 @@ async def test_new_ui_factor_lab(user: User):
     assert await _wait(lambda: SP.get("report"), n=1200)
     await user.should_see("IC 均值")
 
-    # 选股页：同一个面板（取缓存）、同一份研究结果
-    state.STATE["sp_tab"] = "res"
+    # 选股页用同一个面板（取缓存）；回到实验室，研究结果还在
     state.STATE.pop("sp_panel_key")
     await user.open("/selection")
     assert await _wait(lambda: state.STATE.get("sp_panel_key") is not None, n=400), "选股页没有用缓存的面板"
     assert state.STATE["sp_panel_key"] == key
+    await user.open("/factors")
+    assert await _wait(lambda: _has(user, "sp_analyze"), n=400)
     await user.should_see("IC 均值")
 
     # 实验室保存自定义因子 → 因子研究的下拉框有它；放进选股回测的因子后在实验室删除 → 选股的因子列表去掉它
@@ -2546,6 +2547,69 @@ async def test_new_ui_factor_lab(user: User):
     await settle()
     assert [f["key"] for f in SP["factors"]] == ["ep", "ret20"]          # 都没了，回到默认因子
     assert fkey not in user.find(marker="sp_res_factor").elements.pop().options
+
+
+@needs_stocks
+async def test_new_ui_selection_workbench(user: User):
+    """新版选股页：只有「选股回测 / 验证 / 数据」三个标签（研究类的旧标签回到选股回测）；顶部进度随回测更新，
+    点「验证」到验证标签；可信度、调仓日检验、滚动优化三项及状态；经典的「滚动优化」标签进来时打开验证里的滚动优化"""
+    from gui import common
+    from gui.common import t
+
+    def tab():
+        return user.find(marker="sp_tabs").elements.pop().value
+
+    def cell(k):            # 进度的一格：是否打勾、状态
+        el = user.find(marker=f"prog:{k}").elements.pop()
+        return {"done": "ok" in el.classes, "v": el.default_slot.children[1].text}
+
+    def status(k):          # 左列某一项的状态小字
+        return user.find(marker=f"vf:{k}").elements.pop().default_slot.children[1].text
+    common.set_ui("new")
+    SP = await _open_selection(user, "res")
+    assert tab() == "bt"
+    await user.should_not_see(marker="sp_res_factor")
+    assert not cell("backtest")["done"]
+
+    user.find(marker="sp_run").click()
+    assert await _wait(lambda: SP.get("result"), n=1200)
+    await settle()
+    assert cell("backtest")["done"] and cell("backtest")["v"].endswith("%")     # 回测一步完成，显示收益
+    user.find(marker="prog:verify").click()
+    await settle()
+    assert tab() == "verify"
+    assert status("credibility").startswith("✓")
+    assert status("phase") == t("vf.st_not_run") and status("walkforward") == t("vf.st_not_run")
+    await user.should_see(marker="credibility")
+    user.find(marker="vf:phase").click()
+    await settle()
+    await user.should_see(marker="phase_run")
+    user.find(marker="vf:walkforward").click()
+    await settle()
+    await user.should_see(marker="spwf_run")
+    assert state.STATE["sp_vf"] == "walkforward"
+
+    # 改了设置：回测结果不再算数，可信度一项要求先回测
+    SP["top_n"] = SP["top_n"] + 5
+    state.STATE["sp_tab"] = "wf"                            # 经典界面的标签名（首页进度「验证」一步用它）
+    state.STATE["sp_vf"] = "credibility"
+    await user.open("/selection")
+    assert await _wait(lambda: _has(user, "spwf_run"), n=2400)
+    assert tab() == "verify" and state.STATE["sp_vf"] == "walkforward"
+    user.find(marker="vf:credibility").click()
+    await settle()
+    assert status("credibility") == t("vf.st_need_run")
+    await user.should_see(marker="spv_go_backtest")
+    user.find(marker="spv_go_backtest").click()
+    await settle()
+    assert tab() == "bt"
+
+
+def _has(user: User, marker: str) -> bool:
+    try:
+        return bool(user.find(marker=marker).elements)
+    except AssertionError:
+        return False
 
 
 async def _open_tools(user: User, tab: str):

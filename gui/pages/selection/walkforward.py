@@ -182,6 +182,7 @@ def _walkforward(SP, ctx):
         finally:
             prog.stop()
             run_btn.enable()
+            ctx.changed()
         wf_results.refresh()
 
     @ui.refreshable

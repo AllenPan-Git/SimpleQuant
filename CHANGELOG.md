@@ -9,9 +9,11 @@ Changes in each release. `tools/release.py` copies the matching section into the
 
 ### 更新内容
 - 新增（新版界面）：「因子实验室」，侧栏「研究」组新增此栏目。因子研究、自定义因子、AI 因子挖掘集中在这一页，股票池与区间、已整理好的数据与「多因子选股」页共用，两页之间切换不会重新整理数据，研究结果也保留；保存的自定义因子可在选股回测中直接选用。股票池尚无数据时，可从提示处前往下载选股数据
+- 改进（新版界面）：「多因子选股」页只保留「选股回测」「验证」「数据」三个标签（因子研究、自定义因子、AI 因子挖掘移至因子实验室），顶部显示该选股策略的四步进度（设置 → 回测 → 验证 → 模拟盘），点击可前往对应位置。「验证」标签与择时工作台相同：左侧列出可信度检查、调仓日检验、滚动优化及各自的完成情况，右侧显示选中的一项；原「滚动优化」标签移入其中。经典界面不变
 
 ### Changes
 - New (new interface): the Factor lab, a new item in the Research group of the sidebar. Factor research, custom factors and AI factor mining are gathered on this page; the universe, date range and prepared data are shared with the Stock selection page, so switching between the two does not prepare the data again and research results are kept. Saved custom factors can be used directly in selection backtests. If the universe has no data yet, a button next to the notice leads to the download
+- Improved (new interface): the Stock selection page now keeps only the Backtest, Validation and Data tabs (factor research, custom factors and AI factor mining moved to the Factor lab), and shows the selection strategy's four-step progress (Setup → Backtest → Validation → Paper trading) at the top; each step can be clicked to go there. The Validation tab works like the one in the Timing workbench: the credibility assessment, rebalance-day test and walk-forward optimization are listed with their status on the left, and the selected one is shown on the right; the former Walk-forward tab is now part of it. The classic interface is unchanged
 
 ## 2.6.0（2026-11-03）
 

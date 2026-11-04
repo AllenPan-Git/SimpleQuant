@@ -2470,6 +2470,84 @@ def _shown(user: User, marker: str) -> bool:
         return False
 
 
+async def test_new_ui_factor_lab_no_data(user: User, monkeypatch):
+    """因子实验室：股票池没有数据时三个标签都提示下载，按钮到选股页的数据标签；侧栏「因子实验室」高亮，标签记住"""
+    from gui import common
+    from gui.common import t
+    bar_globals = routes()["/factors"].__globals__["universe_bar"].__globals__    # 页面实际用的那个模块
+    monkeypatch.setitem(bar_globals, "universe_ready", lambda u: False)
+    common.set_ui("new")
+    state.STATE["lab_tab"] = "cf"
+    await user.open("/factors")
+    await user.should_see(marker="lab_tabs")
+    assert user.find(marker="lab_tabs").elements.pop().value == "cf"
+    assert "on" in user.find(marker="nav:/factors").elements.pop().classes
+    assert user.find(marker="page_eyebrow").elements.pop().text == "FACTOR LAB"     # 栏目名与标题相同
+    await user.should_see(t("sp.no_data"))
+    assert len(user.find(marker="lab_go_download").elements) == 3
+    user.find(marker="lab_go_download").click()               # 三个标签各一个按钮，都去同一处
+
+    def tab_value():
+        try:
+            return user.find(marker="sp_tabs").elements.pop().value
+        except AssertionError:          # 页面正在切换
+            return None
+    assert await _wait(lambda: tab_value() == "data")         # 跳转是后台任务：等新页面画出来
+    assert state.STATE["sp_tab"] == "data"
+
+
+@needs_stocks
+async def test_new_ui_factor_lab(user: User):
+    """因子实验室：与选股页共用股票池、区间和面板（不重复载入）、研究结果；保存自定义因子后因子研究的下拉框跟着变，
+    删除后选股回测的因子列表去掉它"""
+    import datetime as dt
+    from gui import common
+    from gui.pages.selection import sp_state
+    from simplequant.stocks import FACTORS, custom_factors
+    common.set_ui("new")
+    SP = sp_state()
+    SP["ranges"]["hs300"] = (dt.date(2022, 1, 4), dt.date(2100, 1, 1))
+    state.STATE["lab_tab"] = "res"
+    await user.open("/factors")
+    assert await _wait(lambda: state.STATE.get("sp_panel_key") is not None, n=2400), "面板没有载入"
+    await settle()
+    key = state.STATE["sp_panel_key"]
+    assert key[0] == "hs300" and user.find(marker="sp_start").elements.pop().value == "2022-01-04"
+    user.find(marker="sp_res_factor").elements.pop().set_value("ret20")
+    user.find(marker="sp_analyze").click()
+    assert await _wait(lambda: SP.get("report"), n=1200)
+    await user.should_see("IC 均值")
+
+    # 选股页：同一个面板（取缓存）、同一份研究结果
+    state.STATE["sp_tab"] = "res"
+    state.STATE.pop("sp_panel_key")
+    await user.open("/selection")
+    assert await _wait(lambda: state.STATE.get("sp_panel_key") is not None, n=400), "选股页没有用缓存的面板"
+    assert state.STATE["sp_panel_key"] == key
+    await user.should_see("IC 均值")
+
+    # 实验室保存自定义因子 → 因子研究的下拉框有它；放进选股回测的因子后在实验室删除 → 选股的因子列表去掉它
+    state.STATE["lab_tab"] = "cf"
+    state.STATE.pop("sp_panel_key")
+    await user.open("/factors")
+    assert await _wait(lambda: state.STATE.get("sp_panel_key") is not None, n=400)
+    await settle()
+    user.find(marker="cf_name").type("实验室因子")
+    user.find(marker="cf_save").click()
+    (fkey, _), = custom_factors.list_factors().items()
+    assert fkey in FACTORS
+    await settle()
+    assert fkey in user.find(marker="sp_res_factor").elements.pop().options
+    SP["factors"] = [{"key": fkey, "weight": 1.0, "direction": 1}]
+    user.find(marker=f"cf_del:{fkey}").click()
+    await settle()
+    user.find(marker="confirm-delete").click()
+    assert await _wait(lambda: not custom_factors.list_factors())
+    await settle()
+    assert [f["key"] for f in SP["factors"]] == ["ep", "ret20"]          # 都没了，回到默认因子
+    assert fkey not in user.find(marker="sp_res_factor").elements.pop().options
+
+
 async def _open_tools(user: User, tab: str):
     """打开工具页的某个标签（个股概览 ov / 持仓诊断 hd）；界面状态与选股页共用"""
     from gui.pages.selection import sp_state
@@ -2542,7 +2620,8 @@ async def test_tools_holdings_check(user: User, tmp_path, monkeypatch):
     assert len(user.find(marker="hd_table").elements.pop().rows) == len(res.holdings)
     await user.should_see("有效持仓数")
     # 选股页与工具页用的是同一份面板缓存
-    assert routes()["/selection"].__globals__["get_panel"] is routes()["/tools"].__globals__["get_panel"]
+    loader = routes()["/selection"].__globals__["panel_loader"]
+    assert loader.__globals__["get_panel"] is routes()["/tools"].__globals__["get_panel"]
     from simplequant.stocks import universe as U
     end = U.load_benchmark("hs300", st).index[-1]
     want = ("hs300", D.panel_start(end), str(end.date()))

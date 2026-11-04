@@ -5,6 +5,14 @@
 
 Changes in each release. `tools/release.py` copies the matching section into the GitHub release notes.
 
+## 未发布
+
+### 更新内容
+- 新增（新版界面）：「因子实验室」，侧栏「研究」组新增此栏目。因子研究、自定义因子、AI 因子挖掘集中在这一页，股票池与区间、已整理好的数据与「多因子选股」页共用，两页之间切换不会重新整理数据，研究结果也保留；保存的自定义因子可在选股回测中直接选用。股票池尚无数据时，可从提示处前往下载选股数据
+
+### Changes
+- New (new interface): the Factor lab, a new item in the Research group of the sidebar. Factor research, custom factors and AI factor mining are gathered on this page; the universe, date range and prepared data are shared with the Stock selection page, so switching between the two does not prepare the data again and research results are kept. Saved custom factors can be used directly in selection backtests. If the universe has no data yet, a button next to the notice leads to the download
+
 ## 2.6.0（2026-11-03）
 
 ### 更新内容

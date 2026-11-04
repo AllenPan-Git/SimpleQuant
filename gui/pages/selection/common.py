@@ -6,6 +6,7 @@ from nicegui import run
 from simplequant.engine.optimize import default_workers
 from simplequant.stocks import FACTORS, GROUPS, REBALANCE, DEFAULT_FILTERS, factors_for
 from simplequant.stocks import ml as ML
+from simplequant.stocks import universe as U
 from simplequant.stocks.selection import panel_warmup_days
 from simplequant.stocks.panel import STOCK_FILTERS, RISK_FILTERS
 from simplequant.bonds.panel import CB_FILTERS, CB_DEFAULT_FILTERS
@@ -105,6 +106,14 @@ def switch_kind(SP, old: str, new: str):
         SP["res"]["fkey"] = usable[0]
     SP["res"]["min_days"] = SP["min_list"]
     SP["corr_keys"] = None
+
+
+def prune_factors(SP):
+    """自定义因子保存 / 删除后：回测因子列表、因子研究里已不存在的因子去掉（都没了就回到默认因子）"""
+    kind = U.kind(SP["universe"])
+    SP["factors"] = [f for f in SP["factors"] if f["key"] in factors_for(kind)] or kind_defaults(kind)["factors"]
+    if SP["res"]["fkey"] not in factors_for(kind):
+        SP["res"]["fkey"] = factors_for(kind)[0]
 
 
 def factor_label(k: str) -> str:

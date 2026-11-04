@@ -18,6 +18,7 @@ PAGES = [
     ("/optimize", "nav.optimize", "grid_on"),
     ("/timing", "nav.timing", "show_chart"),          # 新版界面的择时工作台（经典界面不链接它）
     ("/selection", "nav.selection", "filter_list"),
+    ("/factors", "nav.factors", "science"),           # 新版界面的因子实验室（经典界面不链接它）
     ("/paper", "nav.paper", "account_balance_wallet"),
     ("/allocation", "nav.allocation", "pie_chart"),
     ("/tools", "nav.tools", "build"),
@@ -38,13 +39,14 @@ STEP_KEY = {"/data": "step.data", "/strategy": "step.strategy", "/backtest": "st
 _THEMES = [(None, "brightness_auto"), (False, "light_mode"), (True, "dark_mode")]
 
 # 新版界面的侧栏（界面重构计划 4.1）：(路由, 文字键, 图标, 分组, 也算本栏目的其他路由)
-# 分组变化处画一条细线；"bottom" 组贴在侧栏底部。还没做的新页面先不放（因子实验室 2.7.0 加在「资产配置」后面）；
+# 分组变化处画一条细线；"bottom" 组贴在侧栏底部。还没做的新页面先不放；
 # 经典的策略、回测、优化页在新版界面下仍能打开（作为兜底），也算「择时策略」
 NAV = [
     ("/", "side.today", "today", "today", ()),
     ("/timing", "side.timing", "show_chart", "work", ("/strategy", "/backtest", "/optimize")),
     ("/selection", "side.selection", "filter_list", "work", ()),
     ("/allocation", "side.allocation", "pie_chart", "work", ()),
+    ("/factors", "side.factors", "science", "work", ()),
     ("/paper", "side.paper", "account_balance_wallet", "paper", ()),
     ("/data", "side.data", "storage", "data", ()),
     ("/tools", "side.tools", "build", "data", ()),

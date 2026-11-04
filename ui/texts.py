@@ -1963,6 +1963,7 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
     "side.allocation": L("资产配置", "Asset allocation"),
     "side.paper": L("模拟盘", "Paper trading"),
     "side.data": L("数据", "Data"),
+    "side.factors": L("因子实验室", "Factor lab"),
     "side.tools": L("工具", "Tools"),
     "side.settings": L("设置", "Settings"),
     "side.nav": L("主导航", "Main navigation"),
@@ -1994,6 +1995,16 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
     "timing.subtitle": L("在同一页编写策略、回测并检验结果。修改设置后点击「开始回测」，报告在下方更新。",
                          "Write a strategy, backtest it and check the results on one page. After changing the settings, "
                          "click \"Run backtest\" and the report below is updated."),
+    # 新版界面：因子实验室（因子研究 + 自定义因子 + AI 因子挖掘）
+    "nav.factors": L("因子实验室", "Factor lab"),
+    "lab.intro_short": L("检验因子能否区分股票的强弱，编写或让 AI 挖掘新的因子。",
+                         "Test whether a factor separates strong stocks from weak ones, and write or AI-mine new factors."),
+    "lab.intro": L("检验因子能否区分股票的强弱，编写或让 AI 挖掘新的因子。股票池、区间与「多因子选股」页共用；"
+                   "保存的自定义因子可在选股回测中直接选用。",
+                   "Test whether a factor separates strong stocks from weak ones, and write or AI-mine new factors. "
+                   "The universe and date range are shared with the Stock selection page, and saved custom factors "
+                   "can be used directly in selection backtests."),
+    "lab.go_download": L("前往下载选股数据", "Download selection data"),
     "timing.tab_report": L("回测报告", "Backtest report"),
     "timing.tab_verify": L("验证", "Validation"),
     "timing.no_report": L("尚未回测当前设置。设置完成后点击「开始回测」，报告显示在这里。",

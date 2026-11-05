@@ -8,11 +8,15 @@ Changes in each release. `tools/release.py` copies the matching section into the
 ## 未发布
 
 ### 更新内容
+- 改进：默认使用新版界面（左侧导航；择时策略、多因子选股各自的设置、回测与验证集中在一页；因子实验室；数据中心）。尚未选择过界面的用户升级后自动切换到新版，首页提示一次如何切回；在 2.x 中已明确选择「经典」的用户保持经典界面。经典界面仍可在「设置 → 界面」中选择，不再增加新功能，将在以后的版本中移除
 - 改进（新版界面）：数据中心的「行情」标签不再分为三个子标签，自上而下依次为本地数据库（标题旁显示数据集个数；预览图表、下载 CSV、删除收进表格下方的折叠区）、在线下载、导入 CSV（折叠）
+- 修复（新版界面）：择时工作台回测报告右侧「下一步」沿用了经典界面的步骤编号（「04 参数优化」「05 放入模拟盘」），改为与顶部四步进度一致的「03 验证」「04 放入模拟盘」
 - 改进（新版界面）：择时工作台中规则用到利率而尚无利率数据时，提示文字改为「本地尚无中债利率数据」，不再提示前往「数据」页（旁边即有更新按钮）
 
 ### Changes
+- Improved: the new interface is now the default (sidebar navigation; settings, backtest and validation of a timing or selection strategy on one page; the Factor lab; the data center). Users who never chose an interface switch to the new one after upgrading, and the home page explains once how to switch back; users who explicitly chose "Classic" in 2.x keep it. The classic interface can still be chosen under Settings → Interface; it gets no new features and will be removed in a later release
 - Improved (new interface): the Market data tab of the data center no longer has three sub-tabs. It now shows, from top to bottom, the local library (with the number of datasets next to the heading; the preview chart, CSV download and delete are in a collapsible section below the table), Download, and Import CSV (collapsed)
+- Fixed (new interface): the "Next steps" beside the Timing workbench's backtest report used the classic interface's step numbers ("04 Optimize parameters", "05 Paper trade it"); they now match the four-step progress at the top ("03 Validation", "04 Paper trade it")
 - Improved (new interface): in the Timing workbench, when a rule uses interest rates but there is no rate data yet, the notice now says that ChinaBond rate data is missing instead of pointing to the Data page (the update button is right next to it)
 
 ## 2.7.0（2026-11-04）

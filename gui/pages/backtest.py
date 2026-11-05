@@ -602,8 +602,12 @@ def _results(BT: dict, exp_menu, to_verify):
         # ---------------- 右侧：下一步 + 最近平仓 ----------------
         with ui.column().classes("gap-0 min-w-0"):
             _rule_title(t("bt.next"))
-            _next("04", t("bt.next_opt"), t("bt.next_opt_body"), to_verify, rec=True).mark("next_opt")
-            _next("05", t("bt.next_paper"), t("bt.next_paper_body"), lambda: ui.navigate.to("/paper"))
+            if new_ui():        # 编号与工作台顶部的四步进度一致（03 验证、04 模拟盘）
+                _next("03", t("bt.next_verify"), t("bt.next_verify_body"), to_verify, rec=True).mark("next_opt")
+                _next("04", t("bt.next_paper"), t("bt.next_paper_body"), lambda: ui.navigate.to("/paper"))
+            else:
+                _next("04", t("bt.next_opt"), t("bt.next_opt_body"), to_verify, rec=True).mark("next_opt")
+                _next("05", t("bt.next_paper"), t("bt.next_paper_body"), lambda: ui.navigate.to("/paper"))
             _next("↗", t("bt.next_export"), t("bt.next_export_body"), exp_menu.open)
             _explain(BT, explain_out)
 

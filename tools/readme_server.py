@@ -1,12 +1,13 @@
 """
 README 截图用的界面服务：python tools/readme_server.py zh|en light|dark 端口 [cb|up|pf|mine]
-- 界面偏好、模拟账户都放在临时目录，不读写你自己的偏好、历史和模拟账户
+- 界面偏好、模拟账户都放在临时目录，不读写你自己的偏好、历史和模拟账户；3.0 起截新版界面
+- 择时：工作台（/timing）打开时是回测报告；参数优化的截图点「验证」标签再点「开始优化」
 - 预先放入：一次 RSI 回测（回测页、首页「继续上次的工作」）、两条最近的报告、一个运行了一段时间的模拟账户、
   一次资产配置（风险测评 C3、默认候选）
 - 加 cb：选股页的股票池改为「可转债（全市场）」，使用可转债的默认因子与条件，回测从 2018-07-02 开始
 - 加 up：模拟账户改用 RSI 超买超卖（截至 2026-09-30 为盈利），并视为已设置每日自动运行（首页不显示提示）
-- 加 pf：另开一个按上述参考配置的组合模拟账户（2025-10-09 起），模拟盘页打开它，报头为「资产配置」流程
-- 加 mine：选股页打开「AI 因子挖掘」标签页（沪深300）。不调用模型：按 tools/readme_mining.json 依次返回一次真实挖掘
+- 加 pf：另开一个按上述参考配置的组合模拟账户（2025-10-09 起），模拟盘页打开它
+- 加 mine：因子实验室打开「AI 因子挖掘」标签页（沪深300）。不调用模型：按 tools/readme_mining.json 依次返回一次真实挖掘
   （DeepSeek，2026-10-12）里模型每轮给出的因子，评估、检验期都由软件实际计算；自定义因子用空的临时目录
 - 行情数据读本机数据库（只读）：需要 510300 后复权日线、沪深300选股数据，以及资产配置默认候选的 ETF 日线；
   加 cb 时还需要可转债数据
@@ -58,6 +59,8 @@ name = "RSI 超买超卖" if ZH else "RSI mean reversion"
 state.STATE["bt"] = dict(result=res, title=("模板：RSI 超买超卖" if ZH else "Template: RSI mean reversion", ["510300"], "1d"),
                          spec=spec, broker=broker, name=name, time="2026-09-30 21:14",
                          checks=check_backtest(res.metrics, res.trades))
+S = state.strategy()          # 新版工作台从编辑器取策略（回测、参数优化都用它）：放进同一个 RSI
+S["mode"], S["tpl_key"], S["name"] = "template", "rsi_reversion", name
 for key in ("bt", "opt"):
     state.STATE[f"{key}_ids"] = [ID]
     state.STATE[f"{key}_range"] = rng
@@ -134,7 +137,7 @@ if MINE:
     llm.load_config = lambda *a, **k: SimpleNamespace(ready=True)
     llm.get_provider = lambda cfg: None
     llm.propose_factors = replay
-    state.STATE["sp_tab"] = "mine"
+    state.STATE["lab_tab"] = "mine"
 
 
 # 数据库里的行情只到某一天：让模拟盘页以这天为「最新应有数据」，不显示「数据未更新」的提示
@@ -150,13 +153,13 @@ def seed():
     app.storage.general["lang"] = LANG
     app.storage.general["dark"] = THEME == "dark"
     app.storage.general["recent"] = []
-    if PF:
-        app.storage.general["flow"] = "allocation"
+    app.storage.general["ui"] = "new"
     history.add("sel", "沪深300 低估值 + 反转" if ZH else "CSI 300 value + reversal",
                 ("沪深300" if ZH else "CSI 300") + " · 2020-01-02 ~ 2026-09-28",
                 {"total_return": 0.216, "sharpe": 0.94}, data="沪深300" if ZH else "CSI 300", strategy="")
     history.add("bt", name, "510300 · " + ("日线" if ZH else "Daily") + " · 2020-01-02 ~ 2026-09-29", res.metrics,
-                data="510300", strategy=name)
+                restore={"spec": {"name": name, **spec}, "ids": [ID], "range": [str(rng[0]), str(rng[1])], "broker": {}},
+                data="510300", strategy=name)     # restore.spec：新版首页的四步进度用它
 
 
 run(native=False, port=PORT, show=False, check_updates=False)

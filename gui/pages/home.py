@@ -10,9 +10,10 @@ from simplequant.data import library
 from simplequant.paper import list_accounts, load_calendar, health, schedule
 from simplequant.strategies import list_strategies
 from gui import history, state, routes
-from gui.common import t, lang, new_ui
+from gui.common import t, lang, new_ui, ui_choice
 from gui.components import accounts_table, strategy_progress
 from gui.layout import frame
+from gui.widgets import notice
 from ui.shared import pct, num, account_rows, progress_steps, saved_name, paper_count, spec_key, timing_verify
 
 
@@ -23,6 +24,8 @@ def page():
             _migrate_card(legacy)
         metas = library.list_datasets()
         recent = history.recent()
+        if (recent or metas) and switched_to_new():
+            _ui_switched_note()
         accounts, rows = _paper_rows()
 
         hour = dt.datetime.now().hour
@@ -106,6 +109,28 @@ def _migrate_card(src):
         with ui.row().classes("gap-3") as btns:
             ui.button(t("mig.go"), icon="drive_file_move", on_click=go).props("unelevated no-caps").mark("mig_go")
             ui.button(t("mig.skip"), on_click=skip).props("flat no-caps")
+
+
+def switched_to_new() -> bool:
+    """3.0 默认改成新版后，没选过界面的老用户第一次看到新版：首页提示一次（新装的用户本来就没见过经典界面，不提示）"""
+    return new_ui() and ui_choice() is None and not app.storage.general.get("ui_switch_seen")
+
+
+def _ui_switched_note():
+    def ok():
+        app.storage.general["ui_switch_seen"] = True
+        box.delete()
+
+    def go():
+        app.storage.general["ui_switch_seen"] = True
+        ui.navigate.to("/settings")
+    with ui.row().classes("w-full items-center gap-3 no-wrap").mark("home_ui_switched") as box:
+        with ui.element("div").classes("grow min-w-0"):
+            notice(t("home.ui_switched"))
+        ui.button(t("home.ui_switched_set"), on_click=go).props("flat no-caps").classes("shrink-0") \
+            .mark("home_ui_switched_set")
+        ui.button(t("home.ui_switched_ok"), on_click=ok).props("outline no-caps").classes("shrink-0") \
+            .mark("home_ui_switched_ok")
 
 
 def _section(title: str, note: str):

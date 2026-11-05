@@ -42,10 +42,14 @@ async def settle():
 
 @pytest.fixture(autouse=True)
 def isolated(tmp_path, monkeypatch):
-    """每个测试：界面状态清空；保存的策略写到临时目录；界面版本回到「没选过」、侧栏回到默认"""
+    """每个测试：界面状态清空；保存的策略写到临时目录；界面版本回到「没选过」、侧栏回到默认。
+    3.0 起默认是新版，但经典界面的测试照旧跑经典（到 4.8 删除经典界面为止）：这里把默认值临时改回经典，
+    要测新版的测试自己 set_ui("new")；测默认值本身的测试（test_ui_default_is_new）把它改回来"""
     from nicegui import app
-    app.storage.general.pop("ui", None)
-    app.storage.general.pop("side_open", None)
+    from gui import common
+    for k in ("ui", "side_open", "ui_switch_seen"):
+        app.storage.general.pop(k, None)
+    monkeypatch.setattr(common, "UI_DEFAULT", "classic")
     state.reset()
     d = tmp_path / "strategies"
     for fn in (strategies.save_strategy, strategies.list_strategies, strategies.delete_strategy,
@@ -57,8 +61,8 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(allocation, "ROOT", tmp_path / "allocation")      # 风险测评与配置设置
     custom_factors.load_all()
     yield
-    app.storage.general.pop("ui", None)
-    app.storage.general.pop("side_open", None)
+    for k in ("ui", "side_open", "ui_switch_seen"):
+        app.storage.general.pop(k, None)
     state.reset()
     monkeypatch.undo()
     custom_factors.load_all()
@@ -1651,6 +1655,36 @@ def test_ui_choice_default_and_explicit(monkeypatch):
     assert common.ui_choice() is None and common.new_ui()
 
 
+def test_ui_default_is_new():
+    """3.0 起没选过界面的用户默认用新版（夹具为经典测试把默认值改成了经典；重新载入模块读写死的值，
+    测试结束时夹具的 monkeypatch 还原成它记下的原值，也就是 "new"）"""
+    from gui import common
+    assert importlib.reload(common).UI_DEFAULT == "new"
+    assert common.ui_choice() is None and common.new_ui()
+
+
+async def test_home_ui_switched_note(user: User, lib_dir, monkeypatch):
+    """默认改成新版后：没选过界面、已有数据的老用户首页提示一次，点「知道了」后不再出现；
+    明确选过界面（含选了新版）的、新装还没有数据的都不提示"""
+    from nicegui import app
+    from gui import common
+    monkeypatch.setattr(common, "UI_DEFAULT", "new")
+    await user.open("/")
+    await user.should_not_see(marker="home_ui_switched")         # 新装：没有数据，也没有报告
+    _save_prices()
+    await user.open("/")
+    await user.should_see(marker="home_ui_switched")
+    user.find(marker="home_ui_switched_ok").click()
+    await settle()
+    assert app.storage.general["ui_switch_seen"] and common.ui_choice() is None
+    await user.open("/")
+    await user.should_not_see(marker="home_ui_switched")
+    app.storage.general.pop("ui_switch_seen")
+    common.set_ui("new")
+    await user.open("/")
+    await user.should_not_see(marker="home_ui_switched")
+
+
 async def test_settings_switch_ui(user: User):
     """设置页切到新版：报头（流程切换、步骤条）换成侧栏，当前栏目高亮；切回经典恢复报头"""
     from nicegui import app
@@ -1761,6 +1795,8 @@ async def test_new_ui_timing_workbench(user: User, lib_dir):
     await settle()
     assert not _expanded(user, "bt_setup")                   # 运行完收起
     await user.should_see("可信度检查")
+    await user.should_see("验证 →")                           # 报告的「下一步」与四步进度同编号（03 验证）
+    await user.should_not_see("参数优化 →")
     assert BT()["spec"]["kind"] == "rule" and len(BT()["spec"]["rule"]["buy"]["conditions"]) == n
     assert not strategies.list_strategies()                  # 运行不自动保存
     assert "ok" in cell("backtest").classes and "next" in cell("setup").classes
@@ -2620,6 +2656,41 @@ async def test_new_ui_data_center(user: User, monkeypatch):
     assert user.find(marker="sp_tabs").elements.pop().value == "bt"
     await user.should_not_see(marker="sp_download")
     await user.should_see(marker="sp_go_download")
+
+
+@needs_stocks
+async def test_new_ui_factor_lab_mining_same_page(user: User, monkeypatch, tmp_path):
+    """因子实验室的 AI 因子挖掘：留在同一个页面上，进度、日志与结束后的结果都在本页出现（不用重新打开）"""
+    import datetime as dt
+    import json
+    from dataclasses import asdict
+    import simplequant.llm as llm
+    from gui import common
+    from gui.pages.selection import sp_state
+    from simplequant.stocks import custom_factors, mining as MN
+
+    class Fake:
+        def chat(self, system, messages, schema=None):
+            time.sleep(0.5)
+            return json.dumps({"factors": [{"name": "短期波动", "idea": "低波动", "code": MINE_VOL, "desc": ""}],
+                               "notes": "先试低波动"}, ensure_ascii=False)
+    monkeypatch.setattr(llm, "load_config", lambda: llm.LLMConfig.from_preset("deepseek", api_key="x"))
+    monkeypatch.setattr(llm, "get_provider", lambda cfg: Fake())
+    monkeypatch.setattr(custom_factors, "FACTOR_DIR", tmp_path / "factors")
+    common.set_ui("new")
+    SP = sp_state()
+    SP["ranges"]["hs300"] = (dt.date(2022, 1, 4), dt.date(2100, 1, 1))
+    SP["mine"] = {"cfg": {**asdict(MN.MineConfig()), "rounds": 1, "per_round": 1, "min_t": 0.0, "max_corr": 0.99},
+                  "miner": None, "saved": {}, "running": False}
+    state.STATE["lab_tab"] = "mine"
+    await user.open("/factors")
+    assert await _wait(lambda: _has(user, "mine_start"), n=2400)
+    user.find(marker="mine_start").click()
+    assert await _wait(lambda: SP["mine"].get("miner") is not None, n=1200)
+    assert await _wait(lambda: _has(user, "mine_export"), n=40), "结果没有在本页出现"
+    await user.should_see("入选因子")
+    monkeypatch.undo()
+    custom_factors.load_all()
 
 
 @needs_stocks

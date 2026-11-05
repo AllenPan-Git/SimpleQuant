@@ -25,11 +25,12 @@ PORT = 8780
 THEMES = {
     "light": {"bg": "#F5F1EA", "text": "#1D1B18", "muted": "#77716A", "faint": "#A39B8F", "red": "#B42318",
               "rule": "#1D1B18"},
-    "dark": {"bg": "#191714", "text": "#EDE6DA", "muted": "#9B9387", "faint": "#6F685E", "red": "#E0584A",
+    "dark": {"bg": "#191714", "text": "#D8D0C2", "muted": "#9B9387", "faint": "#6F685E", "red": "#E0584A",
              "rule": "#3A352E"},
 }
 TAGLINE = {"zh": "低代码的 A 股量化回测工具", "en": "Low-code quant backtesting for China A-shares"}
-STEPS = {"zh": ["数据", "策略", "回测", "优化", "模拟盘"], "en": ["Data", "Strategy", "Backtest", "Optimize", "Paper"]}
+STEPS = {"zh": ["设置", "回测", "验证", "模拟盘"], "en": ["Setup", "Backtest", "Validation", "Paper trading"]}     # 新版每个策略的四步（与 prog.* 一致）
+HIGHLIGHT = 1       # 横幅上标红的一步（回测）
 
 
 # ---------------- 横幅 ----------------
@@ -37,7 +38,8 @@ def banner_html(lang: str, theme: str) -> str:
     c = THEMES[theme]
     font = base64.b64encode(FONT.read_bytes()).decode()
     steps = "".join(
-        (f'<span class="dash"></span>' if i else "") + f'<span class="step"><b>0{i + 1}</b>{name}</span>'
+        (f'<span class="dash"></span>' if i else "") +
+        f'<span class="step{" hl" if i == HIGHLIGHT else ""}"><b>0{i + 1}</b>{name}</span>'
         for i, name in enumerate(STEPS[lang]))
     return f"""<!doctype html><meta charset="utf-8"><style>
 @font-face {{ font-family: SQSerif; src: url(data:font/woff;base64,{font}) format("woff"); }}
@@ -49,7 +51,7 @@ html, body {{ margin: 0; background: {c['bg']}; }}
 .tag {{ margin-top: 18px; font-size: 25px; color: {c['muted']}; }}
 .steps {{ margin-top: 30px; display: flex; align-items: baseline; gap: 14px; font-size: 17px; color: {c['muted']}; }}
 .step b {{ font: 400 24px Georgia, serif; color: {c['text']}; margin-right: 8px; }}
-.step:nth-child(5) b {{ color: {c['red']}; }}
+.step.hl b {{ color: {c['red']}; }}
 .dash {{ width: 30px; height: 1px; background: {c['faint']}; align-self: center; }}
 </style><div class="wrap">{svg(body_at("H3D", 256), 168)}
 <div><div class="logo">Simple<span>Quant</span></div><div class="tag">{TAGLINE[lang]}</div>
@@ -67,11 +69,11 @@ async def banners():
 
 # ---------------- 截图 ----------------
 # 名称: (路径, 点击, 裁剪(起始文字, 结束文字, 上留白, 下留白)) ；文字按语言给出。
-# 模拟盘要在选股之前截：打开选股页后报头会切到「多因子选股」流程
+# 3.0 起截新版界面（readme_server.py 设好 ui = "new"）：择时在工作台 /timing，因子挖掘在因子实验室 /factors
 SHOTS = {
     "home": ("/", [], {"zh": (None, "免费数据源对比", 0, -24), "en": (None, "Free data sources compared", 0, -24)}),
-    "backtest": ("/backtest", [], {"zh": (None, "图 1", 0, 40), "en": (None, "Figure 1", 0, 40)}),
-    "optimize": ("/optimize", [{"zh": "开始优化", "en": "Run optimization"}],
+    "backtest": ("/timing", [], {"zh": (None, "图 1", 0, 40), "en": (None, "Figure 1", 0, 40)}),
+    "optimize": ("/timing", [{"zh": "验证", "en": "Validation"}, {"zh": "开始优化", "en": "Run optimization"}],
                  {"zh": ("优化结果", "前 20 名参数组合", 32, -16), "en": ("Optimization results", "Top 20 combinations", 32, -16)}),
     "paper": ("/paper", [{"zh": "资产曲线", "en": "Equity"}],
               {"zh": (None, "每日自动运行", 0, -24), "en": (None, "Run automatically every day", 0, -24)}),
@@ -86,9 +88,11 @@ SHOTS = {
     "selection-cb": ("/selection", [{"zh": "开始回测", "en": "Run backtest"}],
                      {"zh": ("回测结果", "每期选股", 32, -16), "en": ("Results", "Picks per period", 32, -16)}),
     # AI 因子挖掘：单独启动一次服务（readme_server.py 加 mine），重放一次真实挖掘里模型的回复
-    "mining": ("/selection", [{"zh": "开始挖掘", "en": "Start mining"}],
+    "mining": ("/factors", [{"zh": "开始挖掘", "en": "Start mining"}],
                {"zh": ("提出", "全部候选", 36, -16), "en": ("Proposed", "All candidates", 36, -16)}),
 }
+# 点完后重新打开页面再截的（见 screenshot.shoot 的 reload）
+RELOAD = {"mining"}
 # 按截图名称：打开页面后、点击后各等几秒
 WAIT = {"selection": 30, "selection-cb": 45, "optimize": 8, "allocation": 8, "mining": 30}
 CLICK_WAIT = {"optimize": 45, "selection": 40, "selection-cb": 60, "paper": 3, "paper-portfolio": 3, "mining": 300}
@@ -130,7 +134,8 @@ async def screenshots(only: set | None = None):
                     path, clicks, crop = SHOTS[name]
                     suffix = "" if theme == "light" else "-dark"
                     await shoot(base + path, OUT / f"{name}-{lang}{suffix}.png", 1440, WAIT.get(name, 6),
-                                clicks=[(c[lang], CLICK_WAIT[name]) for c in clicks], crop=crop[lang])
+                                clicks=[(c[lang], CLICK_WAIT[name]) for c in clicks], crop=crop[lang],
+                                reload=name in RELOAD)
                     print(name, lang, theme)
             finally:
                 proc.kill()

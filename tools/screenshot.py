@@ -60,14 +60,18 @@ FIND_JS = """(() => {
   }
   if (!best) return null;
   const r = best.getBoundingClientRect();
-  return [r.top + window.scrollY, r.bottom + window.scrollY];
+  return [r.top + window.scrollY, r.bottom + window.scrollY, r.left];
 })()"""
 
 
 async def shoot(url: str, out: Path, width: int = 1440, wait: float = 6.0, height: int | None = None,
-                scale: float = 1.0, clicks: list[tuple[str, float]] = (), crop: tuple | None = None):
+                scale: float = 1.0, clicks: list[tuple[str, float]] = (), crop: tuple | None = None,
+                reload: bool = False):
     """
     clicks：截图前依次点击含这些文字的按钮 / 标签页，每次点完等待若干秒
+    reload：点完后重新打开一次页面再截（结果存在界面状态里，新页面照样显示）。新版因子实验室挖掘完后，
+            在点击的那个标签页里截整页会一直等不到结果，重新打开就正常
+    crop：给了起始文字时，左边也从它所在元素的左边（留 32px）开始，去掉新版界面的侧栏；
     crop：(起始文字, 结束文字, 上边留白, 下边留白)，截整页后只保留「起始文字所在元素的顶部」到「结束文字所在元素的顶部」；
           文字为 None 表示页面顶部 / 底部
     """
@@ -97,6 +101,9 @@ async def shoot(url: str, out: Path, width: int = 1440, wait: float = 6.0, heigh
                 if not ok:
                     raise RuntimeError(f"button not found: {text}")
                 await asyncio.sleep(pause)
+            if reload and clicks:
+                await cdp("Page.navigate", url=url)
+                await asyncio.sleep(wait)
             await cdp("Runtime.evaluate", expression="window.scrollTo(0, 0)")
             if height is None:
                 h = (await cdp("Runtime.evaluate", expression="document.documentElement.scrollHeight",
@@ -107,15 +114,18 @@ async def shoot(url: str, out: Path, width: int = 1440, wait: float = 6.0, heigh
             box = None
             if crop:
                 start, end, pad_top, pad_bottom = crop
-                y0 = 0 if start is None else (await find(cdp, start))[0] - pad_top
+                hit = None if start is None else await find(cdp, start)
+                y0 = 0 if hit is None else hit[0] - pad_top
+                x0 = 0 if hit is None else max(int(hit[2]) - 32, 0)     # 从页面中间截时，左边的侧栏 / 列表也裁掉
                 y1 = None if end is None else (await find(cdp, end))[0] + pad_bottom
-                box = (max(int(y0), 0), None if y1 is None else int(y1))
+                box = (max(int(y0), 0), None if y1 is None else int(y1), x0)
             shot = await cdp("Page.captureScreenshot", format="png", captureBeyondViewport=True)
             out.write_bytes(base64.b64decode(shot["data"]))
             if box:
                 from PIL import Image
                 im = Image.open(out)
-                im.crop((0, int(box[0] * scale), im.width, im.height if box[1] is None else int(box[1] * scale))).save(out)
+                im.crop((int(box[2] * scale), int(box[0] * scale), im.width,
+                         im.height if box[1] is None else int(box[1] * scale))).save(out)
     finally:
         proc.terminate()
 

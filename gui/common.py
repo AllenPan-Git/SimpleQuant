@@ -25,7 +25,7 @@ def set_dark(value: bool | None):
 
 
 UI_CHOICES = ("classic", "new")
-UI_DEFAULT = "classic"      # 用户没选过时用哪套界面；3.0 起改为 "new"（界面重构计划 4.7）
+UI_DEFAULT = "new"          # 用户没选过时用哪套界面；3.0 起为新版，2.x 里明确选了「经典」的保持经典（界面重构计划 4.7）
 
 
 def ui_choice() -> str | None:

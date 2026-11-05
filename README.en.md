@@ -18,47 +18,50 @@ SimpleQuant is a low-code quant backtesting tool for China A-shares, covering st
   <img src="docs/images/backtest-en.png" alt="Backtest report">
 </picture>
 
-## Three workflows
+## Interface
 
-The step bar at the top of the app follows these three workflows, and each step suggests what to do next.
+The sidebar groups the app by purpose (the default interface since 3.0):
 
-| Workflow | Steps |
+| Group | Items |
 |---|---|
-| **Timing** | 01 Data — 02 Strategy — 03 Backtest — 04 Optimize — 05 Paper |
-| **Stock selection** | 01 Data — 02 Selection — 03 Paper |
-| **Allocation** | 01 Data — 02 Allocation — 03 Paper |
+| | **Today**: continue your last work, today's paper trading, start something new |
+| Research | **Timing strategies** (workbench), **Stock selection**, **Asset allocation**, **Factor lab** |
+| Tracking | **Paper trading** |
+| Reference | **Data** (market data, selection data, convertible bonds, interest rates), **Tools** (stock overview, holdings check) |
+
+Timing strategies and stock selection each work on one page: settings, the backtest report and validation sit together, and the four-step progress at the top (01 Setup — 02 Backtest — 03 Validation — 04 Paper trading) shows how far the current strategy has got and suggests the next step; click a step to go there. When a backtest needs data that is missing, the notice offers a Download button and shows progress in place.
 
 <img src="docs/images/home-en.png" alt="Home">
 
-### 01 · Data
+### Data
 Download into a local library with one click: AKShare daily bars (Eastmoney, with ETFs and stocks falling back to Sina when Eastmoney is unreachable; backtest reports state the data source), BaoStock 5–60 minute bars and stock daily bars (with PE, PB, PS and turnover), and local TDX (通达信) 1/5-minute bars. AKShare downloads of common broad-index ETFs / indices such as the CSI 300 and CSI 500 include the tracked index's P/E and P/B (updated monthly) for valuation percentile conditions. You can also import CSV files (bars, or snapshot/tick data with a `last` column, resampled to N-second/N-minute bars). ChinaBond yield curves (10-year government yield, term spread, credit spread) can be downloaded for use in timing rules.
 
-### 02 · Strategy
-Four ways to build a strategy:
+### Timing strategies: writing
+Write the strategy in the workbench's settings area, in one of four ways:
 - **Templates**: buy & hold, moving-average cross, RSI, Bollinger bands, momentum rotation (e.g. stocks vs. bonds), fixed-weight rebalancing (e.g. 60/40), dollar-cost averaging, valuation-based DCA and more — just tune the parameters.
 - **Rule builder**: combine indicators such as MA, EMA, MACD, RSI, KDJ, Bollinger bands, ATR, volume ratio, valuation and valuation percentiles, rates and credit spreads, the equity risk premium, and position return with crosses above/below and comparisons; stop-losses supported. **Trade pacing**: require a condition to hold for N bars in a row (filters out one- or two-day false breakouts), block new buys for N bars after a sell, or scale in (split the position into parts and add one after a set rise / fall or when the buy conditions are met again).
 - **Describe it in words (AI)**: e.g. "buy when MACD crosses up and RSI is below 70; sell on a cross down or an 8% loss". A large language model turns this into rules (rules only, never code) and lists anything it cannot express. A condition breakdown marks each condition as a "state" (> / <, checked on every bar) or an "event" (crosses above / below, true only on the day of the cross), and warns when the wording and the rule disagree or when the same description produces a different rule than last time.
 - **Write Python**: write a strategy class; board lots, T+1 and trading costs still apply, and its parameters can be optimized.
 
-### 03 · Backtest
+### Timing strategies: backtest
 Multiple assets (capital split equally), custom date range and costs, and a choice of dividend handling (reinvest, or cash dividends with dividend tax). The report opens with a plain-language summary, followed by return, CAGR, Sharpe, drawdown, win rate and profit factor, plus the equity curve, trades on the price chart, P&L per trade and the full fill list; the native Backtrader chart is also available. The report also includes a **credibility assessment**: whether there are enough trades, whether returns are concentrated in a few trades, a bootstrap range of returns, what share of random trades with the same count and holding periods the strategy beats (timing skill versus simply riding the market), and whether positions still open at the end carry a large unrealized loss. With a language model configured, AI can explain the results: it compares the annualized return with the risk-free rate, rates Sharpe and Calmar against common yardsticks, and points out how much excess return comes from a falling benchmark; it also looks at the trades, noting when returns rest on a few of them or when positions still open at the end carry a large unrealized loss.
 
 You can add **periodic contributions** (monthly / weekly, i.e. dollar-cost averaging): returns are measured against the total invested with a money-weighted annual return (XIRR), the benchmark buys and holds with the same amounts on the same dates, and drawdown uses the unit value with contributions removed (see "Dollar-cost averaging" below).
 
 A-share rules: 100-share board lots (sized at the real share price, since adjusted data carries the unadjusted price; the fill list shows real share counts and prices), T+1 by product type (stocks and domestic equity ETFs are T+1; bond, money-market, gold, commodity and cross-border ETFs and convertibles are T+0, detected from the code and name), stamp duty on sells, minimum commission and slippage. Signals form at a bar's close and fill at the next bar's open.
 
-### 04 · Optimize
-Grid search over any numeric parameter (up to 3 parameters and 500 combinations, run in parallel), with a heatmap of how results vary; the earlier part of the data picks parameters and the later part checks them out of sample, with overfitting warnings (too many combinations tested, most combinations losing money, markedly weaker out-of-sample results); "Best parameters, year by year" shows where the best parameters rank among all combinations in each calendar year, with a warning when they miss the top half in most years. Walk-forward optimization stitches together a fully out-of-sample equity curve.
+### Timing strategies: validation
+The workbench's Validation tab lists each check and its status: the credibility assessment, random-timing comparison and rebalance-day test (done automatically with the backtest), plus parameter and walk-forward optimization. Parameter optimization runs a grid search over any numeric parameter (up to 3 parameters and 500 combinations, run in parallel), with a heatmap of how results vary; the earlier part of the data picks parameters and the later part checks them out of sample, with overfitting warnings (too many combinations tested, most combinations losing money, markedly weaker out-of-sample results); "Best parameters, year by year" shows where the best parameters rank among all combinations in each calendar year, with a warning when they miss the top half in most years. Walk-forward optimization stitches together a fully out-of-sample equity curve.
 
 <img src="docs/images/optimize-en.png" alt="Optimization">
 
-### 05 · Paper trading
+### Paper trading
 Open a simulated account for any saved strategy — no brokerage account needed. After each trading day's close it updates data, advances the account with **the same code as the backtest**, and lists the trades for the next open. A scheduled task (Windows Task Scheduler, macOS launchd or a Linux systemd timer) can run it automatically; the home page warns if no schedule is set, the last run failed or the data has not been updated for several days.
 
 <img src="docs/images/paper-en.png" alt="Paper trading">
 
 ### Multi-factor stock selection
-Using free BaoStock data, score the **historical constituents** of the CSI 300 and CSI 500 by value, momentum, low volatility, quality, growth and other factors, and rebalance on a schedule; or pick from **all convertible bonds** (including delisted ones) by double-low, premium and other factors. Includes factor research (Rank IC, quantile backtests, factor correlation), industry/size neutralization, IC/ICIR weighting, machine-learning factor combination, custom factors and walk-forward optimization; **AI factor mining** has the AI propose factors round after round, evaluates them on a mining period only, then tests the accepted ones once on a held-out period and compares them with existing factors; describe a selection idea in one sentence and refine the current settings step by step (AI); selection strategies can be paper traded as well.
+Using free BaoStock data, score the **historical constituents** of the CSI 300 and CSI 500 by value, momentum, low volatility, quality, growth and other factors, and rebalance on a schedule; or pick from **all convertible bonds** (including delisted ones) by double-low, premium and other factors. Includes factor research (Rank IC, quantile backtests, factor correlation), industry/size neutralization, IC/ICIR weighting, machine-learning factor combination, custom factors and walk-forward optimization; **AI factor mining** has the AI propose factors round after round, evaluates them on a mining period only, then tests the accepted ones once on a held-out period and compares them with existing factors; describe a selection idea in one sentence and refine the current settings step by step (AI); factor research, custom factors and AI factor mining are gathered in the Factor lab, which shares the universe and prepared data with the Stock selection page, and a tested factor can be added to the selection backtest with one click; selection strategies can be paper traded as well.
 
 <img src="docs/images/selection-en.png" alt="Stock selection">
 
@@ -79,7 +82,7 @@ A risk assessment modelled on broker suitability questionnaires (C1 conservative
 
 The interface is available in **Chinese and English**, with light and dark themes.
 
-**New interface (preview, from 2.6.0)**: choose "New (preview)" under Settings → Interface and the page reloads in the new layout. It uses a sidebar, and "Timing strategies" opens the Timing workbench, which puts writing the strategy, data and capital, the backtest report and validation (credibility assessment, parameter and walk-forward optimization and more) on one page instead of several; Stock selection, Asset allocation and the other sections still open their existing pages for now. The new interface is still being built: switch back to "Classic" in the same place at any time; strategies, data and paper accounts are shared by both. Feedback is welcome in [Discussions](https://github.com/AllenPan-Git/SimpleQuant/discussions).
+**Classic interface**: the 2.x interface (workflow switcher and step bar at the top, with separate Strategy, Backtest and Optimize pages) can still be chosen under Settings → Interface; strategies, data and paper accounts are shared by both. It gets no new features and will be removed in a later release. Users who explicitly chose "Classic" in 2.x keep it after upgrading. Feedback is welcome in [Discussions](https://github.com/AllenPan-Git/SimpleQuant/discussions).
 
 ## Installation
 
@@ -228,15 +231,15 @@ PyInstaller cannot cross-compile, so each system's version is built on that syst
 <details>
 <summary><b>Timing indicators</b></summary>
 
-Price: close/open/high/low, N-day high/low; trend: MA, EMA, MACD, MA slope, BIAS, DMI/ADX, N-day return; oscillators: RSI, KDJ, CCI, Williams %R; volume: volume, average volume, volume ratio, OBV; volatility: Bollinger bands, ATR, return volatility; valuation/turnover: turnover, PE (TTM), PB, PS (TTM) (needs BaoStock stock daily bars), P/E and P/B percentiles (where the current valuation sits within the past N years, 0 = lowest, 100 = highest; BaoStock stock daily bars, or common broad-index ETFs / indices downloaded with AKShare); rates/credit: 10-year government yield, term spread (10Y − 1Y), credit spread (3Y AAA medium-term notes − 3Y government) from the ChinaBond curves, downloaded on the Data page first; equity risk premium (100 / P/E − 10Y government yield) and its percentile, which need P/E and rates data; position: position return (take-profit/stop-loss). KDJ and OBV follow the formulas used by Chinese trading software and are checked value by value against independent implementations.
+Price: close/open/high/low, N-day high/low; trend: MA, EMA, MACD, MA slope, BIAS, DMI/ADX, N-day return; oscillators: RSI, KDJ, CCI, Williams %R; volume: volume, average volume, volume ratio, OBV; volatility: Bollinger bands, ATR, return volatility; valuation/turnover: turnover, PE (TTM), PB, PS (TTM) (needs BaoStock stock daily bars), P/E and P/B percentiles (where the current valuation sits within the past N years, 0 = lowest, 100 = highest; BaoStock stock daily bars, or common broad-index ETFs / indices downloaded with AKShare); rates/credit: 10-year government yield, term spread (10Y − 1Y), credit spread (3Y AAA medium-term notes − 3Y government) from the ChinaBond curves, downloaded first (the Interest rates tab on the Data page, or in place when a rule needs them); equity risk premium (100 / P/E − 10Y government yield) and its percentile, which need P/E and rates data; position: position return (take-profit/stop-loss). KDJ and OBV follow the formulas used by Chinese trading software and are checked value by value against independent implementations.
 </details>
 
 <details>
 <summary><b>About the data sources</b></summary>
 
-- AKShare ETF and stock daily bars come from Eastmoney, with Sina as the fallback. Adjustment is always proportional (dividends reinvested, matching BaoStock and stock selection): stocks are raw prices × BaoStock adjustment factors (Sina's own factors on the fallback), and ETFs are rebuilt from raw prices and Sina cumulative dividends (with share splits handled). Eastmoney's own adjusted prices are additive (adjusted price = raw price + cumulative dividends since listing), which compresses daily percentage moves (to about two thirds of the real move for the dividend ETF 510880), so they are used only when the factors are unavailable (e.g. Beijing Stock Exchange stocks), and the backtest and optimization pages warn about it. Backtest reports state the data source under the title.
+- AKShare ETF and stock daily bars come from Eastmoney, with Sina as the fallback. Adjustment is always proportional (dividends reinvested, matching BaoStock and stock selection): stocks are raw prices × BaoStock adjustment factors (Sina's own factors on the fallback), and ETFs are rebuilt from raw prices and Sina cumulative dividends (with share splits handled). Eastmoney's own adjusted prices are additive (adjusted price = raw price + cumulative dividends since listing), which compresses daily percentage moves (to about two thirds of the real move for the dividend ETF 510880), so they are used only when the factors are unavailable (e.g. Beijing Stock Exchange stocks), and backtests and optimizations warn about it. Backtest reports state the data source under the title.
 - ETF / index valuation comes from Legulegu, with month-end values plus the latest day only; re-download existing ETF / index data to get it.
-- ETF / stock data downloaded before the switch to proportional adjustment is additive; the backtest pages point this out, and re-downloading on the Data page updates it.
+- ETF / stock data downloaded before the switch to proportional adjustment is additive; backtests point this out, and re-downloading on the Data page updates it.
 - BaoStock publishes the day's bars after the close (by 18:40 in our tests).
 - Convertibles: Sina bars are unadjusted with volume in bonds; a few bonds lack bars for their first months (those days use Eastmoney closes for factors only and are not traded). Eastmoney's rating is the latest one, which would introduce look-ahead bias in backtests, so it is not offered as a filter.
 - Rates: the ChinaBond curves can be queried about a year at a time; there is no corporate-bond curve, so the credit spread uses AAA medium-term notes. Curves are published in the evening, so daily strategies use the same day's value (fills happen at the next open) and minute strategies use the previous day's.
@@ -247,7 +250,7 @@ Price: close/open/high/low, N-day high/low; trend: MA, EMA, MACD, MA slope, BIAS
 
 ```
 main.py                    entry point (desktop window / --browser / --paper / --run-script)
-gui/                       UI (NiceGUI): app (routes), layout (header and step bar), pages/, components, widgets, theme
+gui/                       UI (NiceGUI): app (routes), layout (sidebar; header and step bar of the classic interface), pages/, components, widgets, theme
 ui/                        framework-independent parts: texts (UI strings), charts, shared (page logic)
 simplequant/data/          data sources (akshare / baostock / tdx_local / csv), local library, cash-dividend prices
 simplequant/engine/        backtest runner, A-share cost model, strategy base (lots / T+1 / dividends), metrics, optimization, walk-forward, credibility checks

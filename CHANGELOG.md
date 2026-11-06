@@ -5,15 +5,17 @@
 
 Changes in each release. `tools/release.py` copies the matching section into the GitHub release notes.
 
-## 未发布
+## 3.1.0（2026-11-06）
 
 ### 更新内容
 - 新增：匿名使用统计。第一次打开时首页询问一次（默认勾选，点「确定」后生效），可随时在「设置 → 使用统计与反馈」中关闭，「查看会发送什么」显示将要发送的原文。只发送随机安装编号、版本、系统、界面语言与界面版本、各步骤首次使用距安装的天数、按天汇总的使用次数与报错类型；不发送策略、股票代码、资金、回测结果、文件路径与 API Key。每天最多发送一次，详见 README「隐私与使用统计」
 - 新增：「设置」中的反馈框，匿名提交意见，无需 GitHub 账号；附带版本与系统，不收集联系方式
+- 修复：英文界面首页右上角数量为 1 时仍用复数（如「1 strategies」）
 
 ### Changes
 - New: anonymous usage statistics. The home page asks once on first launch (checked by default; takes effect after clicking OK); it can be turned off at any time under Settings → Usage statistics & feedback, where "See what is sent" shows the exact content. Only a random install ID, version, system, interface language and version, days to first use of each step, and daily usage counts and error types are sent; strategies, stock codes, capital, backtest results, file paths and API keys are never sent. At most once a day; see "Privacy and usage statistics" in the README
 - New: a feedback box in Settings for sending comments anonymously without a GitHub account; it includes the version and system and collects no contact details
+- Fixed: the top-right of the English home page used the plural for a count of one (e.g. "1 strategies")
 
 ## 3.0.0（2026-11-05）
 

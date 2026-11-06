@@ -34,7 +34,10 @@ def page():
         greet = "home.greet_morning" if hour < 12 else "home.greet_afternoon" if hour < 18 else "home.greet_evening"
         with ui.row().classes("w-full items-baseline justify-between pt-2"):
             ui.label(t(greet)).classes("sq-title")
-            ui.label(t("home.status", d=max(m.end for m in metas)[:10], n=len(metas), s=len(list_strategies()))
+            n, s = len(metas), len(list_strategies())        # 英文按单复数选词（「1 strategy」）
+            ui.label(t("home.status", d=max(m.end for m in metas)[:10],
+                       data=t("home.n_data_one" if n == 1 else "home.n_data", n=n),
+                       strats=t("home.n_strats_one" if s == 1 else "home.n_strats", n=s))
                      if metas else t("home.status_empty")).classes("sq-muted text-sm")
 
         with ui.element("div").classes("sq-home-top w-full grid gap-10").style("grid-template-columns: minmax(0, 1fr) 320px"):

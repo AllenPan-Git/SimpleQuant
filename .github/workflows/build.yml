@@ -31,7 +31,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, macos-14, windows-latest]
+        os: [ubuntu-22.04, macos-15, windows-latest]
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -54,7 +54,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14              # Apple 芯片（Intel Mac 最后支持的版本是 0.2.5，之后不再打包）
+          - os: macos-15              # Apple 芯片（2026-11 起 GitHub 不再提供 macos-14；Intel Mac 最后支持的版本是 0.2.5）
             target: macos-arm64
           - os: ubuntu-22.04          # glibc 2.35：较老的系统也能运行
             target: linux-x86_64

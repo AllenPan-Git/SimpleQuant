@@ -25,7 +25,8 @@ CB = len(sys.argv) > 4 and sys.argv[4] == "cb"
 UP = len(sys.argv) > 4 and sys.argv[4] == "up"
 PF = len(sys.argv) > 4 and sys.argv[4] == "pf"
 MINE = len(sys.argv) > 4 and sys.argv[4] == "mine"
-TMP = Path(tempfile.mkdtemp(prefix="sq_readme_"))
+# 临时目录由 readme_assets.py 建好传进来、截完再删：本服务是被直接结束进程的，自己没机会清理
+TMP = Path(os.environ.get("SQ_README_TMP") or tempfile.mkdtemp(prefix="sq_readme_"))
 os.environ["NICEGUI_STORAGE_PATH"] = str(TMP / "storage")
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))

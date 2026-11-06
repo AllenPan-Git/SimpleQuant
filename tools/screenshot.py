@@ -10,6 +10,7 @@
 import asyncio
 import base64
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -128,6 +129,21 @@ async def shoot(url: str, out: Path, width: int = 1440, wait: float = 6.0, heigh
                          im.height if box[1] is None else int(box[1] * scale))).save(out)
     finally:
         proc.terminate()
+        try:
+            proc.wait(10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        remove_profile(profile)
+
+
+def remove_profile(profile: str):
+    """删掉这次用的 Edge 临时配置目录（每个 0.1～0.3 GB，不删会一直堆在 Temp 里）。
+    主进程退出后，渲染、GPU 等子进程还会占着文件一小会儿，所以删不干净就稍等再试"""
+    for _ in range(20):
+        shutil.rmtree(profile, ignore_errors=True)
+        if not Path(profile).exists():
+            return
+        time.sleep(0.5)
 
 
 async def find(cdp, text):

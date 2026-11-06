@@ -7,8 +7,11 @@
 
 import asyncio
 import base64
+import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 from pathlib import Path
@@ -109,16 +112,26 @@ def start_server(lang: str, theme: str, extra: list | None = None) -> subprocess
         raise RuntimeError(f"port {PORT} is already in use; stop the other server first")
     except OSError:
         pass
+    tmp = tempfile.mkdtemp(prefix="sq_readme_")
     proc = subprocess.Popen([PY, "-X", "utf8", str(ROOT / "tools" / "readme_server.py"), lang, theme, str(PORT),
-                             *(extra or [])], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                             *(extra or [])], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                            env={**os.environ, "SQ_README_TMP": tmp})
+    proc.sq_tmp = tmp
     for _ in range(120):
         try:
             urllib.request.urlopen(f"http://127.0.0.1:{PORT}/", timeout=2)
             return proc
         except Exception:  # noqa: BLE001 - 还没起来
             time.sleep(1)
-    proc.kill()
+    stop_server(proc)
     raise RuntimeError("readme_server did not start")
+
+
+def stop_server(proc: subprocess.Popen):
+    proc.kill()
+    proc.wait()
+    time.sleep(2)
+    shutil.rmtree(proc.sq_tmp, ignore_errors=True)
 
 
 async def screenshots(only: set | None = None):
@@ -138,8 +151,7 @@ async def screenshots(only: set | None = None):
                                 reload=name in RELOAD)
                     print(name, lang, theme)
             finally:
-                proc.kill()
-                time.sleep(2)
+                stop_server(proc)
 
 
 if __name__ == "__main__":

@@ -9,7 +9,7 @@ from simplequant import migrate
 from simplequant.data import library
 from simplequant.paper import list_accounts, load_calendar, health, schedule
 from simplequant.strategies import list_strategies
-from gui import history, state, routes
+from gui import history, state, routes, telemetry_ui
 from gui.common import t, lang, new_ui, ui_choice
 from gui.components import accounts_table, strategy_progress
 from gui.layout import frame
@@ -22,6 +22,8 @@ def page():
         legacy = migrate.pending()
         if legacy:
             _migrate_card(legacy)
+        if telemetry_ui.should_ask():
+            telemetry_ui.consent_note()
         metas = library.list_datasets()
         recent = history.recent()
         if (recent or metas) and switched_to_new():

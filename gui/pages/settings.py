@@ -1,4 +1,4 @@
-"""设置：界面版本；AI 模型；关于 SimpleQuant（版本、检查更新、项目链接）"""
+"""设置：界面版本；AI 模型；使用统计与反馈；关于 SimpleQuant（版本、检查更新、项目链接）"""
 
 from nicegui import run, ui
 
@@ -6,7 +6,7 @@ from simplequant import llm
 from simplequant.llm import LLMConfig, PRESETS, PROVIDERS, JSON_MODES
 from simplequant.update import DISCUSSIONS_PAGE
 from gui.common import t, p, new_ui, set_ui
-from gui import update
+from gui import update, telemetry_ui
 from gui.layout import frame, page_title
 from gui.widgets import folder_btn, notice
 
@@ -124,6 +124,8 @@ def page():
             folder_btn(t("set.open_folder"), llm.CONFIG_PATH.parent)
         fill()
 
+        ui.separator().classes("q-my-md")
+        telemetry_ui.settings_section()
         ui.separator().classes("q-my-md")
         update.about()
 

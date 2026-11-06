@@ -283,7 +283,17 @@ tests/                     pytest
 
 ## 支持本项目
 
-SimpleQuant 免费开源，所有功能对所有人开放。如果它对你有帮助，欢迎在[爱发电](https://afdian.com/a/allengit)支持后续开发；赞助完全自愿，不影响任何功能。也欢迎在 GitHub 点 Star。使用问题和建议欢迎到 [Discussions](https://github.com/AllenPan-Git/SimpleQuant/discussions) 交流，程序出错请在 Issues 反馈。
+SimpleQuant 免费开源，所有功能对所有人开放。如果它对你有帮助，欢迎在[爱发电](https://afdian.com/a/allengit)支持后续开发；赞助完全自愿，不影响任何功能。也欢迎在 GitHub 点 Star。使用问题和建议欢迎到 [Discussions](https://github.com/AllenPan-Git/SimpleQuant/discussions) 交流，程序出错请在 Issues 反馈；也可在软件「设置 → 使用统计与反馈」中匿名提交意见，无需 GitHub 账号。
+
+## 隐私与使用统计
+
+自 3.1 起，软件第一次打开时会在首页询问是否发送匿名使用统计（默认勾选，点「确定」后生效），之后可随时在「设置 → 使用统计与反馈」中关闭，旁边的「查看会发送什么」显示将要发送的原文。
+
+- **发送的内容**：随机生成的安装编号（与个人信息无关）、版本、系统、界面语言、新版 / 经典界面；首次完成下载数据、回测、验证、模拟盘等步骤距安装的天数；按天汇总的页面打开与主要按钮使用次数；报错的类型与出错的程序位置（不含错误内容）
+- **不发送的内容**：策略内容、股票代码、资金、回测结果、文件路径、API Key。IP 地址只用于服务器限频，不保存
+- **频率**：每天最多一次；联网失败时留到下次，不影响使用
+- **反馈**：「设置」中的反馈框匿名提交，附带版本与系统，不关联安装编号、不收集联系方式
+- 接收端为 Cloudflare 上的 `api.simplequant.org`；源码运行时设置环境变量 `SIMPLEQUANT_TELEMETRY=0` 可完全关闭统计功能
 
 ## 许可证
 

@@ -3,6 +3,7 @@
 import pandas as pd
 from nicegui import run, ui
 
+from simplequant import telemetry
 from simplequant import llm
 from simplequant.stocks import analyze
 from simplequant.stocks import custom_factors, universe as U
@@ -223,6 +224,7 @@ def _custom_factor_ai(SP, fill):
         async def ai_go():
             A["text"] = ai_text.value or ""
             ai_btn.disable()
+            telemetry.ai("factor")
             try:
                 A["result"] = await run.io_bound(llm.generate_factor, A["text"], llm.get_provider(cfg), lg,
                                                  U.kind(SP["universe"]),

@@ -1685,6 +1685,89 @@ async def test_home_ui_switched_note(user: User, lib_dir, monkeypatch):
     await user.should_not_see(marker="home_ui_switched")
 
 
+@pytest.fixture
+def tele_on(tmp_path, monkeypatch):
+    """启用使用统计（写临时文件）；后台发送换成只记次数，测试里不联网"""
+    from simplequant import telemetry
+    monkeypatch.delenv("SIMPLEQUANT_UI_SCRIPT", raising=False)
+    monkeypatch.delenv("SIMPLEQUANT_TELEMETRY", raising=False)
+    telemetry.activate(path=tmp_path / "telemetry.json")
+    sent = []
+    monkeypatch.setattr(telemetry, "send_async", lambda delay=5: sent.append(delay))
+    yield telemetry, sent
+    telemetry.deactivate()
+
+
+async def test_home_telemetry_ask_once(user: User, tele_on):
+    """首页询问一次：默认勾选同意，点「确定」才算同意并在后台发送；之后不再询问。没启用统计时不询问"""
+    telemetry, sent = tele_on
+    await user.open("/")
+    await user.should_see(marker="home_tele")
+    assert user.find(marker="home_tele_agree").elements.pop().value is True
+    assert telemetry.consent() is None                       # 默认勾选，但还没点确定：不算同意
+    user.find(marker="home_tele_ok").click()
+    await settle()
+    assert telemetry.consent() is True and sent == [1]
+    await user.open("/")
+    await user.should_not_see(marker="home_tele")
+    telemetry.deactivate()
+    await user.open("/")
+    await user.should_not_see(marker="home_tele")
+
+
+async def test_home_telemetry_decline(user: User, tele_on):
+    telemetry, sent = tele_on
+    await user.open("/")
+    user.find(marker="home_tele_agree").elements.pop().set_value(False)
+    user.find(marker="home_tele_ok").click()
+    await settle()
+    assert telemetry.consent() is False and sent == []
+    telemetry.count("page:/")
+    assert telemetry.payload()["days"][0]["counts"] == {}
+
+
+async def test_telemetry_preview_shows_payload(user: User, tele_on):
+    """「查看会发送什么」显示的就是 payload() 原文"""
+    telemetry, _ = tele_on
+    await user.open("/")
+    user.find(marker="home_tele_preview").click()
+    await user.should_see(marker="tele_preview_dialog")
+    await user.should_see(telemetry.payload()["install_id"])
+
+
+async def test_settings_telemetry_and_feedback(user: User, tele_on, monkeypatch):
+    """设置页：没回答首页询问时开关是关的；打开即同意；反馈框提交成功后清空，失败显示原因"""
+    telemetry, sent = tele_on
+    got = []
+    results = iter(["ok", "rate_limited"])
+    monkeypatch.setattr(telemetry, "send_feedback", lambda text: got.append(text) or next(results))
+    await user.open("/settings")
+    sw = user.find(marker="set_tele").elements.pop()
+    assert sw.value is False
+    sw.set_value(True)
+    assert telemetry.consent() is True and sent == [1]
+    box = user.find(marker="set_fb_text").elements.pop()
+    box.set_value("回测很快")
+    user.find(marker="set_fb_send").click()
+    await user.should_see(t_("set.fb_ok"))
+    assert got == ["回测很快"] and box.value == ""
+    box.set_value("再来一条")
+    user.find(marker="set_fb_send").click()
+    await user.should_see(t_("set.fb_rate_limited"))
+
+
+async def test_settings_feedback_without_telemetry(user: User):
+    """没启用统计（如源码版设了 SIMPLEQUANT_TELEMETRY=0）：不显示开关，反馈框照常可用"""
+    await user.open("/settings")
+    await user.should_not_see(marker="set_tele")
+    await user.should_see(marker="set_fb_text")
+
+
+def t_(key: str) -> str:
+    from gui.common import t
+    return t(key)
+
+
 async def test_settings_switch_ui(user: User):
     """设置页切到新版：报头（流程切换、步骤条）换成侧栏，当前栏目高亮；切回经典恢复报头"""
     from nicegui import app

@@ -2142,6 +2142,36 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
     "home.ui_switched": L("自 3.0 起默认使用新版界面：左侧导航，择时策略、多因子选股的设置、回测与验证各集中在一页。如需原来的界面，可在「设置 → 界面」中切回经典。",
                           "Since 3.0 the new interface is the default: a sidebar, with each strategy's settings, backtest and validation on one page. To use the previous interface, switch back to Classic under Settings → Interface."),
     "home.ui_switched_ok": L("知道了", "Got it"),
+    # 匿名使用统计与反馈（待办 57；首页询问一次，设置页可改）
+    "tele.ask": L("为改进 SimpleQuant，希望收集匿名使用统计：版本、系统、各功能的使用次数与报错类型，每天最多发送一次。"
+                  "不收集策略内容、股票代码、资金、回测结果、文件路径与 API Key。可随时在「设置」中关闭。",
+                  "To improve SimpleQuant, we would like to collect anonymous usage statistics: version, system, how often each "
+                  "feature is used and the types of errors, sent at most once a day. Strategies, stock codes, capital, backtest "
+                  "results, file paths and API keys are never collected. This can be turned off at any time in Settings."),
+    "tele.agree": L("同意发送匿名使用统计", "Send anonymous usage statistics"),
+    "tele.preview": L("查看会发送什么", "See what is sent"),
+    "tele.ok": L("确定", "OK"),
+    "tele.preview_title": L("将发送的内容", "What will be sent"),
+    "tele.preview_note": L("安装编号为随机生成，与个人信息无关。计数只有数字；报错只有错误类型与出错的程序位置，不含错误内容。",
+                           "The install ID is random and not linked to any personal information. Counts are numbers only; "
+                           "errors include only the error type and where in the program it occurred, not the message."),
+    "tele.preview_off": L("当前未开启使用统计，不会发送任何内容。", "Usage statistics are off; nothing is sent."),
+    "tele.close": L("关闭", "Close"),
+    "set.tele": L("使用统计与反馈", "Usage statistics & feedback"),
+    "set.tele_help": L("开启后每天最多发送一次匿名统计，内容可点「查看会发送什么」核对；关闭时清除本机尚未发送的统计。",
+                       "When on, anonymous statistics are sent at most once a day; use \"See what is sent\" to check them. "
+                       "Turning it off deletes statistics not yet sent."),
+    "set.fb": L("反馈意见", "Feedback"),
+    "set.fb_ph": L("问题、建议或遇到的困难（最多 2000 字）。匿名提交，附带版本与系统，不含联系方式。",
+                   "Problems, suggestions or difficulties (up to 2000 characters). Sent anonymously with the version and "
+                   "system; no contact details."),
+    "set.fb_send": L("提交反馈", "Send feedback"),
+    "set.fb_reply": L("如需回复，请到 GitHub Discussions 发帖", "For a reply, post on GitHub Discussions"),
+    "set.fb_ok": L("已提交，感谢反馈。", "Sent. Thank you for the feedback."),
+    "set.fb_empty": L("请先填写反馈内容。", "Please enter some feedback first."),
+    "set.fb_too_long": L("反馈内容超过 2000 字。", "The feedback is longer than 2000 characters."),
+    "set.fb_rate_limited": L("提交过于频繁，请稍后再试。", "Too many submissions; please try again later."),
+    "set.fb_failed": L("提交失败，请检查网络后重试。", "Could not send; please check the network and try again."),
     "home.ui_switched_set": L("前往设置", "Open settings"),
     "home.hero_eyebrow": L("A 股 · ETF 策略回测", "A-SHARE · ETF BACKTESTING"),
     "home.hero_title": L("把交易想法，|变成可以检验的结论。", "Turn trading ideas|into conclusions you can test."),

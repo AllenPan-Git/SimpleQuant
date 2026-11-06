@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pandas as pd
 from nicegui import run, ui
 
+from simplequant import telemetry
 from simplequant import llm, strategies
 from simplequant.strategies.code_strategy import explain_error
 from simplequant.data.base import freq_label
@@ -676,6 +677,7 @@ def _explain(BT: dict, out):
 
     async def explain():
         el.classes(add="opacity-50")
+        telemetry.ai("explain")
         try:
             BT["explanation"] = await run.io_bound(
                 llm.explain_result, llm.get_provider(cfg), strategies.describe(BT["spec"], lang()),

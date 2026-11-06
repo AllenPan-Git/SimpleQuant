@@ -15,6 +15,7 @@ os.makedirs(os.environ["NICEGUI_STORAGE_PATH"], exist_ok=True)
 
 from nicegui import app, ui  # noqa: E402
 
+from simplequant.data import library  # noqa: E402
 from gui import theme  # noqa: E402
 from gui.layout import PAGES  # noqa: E402
 from gui.pages import (home, data, strategy, backtest, optimize, selection, paper, settings, allocation, tools,  # noqa: E402
@@ -56,11 +57,34 @@ def _start_update_check():
         threading.Timer(5, UPDATER.check_async).start()
 
 
+def _start_telemetry():
+    """匿名使用统计（待办 57）：启用本机累计；同意过的话几秒后在后台发送一次。
+    报错计数接 NiceGUI 的未处理异常；导出、下载计数接 ui.download.content（项目里所有下载都走它）"""
+    from simplequant import telemetry
+    from simplequant.paper import list_accounts
+    from gui.history import recent
+    existing = bool(library.list_datasets() or recent() or list_accounts())
+    if not telemetry.activate(existing_user=existing):
+        return
+    app.on_exception(telemetry.error)
+    content = ui.download.content
+
+    def counted(data, filename=None, media_type=""):
+        ext = (filename or "").rsplit(".", 1)[-1].lower() if "." in (filename or "") else "other"
+        telemetry.count(f"dl:{ext if ext.isalnum() and len(ext) <= 8 else 'other'}")
+        telemetry.milestone("export")
+        return content(data, filename, media_type)
+    ui.download.content = counted
+    if telemetry.due():
+        telemetry.send_async()
+
+
 def run(native: bool = True, port: int = 0, show: bool = True, check_updates: bool = True):
-    """check_updates=False：界面测试、截图用的服务器不联网检查更新"""
+    """check_updates=False：界面测试、截图用的服务器不联网检查更新，也不启用使用统计"""
     register()
     if check_updates:
         app.on_startup(_start_update_check)
+        app.on_startup(_start_telemetry)
     from gui import uitest
     uitest.install()             # 只有设置了 SIMPLEQUANT_UI_SCRIPT 才生效（打包后的自动测试）
     # 桌面窗口（pywebview）默认会静默取消所有下载；打开后点下载会弹出「另存为」对话框

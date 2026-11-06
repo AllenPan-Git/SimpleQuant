@@ -5,6 +5,7 @@ from dataclasses import asdict
 import pandas as pd
 from nicegui import run, ui
 
+from simplequant import telemetry
 from simplequant import llm
 from simplequant.engine.credibility import check_mining
 from simplequant.stocks import UNIVERSES
@@ -106,6 +107,7 @@ def _mining(SP, ctx):
                 return
             M.update(running=True, stop=False, log=[], prog=(0.0, ""), miner=None, saved={})
             show_running()
+            telemetry.ai("mining")
             try:
                 await run.io_bound(miner.run, llm.get_provider(cfg), M["log"].append,
                                    lambda v, s="": M.__setitem__("prog", (v, s)), lambda: M.get("stop"))

@@ -49,6 +49,8 @@ def save(df: pd.DataFrame, meta: DatasetMeta, lib_dir: Path = LIB_DIR) -> Datase
     meta.end = df.index[-1].strftime("%Y-%m-%d")
     df.to_parquet(lib_dir / f"{meta.id}.parquet")
     (lib_dir / f"{meta.id}.json").write_text(json.dumps(asdict(meta), ensure_ascii=False, indent=2), encoding="utf-8")
+    from .. import telemetry
+    telemetry.milestone("data")             # 第一次存下行情数据（下载、导入都走这里）
     return meta
 
 

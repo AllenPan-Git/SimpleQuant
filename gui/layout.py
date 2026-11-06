@@ -5,6 +5,7 @@ from html import escape
 
 from nicegui import app, ui
 
+from simplequant import telemetry
 from simplequant.i18n import LANGS, tr
 from gui import theme, state, update
 from gui.common import t, p, lang, set_lang, dark, set_dark, new_ui
@@ -138,6 +139,10 @@ def _steps(route: str, flow: str):
 @contextmanager
 def frame(route: str):
     """用法：with frame("/data"): ...页面内容..."""
+    telemetry.set_ui_info(lang(), "new" if new_ui() else "classic")
+    telemetry.count(f"page:{route}")
+    if route == "/factors":
+        telemetry.milestone("factor_lab")
     theme.apply(dark())
     if new_ui():
         # 新版界面的样式都写在 body.sq-new 下，经典界面不受影响；sq-side-open：窄窗口下侧栏保持展开

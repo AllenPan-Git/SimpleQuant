@@ -2,6 +2,7 @@
 
 from nicegui import run, ui
 
+from simplequant import telemetry
 from simplequant import llm, strategies
 from simplequant.data import library
 from simplequant.rules import INDICATORS, GROUPS, OPS, CROSS_OPS, LOGICS, validate, make_ind, describe_rule
@@ -602,6 +603,7 @@ def _ai_editor(S, ctx):
                 return
             btn.disable()
             spinner.set_visibility(True)
+            telemetry.ai("strategy")
             try:
                 res = await run.io_bound(llm.translate, S["ai_text"], llm.get_provider(cfg), lang())
                 S["ai_result"], S["ai_symbols"], S["name"] = res, res.symbols, res.name

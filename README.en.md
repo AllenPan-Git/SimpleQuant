@@ -279,7 +279,17 @@ tests/                     pytest
 
 ## Support
 
-SimpleQuant is free and open source, and every feature is available to everyone. Questions and suggestions are welcome in [Discussions](https://github.com/AllenPan-Git/SimpleQuant/discussions); please report bugs in Issues. A Star on GitHub is also appreciated.
+SimpleQuant is free and open source, and every feature is available to everyone. Questions and suggestions are welcome in [Discussions](https://github.com/AllenPan-Git/SimpleQuant/discussions); please report bugs in Issues. Feedback can also be sent anonymously under Settings → Usage statistics & feedback, without a GitHub account. A Star on GitHub is also appreciated.
+
+## Privacy and usage statistics
+
+Since 3.1, the first time SimpleQuant opens, the home page asks whether to send anonymous usage statistics (checked by default; it takes effect only after clicking OK). It can be turned off at any time under Settings → Usage statistics & feedback, where "See what is sent" shows the exact content.
+
+- **Sent**: a randomly generated install ID (not linked to any personal information), version, system, interface language, new / classic interface; the number of days after installation at which data download, backtest, validation, paper trading etc. were first used; daily counts of page views and main buttons; the type and program location of errors (not the message)
+- **Never sent**: strategies, stock codes, capital, backtest results, file paths, API keys. The IP address is used only for server-side rate limiting and is not stored
+- **Frequency**: at most once a day; if the network is unavailable, it waits until next time without affecting anything
+- **Feedback**: the feedback box in Settings submits anonymously with the version and system; it is not linked to the install ID and collects no contact details
+- The receiving end is `api.simplequant.org` on Cloudflare. When running from source, set the environment variable `SIMPLEQUANT_TELEMETRY=0` to disable statistics entirely
 
 ## License
 

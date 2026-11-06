@@ -19,7 +19,7 @@ from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 
-from .. import strategies
+from .. import strategies, telemetry
 from ..allocation import sleeves as SL
 from ..allocation.portfolio import COST, simulate
 from ..data import SOURCES
@@ -57,6 +57,8 @@ def create_account(name: str, sleeves: list[dict], weights: dict[str, float], re
     acc = PaperAccount(id=new_id(name), name=name, kind="portfolio", spec=spec, broker={"cash": float(cash)},
                        start=start, adjust_method="ratio")
     acc.save()
+    telemetry.count("btn:paper_portfolio")
+    telemetry.milestone("paper")
     return acc
 
 

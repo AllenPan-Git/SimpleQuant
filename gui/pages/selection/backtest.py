@@ -10,6 +10,7 @@ from pathlib import Path
 import pandas as pd
 from nicegui import run, ui
 
+from simplequant import telemetry
 from simplequant import llm, strategies
 from simplequant.engine import COST_PRESETS
 from simplequant.engine.credibility import check_backtest, check_ml, check_phase
@@ -286,6 +287,7 @@ def _backtest_form(SP, ctx, rebuild):
             async def ai_go():
                 SP["ai_text"] = ai_text.value or ""
                 ai_btn.disable()
+                telemetry.ai("selection")
                 try:
                     SP["ai"] = await run.io_bound(llm.translate_selection, SP["ai_text"], llm.get_provider(cfg), lg,
                                                   base=current_spec(SP) if SP["ai_base"] else None)
@@ -1016,6 +1018,7 @@ def _explain(SP, rspec: dict, res):
 
     async def explain():
         btn.disable()
+        telemetry.ai("explain")
         try:
             SP["explanation"] = await run.io_bound(
                 llm.explain_result, llm.get_provider(cfg), strategies.describe(rspec, lang()), res.metrics, lang(),

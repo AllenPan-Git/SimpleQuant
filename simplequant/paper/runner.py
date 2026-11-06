@@ -18,7 +18,7 @@ from dataclasses import asdict
 
 import pandas as pd
 
-from .. import strategies
+from .. import strategies, telemetry
 from ..data import SOURCES
 from ..engine import run_backtest, BrokerConfig
 from ..engine.base_strategy import ORDER_COLUMNS
@@ -37,6 +37,8 @@ def create_account(name: str, spec: dict, broker: BrokerConfig, start: str, asse
     acc = PaperAccount(id=new_id(name), name=name, kind=kind, spec=spec, broker=asdict(broker), start=start,
                        assets=assets or [], universe=universe or spec.get("universe", ""), adjust_method="ratio")
     acc.save()
+    telemetry.count(f"btn:paper_{kind}")
+    telemetry.milestone("paper")
     return acc
 
 

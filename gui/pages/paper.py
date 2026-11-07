@@ -17,12 +17,12 @@ from simplequant.paper.calendar import latest_expected_day
 from simplequant.stocks import UNIVERSES, universe as U
 from simplequant.strategies import TEMPLATES
 from simplequant.strategies.code_strategy import explain_error
-from gui import state
+from gui import state, paper_job
 from gui.common import t, p, lang
 from gui.components import accounts_table, broker_settings, metric_tile, dividend_notices, bench_label
 from gui.plan_io import restore_broker
 from gui.layout import frame, page_title
-from gui.widgets import df_table, fmt_table, plot, notice, download_btn, LogBox, hint
+from gui.widgets import df_table, fmt_table, plot, notice, download_btn, hint
 from ui.charts import equity_chart
 from ui.shared import pct, num, account_rows, lots as _lots
 
@@ -42,23 +42,15 @@ def page():
         PP["account"] = opened
     with frame("/paper"):
         page_title("/paper", t("pp.intro_short"), t("pp.intro"))
-        logs = None
 
-        async def run_accounts(accounts, refresh=True):
-            """返回 {账户id: 错误}；更新期间离开或刷新了页面时返回 None：更新仍在后台做完，只是不再提示"""
-            owner = ui.context.slot.parent        # 发起更新的按钮所在的元素：页面关闭或刷新后会被删掉
-            logs.start()
-            try:
-                results = await run.io_bound(run_all, accounts, refresh=refresh, log=logs.append)
-                if results is None or owner.is_deleted:
-                    return None
-                failed = [k for k, v in results.items() if v]
-                ui.notify(t("pp.run_done", ok=len(results) - len(failed), failed=len(failed)),
-                          type="negative" if failed else "positive")
-                return results
-            finally:
-                if not owner.is_deleted:
-                    logs.stop()
+        def run_accounts(accounts, refresh=True):
+            """在后台开始更新（见 gui/paper_job.py）：离开页面也照常做完，回到本页仍能看到进度；
+            结束时 frame() 弹结果、本页的进度区重画页面。已经在更新时返回 False。
+            开始时不重画：重画要读账户文件，后台正在改写时可能读到 0 字节的文件；按钮绑定了 JOB.running，自动变灰"""
+            if not paper_job.JOB.start(run_all, accounts, refresh):
+                ui.notify(t("pp.busy"), type="warning")
+                return False
+            return True
 
         def redraw():
             overview.refresh()
@@ -75,6 +67,7 @@ def page():
         def overview():
             _overview(PP, run_accounts, redraw, open_account)
         overview()
+        paper_job.Panel(on_finish=lambda job: redraw())
 
         # ---------------- 新建账户 ----------------
         @ui.refreshable
@@ -83,8 +76,6 @@ def page():
             with ui.expansion(t("pp.new"), icon="add_circle", value=not accounts).classes("w-full q-card"):
                 _new_account_form(PP, run_accounts, redraw)
         new_account()
-
-        logs = LogBox()
 
         # ---------------- 选中账户的详情 ----------------
         @ui.refreshable
@@ -214,10 +205,11 @@ def _new_account_form(PP, run_accounts, redraw):
                 prices = await run.io_bound(runner.refresh_single_data, acc, today=dt.date.today().isoformat())
                 acc.start = max(df.index[-1] for df in prices.values()).date().isoformat()
                 acc.save()
-            # 选股账户直接用本机已有的股票池数据；单标的"从现在开始"时刚下载过，不再重复下载
-            await run_accounts([acc], refresh=kind == "single" and mode == "past")
             PP["account"] = acc.id
             PP["name"] = ""
+            # 选股账户直接用本机已有的股票池数据；单标的"从现在开始"时刚下载过，不再重复下载
+            if run_accounts([acc], refresh=kind == "single" and mode == "past"):
+                return          # 更新做完后进度区重画页面（这时才显示新账户）
         except Exception as e:  # noqa: BLE001
             msg = explain_error(e, lang())
             ui.notify(msg if msg != str(e) else f"{type(e).__name__}: {e}", type="negative", multi_line=True)
@@ -241,15 +233,13 @@ def _overview(PP, run_accounts, redraw, open_account):
     if PP["account"] not in {r["id"] for r in rows}:
         PP["account"] = rows[0]["id"]      # 首次打开或刚删掉选中的账户：选最需要处理的那个
 
-    async def run_every():
-        btn.disable()
-        if await run_accounts(list_accounts()) is not None:
-            redraw()
+    def run_every():
+        run_accounts(list_accounts())
 
     with ui.element("div").classes("sq-sec").style("align-items: center"):
         ui.label(t("pp.accounts_head")).classes("sq-h2")
-        btn = ui.button(t("pp.run_all"), icon="sync", on_click=run_every).props("outline no-caps") \
-            .mark("pp_run_all")
+        paper_job.while_idle(ui.button(t("pp.run_all"), icon="sync", on_click=run_every).props("outline no-caps") \
+            .mark("pp_run_all"))
     accounts_table(accounts, open_account, rows=rows, selected=PP["account"])
 
 
@@ -269,10 +259,8 @@ def _account_view(PP, run_accounts, redraw):
     stale = not acc.data_through or pd.Timestamp(acc.data_through) < expected
     paused = acc.status != "active"
 
-    async def run_this():
-        b1.disable()
-        if await run_accounts([acc]) is not None:
-            redraw()
+    def run_this():
+        run_accounts([acc])
 
     def toggle_pause():
         acc.status = "active" if acc.status != "active" else "paused"
@@ -287,7 +275,8 @@ def _account_view(PP, run_accounts, redraw):
                 ui.button(t("pp.delete_yes"), on_click=lambda: dlg.submit(True)) \
                     .props("unelevated no-caps color=negative").mark("pp_delete_yes")
         ok = await dlg
-        dlg.delete()
+        if not dlg.is_deleted:      # 更新恰好做完、页面重画时对话框已随之删掉
+            dlg.delete()
         if ok:
             delete_account(acc)
             PP["account"] = None
@@ -302,7 +291,10 @@ def _account_view(PP, run_accounts, redraw):
         with ui.row().classes("items-center gap-2 no-wrap"):
             b1 = ui.button(t("pp.run_this"), icon="refresh", on_click=run_this).props("unelevated no-caps") \
                 .mark("pp_run_this")
-            b1.set_enabled(not paused)                   # 暂停的账户运行时会被跳过
+            if paused:
+                b1.disable()                             # 暂停的账户运行时会被跳过
+            else:
+                paper_job.while_idle(b1)
             with ui.button(icon="more_horiz").props("outline").tooltip(t("pp.more")).mark("pp_more"):
                 with ui.menu():
                     ui.menu_item(t("pp.resume") if paused else t("pp.pause"), on_click=toggle_pause) \

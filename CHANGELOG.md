@@ -5,6 +5,16 @@
 
 Changes in each release. `tools/release.py` copies the matching section into the GitHub release notes.
 
+## 未发布
+
+### 更新内容
+- 新增：模拟盘更新进度条。显示第几个账户、当前步骤（如「下载日线 · 120 / 332」）、百分比与用时，运行日志收进折叠区；更新期间切换到其他页面不会中断也不会丢失进度，侧栏「模拟盘」旁显示百分比和一条细进度线，回到模拟盘页仍可看到进度，更新结束时在当前页面提示结果；更新期间「更新」按钮变灰，避免重复启动
+- 改进：数据下载等处的进度条统一为朱红（之前被默认样式盖成墨色）
+
+### Changes
+- New: a progress bar for paper-account updates, showing the current account, step (e.g. "Downloading daily bars · 120 / 332"), percentage and elapsed time, with the run log in a collapsible section. Switching pages during an update no longer loses the progress: the sidebar shows a percentage and a thin progress line next to Paper trading, the paper trading page still shows the progress when you return, and the result is announced on whichever page is open when the update finishes. The update buttons are disabled while an update is running to avoid starting it twice
+- Improved: progress bars for data downloads and elsewhere are now vermilion, as intended (the default style had turned them ink-black)
+
 ## 3.1.0（2026-11-06）
 
 ### 更新内容

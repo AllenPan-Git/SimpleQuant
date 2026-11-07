@@ -2253,7 +2253,7 @@ async def test_paper_single_account_flow(user: User, lib_dir, paper_dir, monkeyp
     from simplequant.paper import runner, list_accounts
     meta = _save_prices(n=700)
 
-    def fake_refresh(acc, today=None):
+    def fake_refresh(acc, today=None, **kw):
         (acc.dir / "prices").mkdir(parents=True, exist_ok=True)
         out = {}
         for a in acc.assets:
@@ -2292,6 +2292,9 @@ async def test_paper_single_account_flow(user: User, lib_dir, paper_dir, monkeyp
     assert await _wait(lambda: len(runs) >= 2), (len(runs), user.notify.messages)
     assert not any(runs[-1].values())                    # 没有失败的账户
     assert len(list_accounts()[0].fills()) == n and not list_accounts()[0].state()["divergence"]
+    # 更新做完后页面会重画一次：等它画完再点菜单
+    assert await _wait(lambda: sum("完成" in m for m in user.notify.messages) >= 2), user.notify.messages
+    await asyncio.sleep(0.5)
     # 暂停、删除（先确认）：都在「⋯」菜单里
     await settle()
     user.find(marker="pp_more").click()
@@ -2466,7 +2469,7 @@ async def test_paper_single_cash_dividend_account(user: User, lib_dir, paper_dir
     from simplequant.paper import runner, list_accounts
     meta = _save_prices(n=700)
 
-    def fake_refresh(acc, today=None):
+    def fake_refresh(acc, today=None, **kw):
         (acc.dir / "prices").mkdir(parents=True, exist_ok=True)
         df = library.load(meta.id)
         ev = pd.DataFrame({"ex_date": [df.index[650]], "cash": [0.3], "bonus": [0.0], "reserve": [0.0]})
@@ -2574,7 +2577,7 @@ async def test_allocation_to_portfolio_paper_account(user: User, lib_dir, paper_
     idx = library.load("x_510300").index
     cal = idx.append(pd.bdate_range(idx[-1] + pd.Timedelta(days=1), periods=60))
 
-    def fake_refresh(acc, store=None, done=None, calendar=None, selection=True):
+    def fake_refresh(acc, store=None, done=None, calendar=None, selection=True, **kw):
         (acc.dir / "prices").mkdir(parents=True, exist_ok=True)
         for s in acc.spec["sleeves"]:
             if s.get("symbol"):
@@ -3234,3 +3237,39 @@ async def test_paper_run_all_after_leaving_page(user: User, paper_dir, monkeypat
     assert await _wait(lambda: done)
     await asyncio.sleep(0.2)
     assert done == [1] and not errors, errors
+
+
+async def test_paper_progress_survives_leaving_page(user: User, paper_dir, monkeypatch):
+    """模拟盘更新的进度不跟着页面走：换到别的页面时侧栏「模拟盘」旁显示百分比，回到模拟盘页仍有进度条、
+    「更新」按钮变灰；更新在哪个页面结束，就在哪个页面弹结果"""
+    import threading
+    from gui import common
+    from simplequant.engine import BrokerConfig
+    from simplequant.paper import create_account
+    common.set_ui("new")
+    for name in ("甲", "乙"):
+        create_account(name, {"kind": "template", "template": "buy_hold", "params": {}}, BrokerConfig(), "2026-01-05",
+                       assets=[{"source": "akshare", "symbol": "510300", "asset": "etf", "name": "510300"}])
+    gate = threading.Event()
+
+    def slow_run_all(accounts, progress=None, **kw):
+        progress(0.5, 2, "甲", "stocks", 120, 332)
+        gate.wait(10)
+        return {a.id: "" for a in accounts}
+    patch_page(monkeypatch, "/paper", "run_all", slow_run_all)
+
+    await user.open("/paper")
+    user.find(marker="pp_run_all").click()
+    await user.should_see(marker="pp_progress_step")
+    await user.should_see("下载日线 · 120 / 332")
+    await user.should_see("25%")
+    await user.open("/")
+    await user.should_see(marker="nav_progress")
+    await user.should_see("25%")
+    await user.open("/paper")
+    await user.should_see("第 1 / 2 个账户：甲")
+    assert not user.find(marker="pp_run_all").elements.pop().enabled
+    gate.set()
+    assert await _wait(lambda: any("完成：成功 2 个" in m for m in user.notify.messages)), user.notify.messages
+    await settle()
+    assert user.find(marker="pp_run_all").elements.pop().enabled

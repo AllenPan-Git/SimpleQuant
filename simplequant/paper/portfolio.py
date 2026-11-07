@@ -69,10 +69,11 @@ def _sub(acc: PaperAccount, s: dict) -> SimpleNamespace:
 
 # ---------------- 数据 ----------------
 def refresh_data(acc: PaperAccount, store=None, done: set | None = None, calendar: pd.DatetimeIndex | None = None,
-                 selection: bool = True) -> None:
+                 selection: bool = True, progress=None) -> None:
     """
     买入持有、择时成分：重新获取前复权日线（最新价格等于真实价格，便于按真实股数下单）；
-    选股成分：增量更新股票池数据。selection=False 时只更新行情（开户时选股成分直接用本机已有数据）
+    选股成分：增量更新股票池数据。selection=False 时只更新行情（开户时选股成分直接用本机已有数据）。
+    progress(账户内比例, 步骤键, 完成数, 总数)：要下载的每个标的、每个选股成分各占一份
     """
     calendar = calendar if calendar is not None else load_calendar()
     today = dt.date.today().isoformat()
@@ -80,8 +81,13 @@ def refresh_data(acc: PaperAccount, store=None, done: set | None = None, calenda
     complete_through = latest_expected_day(calendar)
     (acc.dir / "prices").mkdir(parents=True, exist_ok=True)
     fetched = set()
+    symbols = list(dict.fromkeys(s["symbol"] for s in acc.spec["sleeves"] if s["kind"] in ("hold", "timing")))
+    sels = [s for s in acc.spec["sleeves"] if s["kind"] == "selection"] if selection else []
+    units = max(len(symbols) + len(sels), 1)
     for s in acc.spec["sleeves"]:
         if s["kind"] in ("hold", "timing") and s["symbol"] not in fetched:
+            if progress:
+                progress(len(fetched) / units, "prices", len(fetched), len(symbols))
             kw = acc.fetch_kwargs(s.get("asset", ""), s.get("source", "akshare"))
             df = SOURCES[s.get("source", "akshare")].fetch(s["symbol"], hist_start, today, freq="1d", adjust="qfq", **kw)
             df.loc[:complete_through].to_parquet(acc.dir / "prices" / f"{s['symbol']}.parquet")
@@ -89,9 +95,10 @@ def refresh_data(acc: PaperAccount, store=None, done: set | None = None, calenda
     if selection and any(s["kind"] == "selection" for s in acc.spec["sleeves"]):
         from ..stocks import StockStore
         store = store or StockStore()
-        for s in acc.spec["sleeves"]:
-            if s["kind"] == "selection":
-                refresh_selection_data(_sub(acc, s), store, done if done is not None else set(), calendar=calendar)
+        for m, s in enumerate(sels):
+            sub = (lambda f, key, i, n, m=m: progress((len(symbols) + m + f) / units, key, i, n)) if progress else None
+            refresh_selection_data(_sub(acc, s), store, done if done is not None else set(), calendar=calendar,
+                                   progress=sub)
     for s in acc.spec["sleeves"]:
         if s["kind"] == "timing":
             with_rates(SimpleNamespace(spec=s["spec"]), {}, refresh=True)   # 规则用到利率时顺带更新

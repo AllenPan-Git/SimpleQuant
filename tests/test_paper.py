@@ -578,7 +578,7 @@ def test_refresh_selection_data_only_needed_codes(tmp_path):
     class FakeStore:
         root = tmp_path
 
-        def update_universe(self, name, start, end):
+        def update_universe(self, name, start, end, progress=None):
             return uni
 
         def update_index(self, *a):
@@ -604,3 +604,26 @@ def test_refresh_selection_data_only_needed_codes(tmp_path):
     runner.refresh_selection_data(early, FakeStore(), done, calendar=cal)
     assert calls[2:] == [("prices", ["A", "B", "C", "D", "E"]), ("div", ["A", "B", "C", "D", "E"])]
     assert runner.selection_codes(uni, pd.Timestamp("2025-01-01")) == ["A", "B", "C", "D", "E"]   # 早于第一次快照
+    # 进度：按这个账户要做的几步（成分股、指数、日线、分红）折成账户内的比例
+    seen = []
+    runner.refresh_selection_data(acc, FakeStore(), set(), calendar=cal,
+                                  progress=lambda f, key, i, n: seen.append((round(f, 2), key)))
+    assert seen == [(0, "universe"), (.25, "index"), (.5, "stocks"), (.75, "div")]
+
+
+def test_run_all_progress(monkeypatch):
+    """run_all 的进度：(已完成账户数含当前比例, 账户总数, 账户名, 步骤键, i, n)；暂停的账户不算；下载占 90%、运行策略占 10%"""
+    from simplequant.paper import runner
+    seen = []
+    _fake_run(monkeypatch, runner, [])
+    accs = [_acc("甲"), _acc("乙", status="paused"), _acc("丙")]
+
+    def fake_single(acc, progress=None):
+        report = runner.steps(progress, ["prices"])
+        report("prices", 1, 2)
+        return {}
+    monkeypatch.setattr(runner, "refresh_single_data", fake_single)
+    runner.run_all(accs, store=object(), log=lambda m: None,
+                   progress=lambda d, total, name, key, i, n: seen.append((round(d, 2), total, name, key)))
+    assert seen == [(0, 2, "甲", "prices"), (.45, 2, "甲", "prices"), (.9, 2, "甲", "run"),
+                    (1, 2, "丙", "prices"), (1.45, 2, "丙", "prices"), (1.9, 2, "丙", "run")]

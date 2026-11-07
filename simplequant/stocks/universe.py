@@ -72,11 +72,12 @@ def data_files(universe: str, store: StockStore | None = None) -> list:
 
 
 def update(universe: str, start: str, end: str, store: StockStore | None = None, workers: int = 4,
-           fin: bool = False, div: bool = False, industry: bool = False, risk: bool = False) -> dict[str, str]:
-    """增量更新（模拟盘、导出脚本用）；返回失败的 {代码: 错误}"""
+           fin: bool = False, div: bool = False, industry: bool = False, risk: bool = False,
+           progress=None) -> dict[str, str]:
+    """增量更新（模拟盘、导出脚本用）；返回失败的 {代码: 错误}。progress 目前只用于可转债（见 BondStore.update_all）"""
     if kind(universe) == "cb":
         st = _cb_store()
-        return st.update_all(start, end, workers=min(workers, 3))
+        return st.update_all(start, end, workers=min(workers, 3), progress=progress)
     st = store or StockStore()
     uni = st.update_universe(universe, start, end)
     st.update_index(UNIVERSES[universe]["index"], start, end)

@@ -7,7 +7,7 @@ from nicegui import app, ui
 
 from simplequant import telemetry
 from simplequant.i18n import LANGS, tr
-from gui import theme, state, update
+from gui import theme, state, update, paper_job
 from gui.common import t, p, lang, set_lang, dark, set_dark, new_ui
 
 # (路由, 文字键, 图标)：全部页面（注册路由、页面标题用）
@@ -144,6 +144,7 @@ def frame(route: str):
     if route == "/factors":
         telemetry.milestone("factor_lab")
     theme.apply(dark())
+    paper_job.watch(paper_job.notify_done)      # 模拟盘更新在哪个页面结束，就在哪个页面弹结果
     if new_ui():
         # 新版界面的样式都写在 body.sq-new 下，经典界面不受影响；sq-side-open：窄窗口下侧栏保持展开
         ui.query("body").classes("sq-new" + (" sq-side-open" if side_open() else ""))
@@ -247,8 +248,9 @@ def _side_item(route: str, name: str, icon: str, on: bool, n: int = 0):
     with link:
         ui.icon(icon, size="18px")
         ui.label(name).classes("sq-side-label")
-        if n:
-            ui.label(str(n)).classes("sq-side-badge").mark("nav_badge")
+        badge = ui.label(str(n)).classes("sq-side-badge").mark("nav_badge") if n else None
+        if route == "/paper":       # 模拟盘更新中：数字换成百分比，底部一条细进度线
+            paper_job.side_indicator(hide=badge)
         # 只在图标列下显示（宽窗口、窄窗口展开时由 CSS 隐藏）
         ui.tooltip(label).classes("sq-tip sq-side-tip").props('anchor="center right" self="center left" :offset="[8, 0]"')
 

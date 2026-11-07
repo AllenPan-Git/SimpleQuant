@@ -106,7 +106,7 @@ class Progress:
     def __init__(self):
         self.value, self.text = 0.0, ""
         with ui.column().classes("w-full gap-1") as self.box:
-            self.bar = ui.linear_progress(value=0, show_value=False).props("size=4px")
+            self.bar = ui.linear_progress(value=0, show_value=False, color=None).props("size=4px")
             self.label = ui.label().classes("sq-muted text-sm sq-num")
         self.box.set_visibility(False)
         self.timer = ui.timer(0.2, self._tick, active=False)

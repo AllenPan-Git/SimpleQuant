@@ -287,6 +287,19 @@ body.sq-new {{ --sq-header-h: 0px; }}
 .sq-new .sq-side-label {{ min-width: 0; overflow: hidden; text-overflow: ellipsis; }}
 .sq-new .sq-side-badge {{ margin-left: auto; font: 400 15px/1 var(--sq-fig); font-variant-numeric: lining-nums tabular-nums;
   color: var(--sq-red); }}
+/* 模拟盘更新中（gui/paper_job.side_indicator）：百分比沿用 badge 的样式，栏目底部一条细线，底线灰、进度朱红 */
+.sq-new .sq-side-item {{ position: relative; }}
+.sq-new .sq-side-pct {{ font-size: 13px; }}
+.sq-new .sq-side-prog {{ position: absolute; left: 14px; right: 0; bottom: 4px; height: 1px; background: var(--sq-border); }}
+.sq-new .sq-side-prog > i {{ position: absolute; left: 0; top: -0.5px; height: 2px; width: 0; background: var(--sq-red);
+  transition: width .4s ease; }}
+/* 模拟盘页的进度区：上方一条墨线，标题宋体，百分比用数字字体 */
+.sq-prog {{ border-top: 1px solid var(--sq-text); padding-top: 10px; }}
+.sq-prog-head {{ font-family: var(--sq-serif); font-weight: 600; font-size: 15.5px; min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }}
+.sq-prog-pct {{ font-size: 22px; line-height: 1; color: var(--sq-red); }}
+/* 进度条颜色由这里定（paper_job 里 color=None，不带 Quasar 的 text-primary） */
+.sq-prog .sq-prog-bar.q-linear-progress {{ background: var(--sq-border); color: var(--sq-red) !important; margin-top: 2px; }}
 /* 分组头像报纸的栏目标题：宋体灰字、字距放宽，细线接在名字后面拉到右边；朱红只留给当前栏目 */
 .sq-new .sq-side-sep {{ flex-shrink: 0; display: flex; align-items: center; gap: 10px; margin: 16px 0 4px; padding-left: 16px; }}
 .sq-new .sq-side-sep::after {{ content: ""; flex: 1; height: 1px; background: var(--sq-border); }}
@@ -314,6 +327,7 @@ body.sq-side-open .sq-side-tip {{ display: none; }}
   {_MINI} .sq-side-label {{ display: none; }}
   {_MINI} .sq-side-badge {{ position: absolute; top: 9px; right: 9px; width: 6px; height: 6px; border-radius: 50%;
     background: var(--sq-red); font-size: 0; }}
+  {_MINI} .sq-side-prog {{ left: 8px; right: 8px; bottom: 3px; }}
   {_MINI} .sq-side-date, {_MINI} .sq-side-group {{ display: none; }}
   {_MINI} .sq-side-sep {{ display: block; height: 1px; margin: 8px 4px; padding: 0; background: var(--sq-border); }}
   {_MINI} .sq-side-sep::after {{ display: none; }}
@@ -365,6 +379,7 @@ body.body--dark .q-btn.bg-primary, body.body--dark .q-btn.bg-primary .q-btn__con
 /* 收成一行的说明（widgets.hint）：「详细说明」紧跟在短句后面 */
 .sq-hint-toggle {{ margin-left: .5em; color: var(--sq-red); cursor: pointer; white-space: nowrap; }}
 .sq-hint-toggle:hover {{ text-decoration: underline; }}
+/* 进度条一律朱红：创建时要传 color=None（NiceGUI 默认 primary，会带上 Quasar 的 .text-primary 盖过这里） */
 .q-linear-progress {{ color: var(--sq-red) !important; border-radius: 0; }}
 .sq-code {{ font-family: var(--sq-mono); font-size: 13px; line-height: 1.7; white-space: pre-wrap; padding: 12px 14px;
   border: 1px solid var(--sq-border); background: var(--sq-sunk); }}

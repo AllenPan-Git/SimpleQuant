@@ -43,7 +43,20 @@ def create_account(name: str, spec: dict, broker: BrokerConfig, start: str, asse
 
 
 # ---------------- 数据 ----------------
-def refresh_single_data(acc: PaperAccount, today: str | None = None) -> dict[str, pd.DataFrame]:
+def steps(progress, keys: list[str]):
+    """
+    把一个账户的数据更新分成 len(keys) 步，折算成账户内 0～1 的比例：
+    返回 report(步骤键, 完成数=0, 总数=0)，调用 progress(比例, 步骤键, 完成数, 总数)；progress 为空时什么都不做。
+    步骤键（界面按它显示文字）：prices 行情；universe 成分股、index 指数、stocks 日线、fin 财报、industry 行业、
+    div 分红、risk 排雷；cb_list / cb_info / cb_index / cb_daily 可转债列表、条款、指数、日线
+    """
+    def report(key: str, i: int = 0, n: int = 0):
+        if progress:
+            progress((keys.index(key) + (min(i / n, 1) if n else 0)) / len(keys), key, i, n)
+    return report
+
+
+def refresh_single_data(acc: PaperAccount, today: str | None = None, progress=None) -> dict[str, pd.DataFrame]:
     """
     单标的账户：重新获取前复权日线（最新价格与真实价格一致，便于按真实股数下单）。
     现金分红账户再换成「不复权价 + 分红」计算的行情（data/cash_dividend.py），同样缩放到最新价格等于真实价格；
@@ -57,7 +70,9 @@ def refresh_single_data(acc: PaperAccount, today: str | None = None) -> dict[str
     cash_div = acc.broker.get("dividend") == "cash"
     notes = {"skipped": {}, "patched": {}}
     out = {}
-    for a in acc.assets:
+    report = steps(progress, ["prices"])
+    for j, a in enumerate(acc.assets):
+        report("prices", j, len(acc.assets))
         src = SOURCES[a.get("source", "akshare")]
         kw = acc.fetch_kwargs(a.get("asset", ""), a.get("source", "akshare"))
         df = src.fetch(a["symbol"], hist_start, today, freq="1d", adjust="qfq", **kw)
@@ -123,8 +138,9 @@ def selection_codes(uni: pd.DataFrame, since: pd.Timestamp) -> list[str]:
 
 
 def refresh_selection_data(acc: PaperAccount, store, done: set | None = None, workers: int = 4,
-                           calendar: pd.DatetimeIndex | None = None) -> None:
-    """选股账户：增量更新股票池里用得到的股票（见 selection_codes）；同一次运行中同样的范围只更新一次"""
+                           calendar: pd.DatetimeIndex | None = None, progress=None) -> None:
+    """选股账户：增量更新股票池里用得到的股票（见 selection_codes）；同一次运行中同样的范围只更新一次。
+    progress(账户内比例, 步骤键, 完成数, 总数)：见 steps"""
     from ..stocks import UNIVERSES, FACTORS, universe
     from ..stocks.selection import panel_warmup_days, needs_fin, needs_risk
     done = done if done is not None else set()
@@ -136,24 +152,41 @@ def refresh_selection_data(acc: PaperAccount, store, done: set | None = None, wo
     today = latest_expected_day(calendar if calendar is not None else load_calendar()).date().isoformat()
     if universe.kind(acc.universe) == "cb":          # 可转债：列表、条款、指数、日线一起增量更新
         first = (pd.Timestamp(acc.start) - pd.Timedelta(days=panel_warmup_days(acc.spec))).date().isoformat()
-        universe.update(acc.universe, first, today, workers=workers)
+        report = steps(progress, ["cb_list", "cb_info", "cb_index", "cb_daily"])
+        universe.update(acc.universe, first, today, workers=workers,
+                        progress=lambda name, i, n: report(f"cb_{name}", i, n))
         done.add(acc.universe)
         return
     first = store.load_index(UNIVERSES[acc.universe]["index"]).index[0].date().isoformat() \
         if (store.root / "index" / f"{UNIVERSES[acc.universe]['index']}.parquet").exists() else acc.start
-    uni = store.update_universe(acc.universe, first, today)
+    fin, industry = needs_fin(acc.spec), bool((acc.spec.get("neutralize") or {}).get("industry"))
+    div = acc.spec.get("dividend") == "cash" or \
+        any(FACTORS.get(f["key"], {}).get("requires_div") for f in acc.spec["factors"])
+    risk = needs_risk(acc.spec)
+    report = steps(progress, ["universe", "index", "stocks"] + ["fin"] * fin + ["industry"] * industry
+                   + ["div"] * div + ["risk"] * risk)
+
+    def on(key):            # 给下载函数的 (完成数, 总数) 回调
+        return lambda i, n: report(key, i, n)
+    report("universe")
+    uni = store.update_universe(acc.universe, first, today, progress=on("universe"))
+    report("index")
     store.update_index(UNIVERSES[acc.universe]["index"], first, today)
     codes = selection_codes(uni, since)
-    store.update(codes, first, today, workers=workers)
-    if needs_fin(acc.spec):
-        store.update_fundamentals(codes, int(first[:4]) - 1, workers=workers)
-    if (acc.spec.get("neutralize") or {}).get("industry"):
+    report("stocks")
+    store.update(codes, first, today, workers=workers, progress=on("stocks"))
+    if fin:
+        report("fin")
+        store.update_fundamentals(codes, int(first[:4]) - 1, workers=workers, progress=on("fin"))
+    if industry:
+        report("industry")
         store.update_industry()
-    if acc.spec.get("dividend") == "cash" or \
-            any(FACTORS.get(f["key"], {}).get("requires_div") for f in acc.spec["factors"]):
-        store.update_dividends(codes, int(first[:4]) - 1, workers=workers)
-    if needs_risk(acc.spec):
-        store.update_risk(codes, int(first[:4]) - 1, workers=workers)
+    if div:
+        report("div")
+        store.update_dividends(codes, int(first[:4]) - 1, workers=workers, progress=on("div"))
+    if risk:
+        report("risk")
+        store.update_risk(codes, int(first[:4]) - 1, workers=workers, progress=on("risk"))
     done.add(key)
 
 
@@ -305,7 +338,7 @@ def _unlock(f):
 
 
 @contextmanager
-def run_lock(log=print):
+def run_lock(log=print, on_wait=None):
     """
     同一时间只让一次模拟盘更新运行：定时任务、程序窗口里的按钮（离开页面后仍在后台跑的那次也算）共用这把锁。
     两次同时跑时，两边都把数据完整下载一遍、抢 BaoStock 的连接，一边重写数据文件时另一边还可能读到空文件。
@@ -321,6 +354,8 @@ def run_lock(log=print):
                 log("another update is running (scheduled task or the app window); waiting for it to finish / "
                     "另一处正在更新模拟账户（定时任务或程序窗口），等它完成后继续…")
                 waited = True
+                if on_wait:
+                    on_wait()
             if time.monotonic() > deadline:
                 raise RunLockTimeout()
             time.sleep(LOCK_POLL)
@@ -336,40 +371,54 @@ def _reload(acc: PaperAccount) -> PaperAccount | None:
     return load_account(acc.id, acc.dir.parent) if path.exists() else None
 
 
-def run_all(accounts: list[PaperAccount], store=None, refresh: bool = True, log=print) -> dict:
-    """更新数据并推进所有启用中的账户；返回 {账户id: 错误信息或空}。另一处正在更新时先等它做完（见 run_lock）"""
+def run_all(accounts: list[PaperAccount], store=None, refresh: bool = True, log=print, progress=None) -> dict:
+    """
+    更新数据并推进所有启用中的账户；返回 {账户id: 错误信息或空}。另一处正在更新时先等它做完（见 run_lock）。
+    progress(已完成的账户数（含当前账户已完成的比例）, 账户总数, 当前账户名, 步骤键, 完成数, 总数)：
+    步骤键除 steps 里的那些外，还有 wait（等另一处的更新做完）、run（按新数据运行策略）
+    """
+    on_wait = (lambda: progress(0, 0, "", "wait", 0, 0)) if progress else None
     try:
-        with run_lock(log) as waited:
+        with run_lock(log, on_wait) as waited:
             if waited:        # 另一处刚更新完：数据已是最新，这次只需几秒；账户以文件里的为准
                 accounts = [a for a in map(_reload, accounts) if a is not None]
-            return _run_all(accounts, store, refresh, log)
+            return _run_all(accounts, store, refresh, log, progress)
     except RunLockTimeout:
         log(f"another update is still running after {LOCK_WAIT_LIMIT // 3600} hours; skipped / "
             f"另一处的更新超过 {LOCK_WAIT_LIMIT // 3600} 小时仍未结束，本次跳过")
         return {}
 
 
-def _run_all(accounts: list[PaperAccount], store, refresh: bool, log) -> dict:
+def _run_all(accounts: list[PaperAccount], store, refresh: bool, log, progress=None) -> dict:
     from ..stocks import StockStore
     store = store or StockStore()
     calendar = load_calendar()
     done, results = set(), {}
-    for acc in accounts:
-        if acc.status != "active":
-            continue
+    active = [a for a in accounts if a.status == "active"]
+    for k, acc in enumerate(active):
+        # 账户内：下载数据占 90%，按新数据运行策略占 10%
+        inner = (lambda f, key, i, n, k=k, name=acc.name: progress(k + f * .9, len(active), name, key, i, n)) \
+            if progress else None
+        kw = {"progress": inner} if inner else {}       # 不要进度时照旧调用（测试里替换的函数不必接这个参数）
+        ran = (lambda: inner(1, "run", 0, 0)) if inner else (lambda: None)
         try:
             log(f"[{acc.name}] updating data…")
+            if inner:
+                inner(0, "prices", 0, 0) if refresh else ran()
             if acc.kind == "portfolio":
                 from . import portfolio
                 if refresh:
-                    portfolio.refresh_data(acc, store, done, calendar)
+                    portfolio.refresh_data(acc, store, done, calendar, **kw)
+                ran()
                 state = portfolio.run_portfolio(acc, calendar, store)
             elif acc.kind == "selection":
                 if refresh:
-                    refresh_selection_data(acc, store, done, calendar=calendar)
+                    refresh_selection_data(acc, store, done, calendar=calendar, **kw)
+                ran()
                 state = run_account(acc, calendar, panel=load_selection_panel(acc, store))
             else:
-                prices = refresh_single_data(acc) if refresh else load_single_data(acc)
+                prices = refresh_single_data(acc, **kw) if refresh else load_single_data(acc)
+                ran()
                 state = run_account(acc, calendar, prices=with_rates(acc, prices, refresh))
             log(f"[{acc.name}] data through {state['as_of']}, value {state['value']:,.0f}, "
                 f"{len(state['signals'])} signal(s) for {state['execute_on']}")

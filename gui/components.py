@@ -1,4 +1,4 @@
-"""回测页和参数优化页共用的设置区块（对应 ui/components.py）"""
+"""各页面共用的设置区块与展示组件：数据选择、资金与费率、指标卡片、可信度检查、模拟账户一览等"""
 
 import copy
 import datetime as dt
@@ -7,31 +7,18 @@ from dataclasses import dataclass, field
 import pandas as pd
 from nicegui import ui
 
-from simplequant import strategies
 from simplequant.data import library
 from simplequant.data.ratio_adjust import is_additive
 from simplequant.engine import BrokerConfig, COST_PRESETS
 from simplequant.rules import INDICATORS, required_columns, macro_columns, requires_of
 from simplequant.rules.schema import BARS_PER_YEAR
-from simplequant.strategies import TEMPLATES
-from gui import state, routes
+from gui import state
 from gui.common import t, p, lang
 from gui.widgets import section, notice
 from ui import shared
 from ui.shared import TILE_ROWS, TILE_HELP, DCA_TILE_ROWS, DCA_TILE_HELP, fmt_metric, dataset_label
 
 DENSE = "outlined dense options-dense"
-
-
-def require_data() -> dict | None:
-    """本地数据库为空时给出提示并返回 None"""
-    metas = library.list_datasets()
-    if not metas:
-        notice(t("bt.no_data"), "info")
-        ui.button(t("nav.go_data"), on_click=lambda: ui.navigate.to("/data")) \
-            .props("flat no-caps dense color=primary icon-right=arrow_forward")
-        return None
-    return {m.id: m for m in metas}
 
 
 # ---------------- 数据 ----------------
@@ -209,56 +196,6 @@ def dividend_notices(skipped: dict, patched: dict):
         notice(t("cd.patched", items=items), "info", "info")
 
 
-# ---------------- 策略 ----------------
-def strategy_selector(key: str, on_change, on_broker=None) -> dict:
-    """
-    返回 {"spec": 策略描述, "label": 显示名}（原地更新）。
-    on_broker(broker)：选中的已保存策略记有资金与费率时调用（只在手动选择时，不在页面打开时）
-    """
-    lg = lang()
-    options = {}
-    cur = state.STATE.get("current_spec")
-    if cur:
-        options["__current__"] = t("bt.opt_current", name=cur["name"])
-    saved, brokers = strategies.list_strategies(), strategies.strategy_brokers()
-    for n, s in saved.items():
-        if strategies.runnable_on_single_assets(s):
-            options[f"saved:{n}"] = t("bt.opt_saved", name=n)
-    for k, tpl in TEMPLATES.items():
-        options[f"tpl:{k}"] = t("bt.opt_template", name=p(tpl.label))
-    choice = state.STATE.get(f"{key}_strategy")
-    if choice not in options:
-        choice = next(iter(options))
-    out = {}
-
-    def resolve(c):
-        if c == "__current__":
-            spec, name = {k: v for k, v in cur.items() if k != "name"}, cur["name"]
-        elif c.startswith("saved:"):
-            spec, name = saved[c[6:]], c[6:]
-        else:
-            spec, name = {"kind": "template", "template": c[4:], "params": {}}, p(TEMPLATES[c[4:]].label)
-        out.update(spec=spec, label=options[c], name=name)
-        desc.text = strategies.describe(spec, lg)
-
-    with section(t("bt.strategy"), "tune"):
-        def on_pick(e):
-            state.STATE[f"{key}_strategy"] = e.value
-            resolve(e.value)
-            broker = brokers.get(e.value[6:]) if e.value.startswith("saved:") else None
-            if broker and on_broker:
-                on_broker(broker)
-            on_change()
-        ui.select(options, label=t("bt.pick_strategy"), value=choice, on_change=on_pick) \
-            .props(DENSE).classes("w-full").mark(f"{key}_strategy")
-        desc = ui.label().classes("sq-code w-full")
-        ui.button(t("bt.edit_strategy"), icon="edit", on_click=lambda: ui.navigate.to(
-            routes.timing("strategy", spec={"name": out["name"], **out["spec"]}))) \
-            .props("flat no-caps dense color=primary").classes("self-start")
-    resolve(choice)
-    return out
-
-
 # ---------------- 资金与费率 ----------------
 def broker_settings(key: str, default_preset: str = "etf", default_cash: int = 100_000, show_t1: bool = True,
                     show_dividend: bool = False, show_contribution: bool = False,
@@ -420,13 +357,11 @@ def rates_missing(spec: dict) -> bool:
     return not RatesStore().ready()
 
 
-def missing_factor_warnings(by_id: dict, ids: list, spec: dict, rates: bool = True) -> list[str]:
-    """规则用到估值/换手因子，但所选数据没有对应列时的提示；rates=False 时不提示缺利率（新版界面就地下载）"""
+def missing_factor_warnings(by_id: dict, ids: list, spec: dict) -> list[str]:
+    """规则用到估值/换手因子，但所选数据没有对应列时的提示（缺利率不在这里提示，工作台就地更新）"""
     if spec.get("kind") != "rule":
         return []
     need, out = required_columns(spec["rule"]) - macro_columns(spec["rule"]), []
-    if rates and rates_missing(spec):
-        out.append(t("rates.need"))
     for i in ids:
         lacking = sorted(need - set(library.load(i).columns))
         if lacking:

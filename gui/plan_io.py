@@ -172,7 +172,7 @@ def restore_broker(key: str, plan: dict, default: dict):
 
 
 def apply(plan: dict, metas: list):
-    """还原回测页的设置并自动回测"""
+    """还原择时工作台的设置并自动回测"""
     spec = plan["strategy"]
     name = _unique_name(plan["name"], spec)
     strategies.save_strategy(name, spec, broker=asdict(P.broker_of(plan)))
@@ -180,7 +180,6 @@ def apply(plan: dict, metas: list):
     restore_broker("bt", plan, {"cash": 100_000, "preset": "etf", "t1": True, "slippage": 5.0, "custom": {}})
     S["bt_ids"] = [m.id for m in metas]
     S["bt_range"] = tuple(dt.date.fromisoformat(d) for d in plan["range"])
-    S["bt_strategy"] = f"saved:{name}"
     S["bt_mode"] = plan["mode"]
     S["bt_plan"] = {"name": plan["name"], "result": plan.get("result"),
                     "provider": any(P.provider_differs(a, m) for a, m in zip(plan["assets"], metas))}

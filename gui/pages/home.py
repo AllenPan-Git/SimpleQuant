@@ -10,7 +10,7 @@ from simplequant.data import library
 from simplequant.paper import list_accounts, load_calendar, health, schedule
 from simplequant.strategies import list_strategies
 from gui import history, state, routes, telemetry_ui
-from gui.common import t, lang, new_ui, ui_choice
+from gui.common import t, lang
 from gui.components import accounts_table, strategy_progress
 from gui.layout import frame
 from gui.widgets import notice
@@ -41,10 +41,8 @@ def page():
                      if metas else t("home.status_empty")).classes("sq-muted text-sm")
 
         with ui.element("div").classes("sq-home-top w-full grid gap-10").style("grid-template-columns: minmax(0, 1fr) 320px"):
-            if recent and new_ui():
+            if recent:
                 _continue_new(recent[0], accounts)
-            elif recent:
-                _continue(recent[0])
             else:
                 _hero(bool(metas))
             _paper_panel(accounts, rows)
@@ -55,7 +53,7 @@ def page():
 
         _section(t("home.new_work"), t("home.new_work_note"))
         with ui.element("div").classes("sq-starts w-full grid").style("grid-template-columns: repeat(4, minmax(0, 1fr))"):
-            starts = [("template", "/strategy"), ("ai", "/strategy"), ("code", "/strategy"), ("selection", "/selection")]
+            starts = [("template", "/timing"), ("ai", "/timing"), ("code", "/timing"), ("selection", "/selection")]
             for i, (key, route) in enumerate(starts, 1):
                 with ui.column().classes("gap-0 cursor-pointer sq-start").on("click", lambda k=key, r=route: _start(k, r)) \
                         .mark(f"start:{key}"):
@@ -63,14 +61,6 @@ def page():
                     ui.label(t(f"home.w_{key}")).classes("sq-serif text-lg mt-3 mb-1 sq-hover-title")
                     ui.label(t(f"home.w_{key}_body")).classes("text-sm").style("color: var(--sq-text2)")
                     ui.label(t(f"home.w_{key}_more") + " →").classes("sq-more mt-3")
-        if not new_ui():         # 新版侧栏里有「工具」
-            with ui.row().classes("items-center gap-2 text-sm"):
-                ui.label(t("home.tools")).classes("sq-muted")
-                for i, (tab, key) in enumerate((("ov", "sp.tab_overview"), ("hd", "sp.tab_diag"))):
-                    if i:
-                        ui.label("·").classes("sq-faint")
-                    ui.label(t(key)).classes("sq-red cursor-pointer") \
-                        .on("click", lambda tab=tab: _open_tool(tab)).mark(f"home_tools:{tab}")
 
         if recent:
             _section(t("home.recent"), t("home.recent_note"))
@@ -117,23 +107,18 @@ def _migrate_card(src):
 
 
 def switched_to_new() -> bool:
-    """3.0 默认改成新版后，没选过界面的老用户第一次看到新版：首页提示一次（新装的用户本来就没见过经典界面，不提示）"""
-    return new_ui() and ui_choice() is None and not app.storage.general.get("ui_switch_seen")
+    """经典界面移除后（界面重构计划 4.8），老用户首页提示一次：3.x 里在设置页明确选过新版（storage 的 "ui" 为 "new"）、
+    或已关掉 3.0 那次提示的不再提示；新装的用户本来就没见过经典界面，由调用处按「已有数据或报告」排除"""
+    return app.storage.general.get("ui") != "new" and not app.storage.general.get("ui_switch_seen")
 
 
 def _ui_switched_note():
     def ok():
         app.storage.general["ui_switch_seen"] = True
         box.delete()
-
-    def go():
-        app.storage.general["ui_switch_seen"] = True
-        ui.navigate.to("/settings")
     with ui.row().classes("w-full items-center gap-3 no-wrap").mark("home_ui_switched") as box:
         with ui.element("div").classes("grow min-w-0"):
             notice(t("home.ui_switched"))
-        ui.button(t("home.ui_switched_set"), on_click=go).props("flat no-caps").classes("shrink-0") \
-            .mark("home_ui_switched_set")
         ui.button(t("home.ui_switched_ok"), on_click=ok).props("outline no-caps").classes("shrink-0") \
             .mark("home_ui_switched_ok")
 
@@ -157,11 +142,6 @@ def _open_account(account_id: str):
     ui.navigate.to("/paper")
 
 
-def _open_tool(tab: str):
-    state.STATE["tools_tab"] = tab
-    ui.navigate.to("/tools")
-
-
 # ---------------- 继续上次的工作 / 第一次使用 ----------------
 def _hero(has_data: bool):
     with ui.column().classes("gap-4 py-6"):
@@ -171,35 +151,13 @@ def _hero(has_data: bool):
         ui.label(t("home.hero_body")).classes("max-w-[34em]").style("color: var(--sq-text2)")
         with ui.row().classes("gap-3 pt-2"):
             if has_data:
-                ui.button(t("home.start_first"), on_click=lambda: _start("template", "/strategy")) \
+                ui.button(t("home.start_first"), on_click=lambda: _start("template", "/timing")) \
                     .props("unelevated no-caps color=primary").classes("px-5 py-2")
             else:
                 ui.button(t("home.get_data_first"), on_click=lambda: ui.navigate.to("/data")) \
                     .props("unelevated no-caps color=primary").classes("px-5 py-2")
             ui.button(t("nav.go_data"), on_click=lambda: ui.navigate.to("/data")) \
                 .props("outline no-caps").classes("px-5 py-2")
-
-
-def _continue(e: dict):
-    sel = e.get("kind") == "sel"
-    with ui.column().classes("sq-sheet gap-0 px-8 py-6 min-w-0"):
-        ui.label(t("home.continue")).classes("sq-eyebrow")
-        ui.label(e["title"]).classes("sq-serif text-2xl mt-1 mb-5")
-        ret = e.get("ret")
-        cells = [(t("step.data"), e.get("data") or e.get("sub", ""), "ok"),
-                 (t("step.selection" if sel else "step.strategy"), e.get("strategy") or e["title"], "ok"),
-                 (t("step.backtest"), pct(ret) if ret is not None else "—", "ok"),
-                 (t("home.suggest_next"), t("step.paper" if sel else "step.optimize"), "next")]
-        if not sel:
-            cells.append((t("step.paper"), "—", ""))
-        with ui.element("div").classes("sq-pipe").style(f"grid-template-columns: repeat({len(cells)}, minmax(0, 1fr))"):
-            for k, v, cls in cells:
-                with ui.element("div").classes(cls):
-                    ui.label(k).classes("k")
-                    lbl = ui.label(v).classes("v")
-                    if k == t("step.backtest") and ret is not None:
-                        lbl.classes("sq-fig " + ("sq-up" if ret >= 0 else "sq-down"))
-        _continue_buttons(e, sel)
 
 
 def _continue_buttons(e: dict, sel: bool):
@@ -266,15 +224,17 @@ def _open_step(e: dict, key: str):
     if key == "paper":
         ui.navigate.to("/paper")
     elif e.get("kind") == "sel":
-        state.STATE["sp_tab"] = "wf" if key == "verify" else "bt"
+        state.STATE["sp_tab"] = "verify" if key == "verify" else "bt"
+        if key == "verify":
+            state.STATE["sp_vf"] = "walkforward"
         ui.navigate.to("/selection")
     else:
         reopen(e, step={"setup": "strategy", "verify": "verify"}.get(key, "backtest"))
 
 
 def reopen(e: dict, go: bool = True, step: str = "backtest"):
-    """恢复这份报告的设置，去择时策略的 step 一步（routes.timing：新版是工作台，经典是回测 / 优化页）；
-    回测会自动重新运行（通常不到 1 秒），只有新版「编辑策略」一步不运行（运行完设置区会收起）"""
+    """恢复这份报告的设置，去择时策略的 step 一步（routes.timing：工作台的设置区、报告或验证标签）；
+    回测会自动重新运行（通常不到 1 秒），只有「编辑策略」一步不运行（运行完设置区会收起）"""
     r = e.get("restore")
     if e.get("kind") == "sel" or not r:
         if go:
@@ -282,15 +242,12 @@ def reopen(e: dict, go: bool = True, step: str = "backtest"):
         return
     S = state.STATE
     same = S.get("bt", {}).get("time") == e["time"]
-    S["current_spec"] = r["spec"]
-    for key in ("bt", "opt"):
-        S[f"{key}_strategy"] = "__current__"
-        S[f"{key}_ids"] = list(r["ids"])
-        S[f"{key}_range"] = tuple(dt.date.fromisoformat(x) for x in r["range"])
+    S["bt_ids"] = list(r["ids"])
+    S["bt_range"] = tuple(dt.date.fromisoformat(x) for x in r["range"])
     S["bt_broker"] = dict(r["broker"])
     if not same and step != "strategy":
         S["bt_autorun"] = e["time"]
-    target = routes.timing(step, spec=r["spec"])          # 新版：策略放进工作台的编辑器
+    target = routes.timing(step, spec=r["spec"])          # 策略放进工作台的编辑器
     if go:
         ui.navigate.to(target)
 

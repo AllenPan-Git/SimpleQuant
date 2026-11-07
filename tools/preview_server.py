@@ -31,7 +31,6 @@ state.STATE["bt"] = dict(result=res, title=("模板：双均线", ["510300"], "1
                          checks=check_backtest(res.metrics, res.trades, tried=40))
 state.STATE["bt_ids"] = [ID]
 state.STATE["bt_range"] = rng
-state.STATE["bt_strategy"] = "tpl:sma_cross"
 
 
 @app.on_startup

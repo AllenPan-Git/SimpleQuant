@@ -1,4 +1,4 @@
-"""第 2 页：策略（模板调参 / 条件积木 / 一句话生成 / 自己写代码）"""
+"""策略编辑器的构件（模板调参 / 条件积木 / 一句话生成 / 自己写代码），由择时工作台（gui/pages/timing.py）使用"""
 
 from nicegui import run, ui
 
@@ -9,9 +9,7 @@ from simplequant.rules import INDICATORS, GROUPS, OPS, CROSS_OPS, LOGICS, valida
 from simplequant.rules.schema import MAX_DAYS, MAX_COOLDOWN, MAX_ADDS, ADD_WHEN
 from simplequant.rules.hints import condition_notes, wording_hints, rule_signature
 from simplequant.strategies import TEMPLATES, code_strategy
-from gui import state, routes
 from gui.common import t, p, lang
-from gui.layout import frame, page_title
 from gui.widgets import section, code_editor, notice, hint
 from ui.shared import PRESETS, cond, clean, with_ids
 
@@ -25,56 +23,6 @@ class Ctx:
     """编辑器各部分之间的回调：changed（内容改了，重画预览）、reload（整体换了内容）、set_name（改名称输入框）；
     on_change(errors)：预览重画后调用，外面的按钮（保存、回测）据此启用或变灰"""
     changed = reload = set_name = on_change = staticmethod(lambda *a: None)
-
-
-def page():
-    S = state.strategy()
-    ctx = Ctx()
-    with frame("/strategy"):
-        page_title("/strategy")
-        box = strategy_editor(S, ctx)
-
-        # ---------------- 名称 / 保存 / 去回测（接在预览区块里） ----------------
-        with box, ui.row().classes("w-full items-end gap-3"):
-            name = ui.input(t("strat.name"), value=S["name"], placeholder=t("strat.name_ph")) \
-                .props("outlined dense").classes("grow")
-            save_btn = ui.button(t("strat.save"), icon="save", on_click=lambda: save()).props("outline no-caps")
-            go_btn = ui.button(t("strat.to_backtest"), icon="play_arrow", on_click=lambda: to_backtest()) \
-                .props("unelevated no-caps")
-
-        def on_change(errors):
-            save_btn.set_enabled(not errors and bool((name.value or "").strip()))
-            go_btn.set_enabled(not errors)
-
-        def on_name(e):
-            S["name"] = e.value or ""
-            ctx.changed()
-        name.on_value_change(on_name)
-        ctx.on_change, ctx.set_name = on_change, name.set_value
-
-        def save():
-            spec, errors = editor_spec(S)
-            if errors or not S["name"].strip() or not code_ok(S):
-                return
-            strategies.save_strategy(S["name"].strip(), spec)
-            ui.notify(t("strat.saved", name=S["name"].strip()), type="positive")
-            saved_list.refresh()
-
-        def to_backtest():
-            spec, errors = editor_spec(S)
-            if errors or not code_ok(S):
-                return
-            state.STATE["current_spec"] = {"name": S["name"].strip() or t("strat.unnamed"), **spec}
-            state.STATE["bt_strategy"] = "__current__"
-            # AI 识别出的标的若已在本地数据库里，回测页自动选中（在条件积木里修改过也保留）
-            if S["mode"] in ("ai", "rule") and S["ai_symbols"]:
-                ids = [m.id for m in library.list_datasets() if m.symbol in S["ai_symbols"]]
-                if ids:
-                    state.STATE["bt_ids"] = ids
-            ui.navigate.to(routes.timing("backtest"))       # 新版：工作台（编辑器内容与这里共用）
-
-        saved_list = saved_strategies(S, ctx)
-        ctx.changed()
 
 
 def editor_spec(S) -> tuple[dict, list]:
@@ -107,7 +55,7 @@ def code_ok(S) -> bool:
 
 
 def strategy_editor(S, ctx: Ctx):
-    """策略编辑器（经典策略页与择时工作台共用）：模式切换（模板 / 条件 / AI / 代码）+ 编辑区 + 预览。
+    """策略编辑器（择时工作台用）：模式切换（模板 / 条件 / AI / 代码）+ 编辑区 + 预览。
     返回预览区块，调用方可以接着往里放名称、保存等按钮；放好后调用一次 ctx.changed() 画出预览"""
     def set_mode(e):
         if S["mode"] != e.value:

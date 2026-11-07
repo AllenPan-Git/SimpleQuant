@@ -1,8 +1,8 @@
-"""择时工作台（新版界面，界面重构计划 4.2）：策略编辑与回测合在一页
+"""择时工作台（界面重构计划 4.2）：策略编辑与回测合在一页
 
 顶部是这个策略的四步进度；设置区（数据、策略编辑器、资金与费率、名称与保存）收起时是一行摘要，右边的按钮跟着页面滚动；
 下面是「回测报告 / 验证」两个标签。设置区和报告各自重画：点「开始回测」只重画报告，编辑到一半的内容不受影响（编辑器的内容在
-state.strategy() 里，数据、资金等在 state.STATE 的 bt_* 里，与经典的策略页、回测页共用）。运行不自动保存。
+state.strategy() 里，数据、资金等在 state.STATE 的 bt_* 里）。运行不自动保存。
 """
 
 from types import SimpleNamespace
@@ -141,7 +141,7 @@ def _workbench(S, by_id: dict):
         progress.refresh()
 
     def on_check():
-        # AI 新生成的策略：本地数据库里有它识别出的标的时自动选中（与经典策略页「使用此策略回测」相同）
+        # AI 新生成的策略：本地数据库里有它识别出的标的时自动选中
         if S.get("ai_result") is not seen["ai"]:
             seen["ai"] = S.get("ai_result")
             ids = [m.id for m in library.list_datasets() if m.symbol in (S.get("ai_symbols") or [])]
@@ -299,7 +299,7 @@ def _strategy_part(S, ctx: Ctx, on_change, on_broker) -> dict:
         strat.update(spec=spec, errors=errors, name=name, label=name.strip() or t("strat.unnamed"))
 
     def on_load(n: str):
-        """载入已保存的策略：连同保存时的资金与费率一起恢复（与经典回测页选中它时相同）"""
+        """载入已保存的策略：连同保存时的资金与费率一起恢复"""
         broker = strategies.strategy_brokers().get(n)
         if broker:
             on_broker(broker)

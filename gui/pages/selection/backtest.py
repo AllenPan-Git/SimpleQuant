@@ -23,7 +23,7 @@ from simplequant.stocks.panel import STOCK_FILTERS, RISK_FILTERS
 from simplequant.bonds.panel import CB_FILTERS, CB_DEFAULT_FILTERS
 from simplequant.system import open_folder
 from gui import state, history, support, run_log
-from gui.common import t, p, lang, new_ui
+from gui.common import t, p, lang
 from gui.missing_data import stock_bar
 from gui.components import broker_settings, metric_tiles, metric_tile, credibility_box, bench_label
 from gui.pages.stock_overview import picks_dialog
@@ -397,10 +397,10 @@ def _backtest_form(SP, ctx, rebuild):
                             .props("outlined dense").classes("w-28")
                         ui.toggle({1: t("sel.dir_up"), -1: t("sel.dir_down")}, value=int(f["direction"]),
                                   on_change=on_d).props("dense no-caps unelevated toggle-color=primary")
-                        if new_ui():         # 因子研究在因子实验室（另一页）
-                            ui.button(icon="science", on_click=lambda k=f["key"]: to_lab(k)) \
-                                .props("flat round dense size=sm").classes("sq-muted") \
-                                .tooltip(t("sp.to_lab")).mark(f"sp_to_lab:{f['key']}")
+                        # 因子研究在因子实验室（另一页）
+                        ui.button(icon="science", on_click=lambda k=f["key"]: to_lab(k)) \
+                            .props("flat round dense size=sm").classes("sq-muted") \
+                            .tooltip(t("sp.to_lab")).mark(f"sp_to_lab:{f['key']}")
             factor_rows()
 
             def to_lab(k):
@@ -587,8 +587,8 @@ def _backtest_form(SP, ctx, rebuild):
         need_div_ = not panel.div_codes and any(FACTORS[f["key"]].get("requires_div") for f in SP["factors"])
         need_risk_ = panel.kind == "stock" and not panel.has_risk and needs_risk(spec)
         need_cash_ = SP.get("dividend") == "cash" and not panel.div_codes and panel.kind == "stock"
-        if new_ui() and panel.kind == "stock" and ctx.lo is not None:
-            # 新版：缺什么就地下载（gui/missing_data.py）；缺的种类没变时不重画，下载中的提示条不被冲掉
+        if panel.kind == "stock" and ctx.lo is not None:
+            # 缺什么就地下载（gui/missing_data.py）；缺的种类没变时不重画，下载中的提示条不被冲掉
             want = ([("fin", "factor")] * need_fin_ + [("div", "factor")] * need_div_
                     + [("risk", "screen")] * need_risk_, need_cash_)
             if want != warn_shown.get("want"):
@@ -647,11 +647,10 @@ def _backtest_form(SP, ctx, rebuild):
             history.add("sel", title, f"{uni} · {ctx.start} ~ {ctx.end}", res.metrics, restore={"spec": spec},
                         data=uni, strategy=title,
                         verify={"credibility": True, "phase": False, "walkforward": False})   # 之后做了检验再补记
-            SP["run_no"] = None     # 经典界面跑出的结果没有编号，切到新版也不显示对比
-            if new_ui():            # 报告顶部「与上次相比」（区间、资金不在 spec 里，另记）
-                money = next(v for k, _, v in _chip_items(SP, panel.kind, lg) if k == "broker")
-                SP["run_no"] = run_log.record("sel", title, spec, res.metrics,
-                                              {"range": f"{ctx.start} ~ {ctx.end}", "broker": money})
+            # 报告顶部「与上次相比」（区间、资金不在 spec 里，另记）
+            money = next(v for k, _, v in _chip_items(SP, panel.kind, lg) if k == "broker")
+            SP["run_no"] = run_log.record("sel", title, spec, res.metrics,
+                                          {"range": f"{ctx.start} ~ {ctx.end}", "broker": money})
             support.after_run()
             ok = True
         except Exception as ex:  # noqa: BLE001
@@ -671,8 +670,7 @@ def _backtest_form(SP, ctx, rebuild):
                 const el = getHtmlElement({setup_row.id});
                 if (!el) return;
                 const top = el.getBoundingClientRect().top;
-                const head = document.querySelector('.sq-header')?.offsetHeight || 0;
-                if (top < head || top > window.innerHeight * 0.5) el.scrollIntoView({{behavior: 'smooth', block: 'start'}});
+                if (top < 0 || top > window.innerHeight * 0.5) el.scrollIntoView({{behavior: 'smooth', block: 'start'}});
             }}, 400)""")
 
     def build_export_menu():
@@ -746,7 +744,7 @@ def _backtest_form(SP, ctx, rebuild):
     @ui.refreshable
     def results():
         if SP.get("result"):
-            _selection_results(SP, ctx, top=lambda: run_log.compare("sel", SP.get("run_no")) if new_ui() else None)
+            _selection_results(SP, ctx, top=lambda: run_log.compare("sel", SP.get("run_no")))
     results()
     if SP.get("autorun") and SP["factors"]:          # 导入方案后自动回测一次
         ui.timer(0.1, do_run, once=True)

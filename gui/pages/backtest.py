@@ -1,4 +1,5 @@
-"""第 3 页：回测（结果按研究报告排版：结论段落 → 指标 → 图 → 明细，右侧给出下一步）"""
+"""择时回测的构件：设置条 setup_bar 与回测报告 report（结果按研究报告排版：结论段落 → 指标 → 图 → 明细，右侧给出下一步），
+由择时工作台（gui/pages/timing.py）拼成一页"""
 
 import datetime as dt
 from contextlib import nullcontext
@@ -21,12 +22,11 @@ from simplequant.export import PLATFORMS
 from gui import state, history, support, routes
 from gui.plan_io import import_button, export_bytes, plan_filename, plan_check_notice
 from simplequant import plan as plan_mod
-from gui.common import t, p, lang, new_ui
+from gui.common import t, p, lang
 from gui.missing_data import rates_bar
-from gui.components import (require_data, data_selector, strategy_selector, broker_settings, prepare_prices,
+from gui.components import (data_selector, broker_settings, prepare_prices,
                             metric_tiles, metric_tile, missing_factor_warnings, rates_missing, dividend_notices,
                             unadjusted_warning, fallback_warning, percentile_warnings, warm_start, credibility_box)
-from gui.layout import frame, page_title
 from gui.widgets import df_table, fmt_table, plot, notice, download_btn
 from ui.charts import equity_chart, strategy_chart, batch_scatter
 from ui.shared import (export_script, export_filename, platform_export, orders_table, real_orders, trades_table,
@@ -34,40 +34,18 @@ from ui.shared import (export_script, export_filename, platform_export, orders_t
                        spec_key, timing_verify)
 
 
-def page():
-    with frame("/backtest"):
-        page_title("/backtest")
-        by_id = require_data()
-        if by_id is None:
-            import_button().classes("mt-2")
-            return
-        BT = state.STATE.setdefault("bt", {})
-        bar = setup_bar(by_id, BT, lambda on_change, on_broker: strategy_selector("bt", on_change, on_broker=on_broker))
-        bar.check()
-
-        @ui.refreshable
-        def results():
-            report(BT, bar.exp_menu)
-        results()
-        bar.report = results.refresh
-
-        # 从首页「最近的报告」打开：设置已恢复，自动重新运行
-        if state.STATE.pop("bt_autorun", None) and bar.ready():
-            ui.timer(0.05, bar.run, once=True)
-
-
-def report(BT: dict, exp_menu, to_verify=None):
+def report(BT: dict, exp_menu, to_verify):
     """回测报告：分别回测是分布与明细，否则是完整报告；还没有结果时什么都不画。
-    to_verify()：右侧「下一步」的参数优化（默认去优化页；择时工作台切到「验证」标签）"""
+    to_verify()：右侧「下一步」的验证（择时工作台切到「验证」标签）"""
     if BT.get("batch") is not None:
         _batch_results(BT)
     elif BT.get("result") is not None:
-        _results(BT, exp_menu, to_verify or (lambda: _to_optimize(BT)))
+        _results(BT, exp_menu, to_verify)
 
 
 def setup_bar(by_id: dict, BT: dict, strategy_part, sticky: bool = False, open_: bool | None = None) -> SimpleNamespace:
     """
-    回测设置条与运行（经典回测页与择时工作台共用）：设置收起时是一行摘要（数据 · 策略 · 区间 · 资金），右边是
+    回测设置条与运行（择时工作台用）：设置收起时是一行摘要（数据 · 策略 · 区间 · 资金），右边是
     开始回测、导出、导入方案；下面是提示与「正在回测」。
     strategy_part(on_change, on_broker) 画出设置区里的「策略」一块，返回 {"spec", "label", "name"}（原地更新）；
     其中可以有 "errors"（有错时不能运行、导出）和 "full_check"（运行、保存前调用，返回 False 时取消）。
@@ -191,9 +169,9 @@ def setup_bar(by_id: dict, BT: dict, strategy_part, sticky: bool = False, open_:
                 notice(t("bt.batch_need_single", n=need), "warning", "warning")
             elif pick.ids and len(pick.ids) < need:
                 notice(t("bt.need_assets", n=need), "warning", "warning")
-            if new_ui() and rates_missing(strat["spec"]):      # 新版：就地更新利率，完成后重新检查
+            if rates_missing(strat["spec"]):      # 就地更新利率，完成后重新检查
                 rates_bar(on_done=check)
-            for w in missing_factor_warnings(by_id, pick.ids, strat["spec"], rates=not new_ui()):
+            for w in missing_factor_warnings(by_id, pick.ids, strat["spec"]):
                 notice(w, "warning", "warning")
             if w := unadjusted_warning(by_id, pick.ids):
                 notice(w, "warning", "warning")
@@ -603,12 +581,9 @@ def _results(BT: dict, exp_menu, to_verify):
         # ---------------- 右侧：下一步 + 最近平仓 ----------------
         with ui.column().classes("gap-0 min-w-0"):
             _rule_title(t("bt.next"))
-            if new_ui():        # 编号与工作台顶部的四步进度一致（03 验证、04 模拟盘）
-                _next("03", t("bt.next_verify"), t("bt.next_verify_body"), to_verify, rec=True).mark("next_opt")
-                _next("04", t("bt.next_paper"), t("bt.next_paper_body"), lambda: ui.navigate.to("/paper"))
-            else:
-                _next("04", t("bt.next_opt"), t("bt.next_opt_body"), to_verify, rec=True).mark("next_opt")
-                _next("05", t("bt.next_paper"), t("bt.next_paper_body"), lambda: ui.navigate.to("/paper"))
+            # 编号与工作台顶部的四步进度一致（03 验证、04 模拟盘）
+            _next("03", t("bt.next_verify"), t("bt.next_verify_body"), to_verify, rec=True).mark("next_opt")
+            _next("04", t("bt.next_paper"), t("bt.next_paper_body"), lambda: ui.navigate.to("/paper"))
             _next("↗", t("bt.next_export"), t("bt.next_export_body"), exp_menu.open)
             _explain(BT, explain_out)
 
@@ -658,16 +633,6 @@ def _next(no: str, title: str, body: str, on_click, rec: bool = False):
             ui.label(title).classes("sq-next-title")
             ui.label(body).classes("sq-next-body")
     return el
-
-
-def _to_optimize(BT: dict):
-    """带着当前的数据、区间和策略去参数优化页（新版界面：择时工作台的「验证」标签，策略放进编辑器）"""
-    S = state.STATE
-    for k in ("ids", "range", "strategy"):
-        if f"bt_{k}" in S:
-            S[f"opt_{k}"] = S[f"bt_{k}"]
-    spec = {"name": BT.get("name") or "", **BT["spec"]} if BT.get("spec") else None
-    ui.navigate.to(routes.timing("verify", spec=spec))
 
 
 def _explain(BT: dict, out):

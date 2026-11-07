@@ -1,6 +1,4 @@
-"""第 1 页：数据（在线下载 / 导入 CSV / 本地数据库）
-
-新版界面是数据中心（界面重构计划 4.4.1）：行情（上面三项）/ 选股数据 / 可转债 / 利率四个标签，
+"""数据中心（界面重构计划 4.4.1）：行情（本地数据库 / 在线下载 / 导入 CSV）/ 选股数据 / 可转债 / 利率四个标签，
 选股数据与可转债用选股包的下载构件（selection/data_tab.py）。"""
 
 import contextlib
@@ -19,7 +17,7 @@ from simplequant.data.tdx_local_src import DEFAULT_TDX_DIR
 from simplequant.i18n import TEXT
 from simplequant.rules import INDICATORS
 from gui import state
-from gui.common import t, p, lang, new_ui
+from gui.common import t, p, lang
 from gui.layout import frame, page_title
 from gui.widgets import df_table, plot, Progress, hint
 from ui.charts import preview_chart
@@ -33,35 +31,10 @@ CENTER_TABS = (("market", "data.tab_market", "candlestick_chart"), ("stocks", "d
 def page():
     with frame("/data"):
         page_title("/data")
-        if new_ui():
-            _center()
-        else:
-            _market(rates=True)
+        _center()
 
 
-def _market(rates: bool):
-    """行情：在线下载 / 导入 CSV / 本地数据库（经典界面的整页；新版数据中心的「行情」标签）"""
-    with ui.tabs().classes("w-full").props("align=left no-caps") as tabs:
-        tab_dl = ui.tab("dl", t("data.tab_download"), icon="download")
-        tab_csv = ui.tab("csv", t("data.tab_csv"), icon="upload_file")
-        tab_lib = ui.tab("lib", t("data.tab_library"), icon="inventory_2")
-    with ui.tab_panels(tabs, value=tab_dl).classes("w-full bg-transparent"):
-        with ui.tab_panel(tab_dl).classes("px-0"):
-            _download_tab(on_change=lambda: refresh_lib(), rates=rates)
-        with ui.tab_panel(tab_csv).classes("px-0"):
-            _csv_tab(on_change=lambda: refresh_lib())
-        with ui.tab_panel(tab_lib).classes("px-0"):
-            lib_box = ui.column().classes("w-full gap-2")
-
-    def refresh_lib():
-        """本页的数据库列表重画（每次打开页面各自一份，不用模块级 refreshable）"""
-        lib_box.clear()
-        with lib_box:
-            _library_view(refresh_lib)
-    refresh_lib()
-
-
-# ---------------- 新版界面：数据中心（界面重构计划 4.4.1） ----------------
+# ---------------- 数据中心 ----------------
 def _center():
     """按数据类型分标签：行情 / 选股数据 / 可转债 / 利率；当前标签记在 state.STATE["data_tab"]"""
     keys = [k for k, _, _ in CENTER_TABS]
@@ -82,7 +55,7 @@ def _center():
 
 
 def _market_blocks():
-    """新版「行情」标签：不再套一层标签，自上而下是本地数据库 → 在线下载 → 导入 CSV（用得少，折叠）"""
+    """「行情」标签：不再套一层标签，自上而下是本地数据库 → 在线下载 → 导入 CSV（用得少，折叠）"""
     lib_head = _block_head(t("data.tab_library"), mark="data_lib_head", first=True)
     lib_box = ui.column().classes("w-full gap-2").mark("data_lib")
 
@@ -93,7 +66,7 @@ def _market_blocks():
             _library_view(refresh_lib, fold=True)
 
     _block_head(t("data.tab_download"))
-    _download_tab(on_change=refresh_lib, rates=False)
+    _download_tab(on_change=refresh_lib)
     with ui.expansion(t("data.tab_csv"), icon="upload_file").classes("w-full mt-4").mark("data_csv"):
         _csv_tab(on_change=refresh_lib)
     refresh_lib()
@@ -155,8 +128,7 @@ def _universe_data(universe, box=None):
 
 
 # ---------------- 在线下载 ----------------
-def _download_tab(on_change, rates: bool = True):
-    """rates：下面接利率卡片（经典界面；新版数据中心的利率是单独的标签）"""
+def _download_tab(on_change):
     lg = lang()
     online = {k: s for k, s in SOURCES.items() if k != "csv"}
     today = dt.date.today()
@@ -241,8 +213,6 @@ def _download_tab(on_change, rates: bool = True):
 
         btn = ui.button(t("data.download"), icon="download", on_click=download).props("unelevated no-caps")
 
-    if rates:
-        _rates_card()
 
 
 def _rates_card():

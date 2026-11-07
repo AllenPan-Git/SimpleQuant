@@ -1,50 +1,34 @@
-"""每页共用的外框：经典界面是报头（标志、择时 / 选股切换、步骤条、语言、主题），新版界面是左侧栏"""
+"""每页共用的外框：左侧栏（标志、栏目、语言、主题）"""
 
 from contextlib import contextmanager
-from html import escape
 
 from nicegui import app, ui
 
 from simplequant import telemetry
 from simplequant.i18n import LANGS, tr
-from gui import theme, state, update, paper_job
-from gui.common import t, p, lang, set_lang, dark, set_dark, new_ui
+from gui import theme, update, paper_job
+from gui.common import t, lang, set_lang, dark, set_dark
 
 # (路由, 文字键, 图标)：全部页面（注册路由、页面标题用）
 PAGES = [
     ("/", "nav.home", "home"),
     ("/data", "nav.data", "storage"),
-    ("/strategy", "nav.strategy", "tune"),
-    ("/backtest", "nav.backtest", "query_stats"),
-    ("/optimize", "nav.optimize", "grid_on"),
-    ("/timing", "nav.timing", "show_chart"),          # 新版界面的择时工作台（经典界面不链接它）
+    ("/timing", "nav.timing", "show_chart"),
     ("/selection", "nav.selection", "filter_list"),
-    ("/factors", "nav.factors", "science"),           # 新版界面的因子实验室（经典界面不链接它）
+    ("/factors", "nav.factors", "science"),
     ("/paper", "nav.paper", "account_balance_wallet"),
     ("/allocation", "nav.allocation", "pie_chart"),
     ("/tools", "nav.tools", "build"),
     ("/settings", "nav.settings", "settings"),
 ]
 
-# 三条工作流程，顶部步骤条按当前流程显示
-FLOWS = {
-    "timing": ["/data", "/strategy", "/backtest", "/optimize", "/paper"],
-    "selection": ["/data", "/selection", "/paper"],
-    "allocation": ["/data", "/allocation", "/paper"],
-}
-FLOW_HOME = {"timing": "/strategy", "selection": "/selection", "allocation": "/allocation"}
-STEP_KEY = {"/data": "step.data", "/strategy": "step.strategy", "/backtest": "step.backtest",
-            "/optimize": "step.optimize", "/selection": "step.selection", "/paper": "step.paper",
-            "/allocation": "step.allocation"}
-
 _THEMES = [(None, "brightness_auto"), (False, "light_mode"), (True, "dark_mode")]
 
-# 新版界面的侧栏（界面重构计划 4.1）：(路由, 文字键, 图标, 分组, 也算本栏目的其他路由)
-# 分组变化处画一条细线；"bottom" 组贴在侧栏底部。还没做的新页面先不放；
-# 经典的策略、回测、优化页在新版界面下仍能打开（作为兜底），也算「择时策略」
+# 侧栏（界面重构计划 4.1）：(路由, 文字键, 图标, 分组, 也算本栏目的其他路由)
+# 分组变化处画一条细线；"bottom" 组贴在侧栏底部
 NAV = [
     ("/", "side.today", "today", "today", ()),
-    ("/timing", "side.timing", "show_chart", "work", ("/strategy", "/backtest", "/optimize")),
+    ("/timing", "side.timing", "show_chart", "work", ()),
     ("/selection", "side.selection", "filter_list", "work", ()),
     ("/allocation", "side.allocation", "pie_chart", "work", ()),
     ("/factors", "side.factors", "science", "work", ()),
@@ -55,102 +39,18 @@ NAV = [
 ]
 
 
-def flow_of(route: str) -> str:
-    """当前页面属于哪条流程；数据、模拟盘等两条流程共用的页面沿用上次的流程"""
-    if route == "/selection":
-        flow = "selection"
-    elif route == "/allocation":
-        flow = "allocation"
-    elif route in ("/strategy", "/backtest", "/optimize"):
-        flow = "timing"
-    else:
-        flow = app.storage.general.get("flow", "timing")
-    app.storage.general["flow"] = flow
-    return flow
-
-
-def step_info(route: str, flow: str | None = None) -> tuple[bool, str]:
-    """(是否已完成, 步骤下方的小字)"""
-    from simplequant import strategies
-    from simplequant.data import library
-    from simplequant.paper import list_accounts
-    from ui.shared import pct
-    S = state.STATE
-    try:
-        if route == "/data" and flow == "selection":      # 选股流程：当前股票池的选股数据是否已下载
-            from simplequant.stocks import UNIVERSES, universe as U
-            u = (S.get("sp") or {}).get("universe", "hs300")
-            ok = U.ready(u)
-            return ok, t("step.uni_ready" if ok else "step.uni_missing", u=p(UNIVERSES[u]["label"]))
-        if route == "/data":
-            n = len(library.list_datasets())
-            return n > 0, t("step.n_data", n=n) if n else t("step.not_started")
-        if route == "/strategy":
-            if S.get("current_spec"):
-                return True, S["current_spec"].get("name", "")
-            n = len(strategies.list_strategies())
-            return n > 0, t("step.n_saved", n=n) if n else t("step.not_started")
-        if route == "/backtest":
-            res = S.get("bt", {}).get("result")
-            return (True, pct(res.metrics["total_return"])) if res is not None else (False, t("step.not_started"))
-        if route == "/optimize":
-            o = S.get("opt", {})
-            done = bool(o.get("result") or o.get("wf"))
-            return done, t("step.done") if done else t("step.not_started")
-        if route == "/selection":
-            res = (S.get("sp") or {}).get("result")
-            return (True, pct(res[0].metrics["total_return"])) if res else (False, t("step.not_started"))
-        if route == "/allocation":
-            from simplequant.allocation import load_profile, LEVELS
-            from simplequant.i18n import pick
-            prof = load_profile()
-            return (True, f"C{prof.level} {pick(LEVELS[prof.level], lang())}") if prof else (False, t("step.not_started"))
-        if route == "/paper":
-            n = len(list_accounts())
-            return n > 0, t("step.n_accounts", n=n) if n else t("step.not_started")
-    except Exception:  # noqa: BLE001 - 步骤条只是提示，读不到就不显示
-        pass
-    return False, ""
-
-
-def _go_step(route: str, flow: str):
-    """选股流程的「数据」指向选股页的数据标签（数据页下载不了选股数据）；过渡做法，3.0 的数据中心会取代它。
-    已在选股页时也重新打开一次：页面重画，面板取缓存（gui/sel_panel.py），不会重新载入"""
-    if flow == "selection" and route == "/data":
-        state.STATE["sp_tab"] = "data"
-        route = "/selection"
-    ui.navigate.to(route)
-
-
-def _steps(route: str, flow: str):
-    routes = FLOWS[flow]
-    with ui.row().classes("sq-steps items-center gap-0 no-wrap mx-auto"):
-        for i, r in enumerate(routes, 1):
-            done, sub = step_info(r, flow)
-            cls = "sq-step" + (" sq-step-cur" if r == route else " sq-step-done" if done else "")
-            with ui.element("div").classes(cls).on("click", lambda r=r: _go_step(r, flow)).mark(f"nav:{r}"):
-                ui.html(f"<span class='n'>{i:02d}</span>")
-                ui.html(f"<div class='t'><span>{escape(t(STEP_KEY[r]))}</span>"
-                        + (f"<small title='{escape(sub)}'>{escape(sub)}</small>" if sub else "") + "</div>")
-            if i < len(routes):
-                ui.element("div").classes("sq-link" + (" sq-link-done" if done else ""))
-
-
 @contextmanager
 def frame(route: str):
     """用法：with frame("/data"): ...页面内容..."""
-    telemetry.set_ui_info(lang(), "new" if new_ui() else "classic")
+    telemetry.set_ui_info(lang(), "new")
     telemetry.count(f"page:{route}")
     if route == "/factors":
         telemetry.milestone("factor_lab")
     theme.apply(dark())
     paper_job.watch(paper_job.notify_done)      # 模拟盘更新在哪个页面结束，就在哪个页面弹结果
-    if new_ui():
-        # 新版界面的样式都写在 body.sq-new 下，经典界面不受影响；sq-side-open：窄窗口下侧栏保持展开
-        ui.query("body").classes("sq-new" + (" sq-side-open" if side_open() else ""))
-        _sidebar(route)
-    else:
-        _header(route)
+    # 侧栏界面的样式写在 body.sq-new 下（两套界面并存时留下的类名）；sq-side-open：窄窗口下侧栏保持展开
+    ui.query("body").classes("sq-new" + (" sq-side-open" if side_open() else ""))
+    _sidebar(route)
 
     with ui.column().classes("sq-main w-full max-w-[1200px] mx-auto px-8 pt-8 pb-24 gap-5"):
         update.banner(route)     # 新版本提示、上次更新的结果
@@ -183,7 +83,7 @@ def _theme_button():
 
 
 def nav_section(route: str) -> str | None:
-    """新版侧栏里 route 属于哪个栏目（文字键）；不在侧栏里时为 None"""
+    """侧栏里 route 属于哪个栏目（文字键）；不在侧栏里时为 None"""
     return next((key for r, key, _, _, also in NAV if route == r or route in also), None)
 
 
@@ -203,7 +103,7 @@ def _paper_pending() -> int:
 
 
 def _sidebar(route: str):
-    """新版界面：左侧栏。窗口窄于 theme.SIDE_MINI_BELOW 时折成图标列、悬停显示名称（纯 CSS，见 theme.py 的说明）；
+    """左侧栏。窗口窄于 theme.SIDE_MINI_BELOW 时折成图标列、悬停显示名称（纯 CSS，见 theme.py 的说明）；
     窄窗口下点底部的箭头可以展开回原宽度，记在 app.storage.general["side_open"]"""
     pending = _paper_pending()
     cur = nav_section(route)
@@ -273,44 +173,15 @@ def _side_toggle():
         tip = ui.tooltip(t("side.collapse" if is_open else "side.expand")).classes("sq-tip")
 
 
-def _header(route: str):
-    """经典界面：报头（标志、流程切换、步骤条、工具 / 设置、语言、主题）"""
-    flow = flow_of(route)
-    with ui.header(elevated=False).classes("sq-header items-center gap-x-6 gap-y-2 px-8 py-3"):
-        with ui.element("div").classes("sq-logo").on("click", lambda: ui.navigate.to("/")).mark("logo"):
-            ui.html("Simple<span>Quant</span>")
-        with ui.row().classes("items-center gap-4 no-wrap"):
-            for f in FLOWS:
-                on = f == flow and route != "/"
-                ui.label(t(f"flow.{f}")).classes("sq-mode" + (" sq-mode-on" if on else "")) \
-                    .on("click", lambda f=f: (app.storage.general.__setitem__("flow", f),
-                                              ui.navigate.to(FLOW_HOME[f]))).mark(f"flow:{f}")
-        _steps(route, flow)
-
-        with ui.row().classes("sq-top-right items-center gap-4 no-wrap"):
-            ui.label(t("top.tools")).classes("sq-top-link" + (" on" if route == "/tools" else "")) \
-                .on("click", lambda: ui.navigate.to("/tools")).mark("nav:/tools")
-            ui.label(t("top.settings")).classes("sq-top-link" + (" on" if route == "/settings" else "")) \
-                .on("click", lambda: ui.navigate.to("/settings")).mark("nav:/settings")
-            _lang_switch()
-            _theme_button()
-
-
 def page_title(route: str, subtitle: str | None = None, subtitle_full: str | None = None):
-    """页面标题：朱红小字（流程 · 第几步）+ 宋体大标题 + 可选说明
+    """页面标题：朱红小字（所在栏目）+ 宋体大标题 + 可选说明
 
     给了 subtitle_full 时，说明只显示 subtitle 一行，点「详细说明」看全文（widgets.hint）"""
     key = next(k for pth, k, _ in PAGES if pth == route)
     title = t(key).split(". ", 1)[-1]
-    decor = tr(key, "en").split(". ", 1)[-1].upper()      # 不在流程里的页面：英文大写作装饰
-    if new_ui():
-        # 新版：眉标是所在栏目（回测页 → 择时策略）；栏目名和标题相同时（模拟盘、设置等）用英文大写，免得上下重复
-        sec = nav_section(route)
-        eyebrow = t(sec) if sec and t(sec) != title else decor
-    else:
-        flow = app.storage.general.get("flow", "timing")
-        steps = FLOWS.get(flow, [])
-        eyebrow = t("step.eyebrow", flow=t(f"flow.{flow}"), n=steps.index(route) + 1) if route in steps else decor
+    # 眉标是所在栏目；栏目名和标题相同时（模拟盘、设置等）用英文大写，免得上下重复
+    sec = nav_section(route)
+    eyebrow = t(sec) if sec and t(sec) != title else tr(key, "en").split(". ", 1)[-1].upper()
     with ui.column().classes("gap-1 pb-1"):
         ui.label(eyebrow).classes("sq-eyebrow").mark("page_eyebrow")
         ui.label(title).classes("sq-title")

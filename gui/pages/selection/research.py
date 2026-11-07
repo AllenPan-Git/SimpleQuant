@@ -5,7 +5,7 @@ from nicegui import run, ui
 
 from simplequant.stocks import FACTORS, analyze, compute, factor_zscores, factor_correlation, sample_dates
 from simplequant.stocks import factors_for
-from gui.common import t, p, lang, new_ui
+from gui.common import t, p, lang
 from gui.missing_data import stock_bar
 from gui.components import metric_tile
 from gui.widgets import df_table, fmt_table, plot, notice, Progress
@@ -64,8 +64,8 @@ def _research(SP, ctx):
             shown["parts"] = parts
             hint_box.clear()
             with hint_box:
-                if new_ui() and panel.kind == "stock" and ctx.lo is not None and ctx.reload_all:
-                    for part in parts:           # 新版：就地下载（gui/missing_data.py）
+                if panel.kind == "stock" and ctx.lo is not None and ctx.reload_all:
+                    for part in parts:           # 就地下载（gui/missing_data.py）
                         stock_bar(part, SP["universe"], ctx.lo.year - 1, "factor", on_done=ctx.reload_all)
                     return
                 for part in parts:

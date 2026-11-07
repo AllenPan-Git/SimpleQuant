@@ -42,14 +42,10 @@ async def settle():
 
 @pytest.fixture(autouse=True)
 def isolated(tmp_path, monkeypatch):
-    """每个测试：界面状态清空；保存的策略写到临时目录；界面版本回到「没选过」、侧栏回到默认。
-    3.0 起默认是新版，但经典界面的测试照旧跑经典（到 4.8 删除经典界面为止）：这里把默认值临时改回经典，
-    要测新版的测试自己 set_ui("new")；测默认值本身的测试（test_ui_default_is_new）把它改回来"""
+    """每个测试：界面状态清空；保存的策略写到临时目录；首页「经典界面已移除」提示与侧栏回到默认"""
     from nicegui import app
-    from gui import common
     for k in ("ui", "side_open", "ui_switch_seen"):
         app.storage.general.pop(k, None)
-    monkeypatch.setattr(common, "UI_DEFAULT", "classic")
     state.reset()
     d = tmp_path / "strategies"
     for fn in (strategies.save_strategy, strategies.list_strategies, strategies.delete_strategy,
@@ -129,6 +125,17 @@ async def test_every_route_opens(user: User, route: str):
     await user.should_see(marker="logo")
 
 
+@pytest.mark.parametrize("route,tab", [("/strategy", "report"), ("/backtest", "report"), ("/optimize", "verify")])
+async def test_old_routes_open_workbench(user: User, lib_dir, route, tab):
+    """经典界面的旧地址（4.8 移除）转到择时工作台对应的地方：策略 → 展开设置区，回测 → 报告，参数优化 → 验证标签"""
+    _save_prices()
+    await user.open(route)
+    await user.should_see(marker="timing_tabs")
+    assert state.STATE.get("timing_tab") == tab
+    assert user.find(marker="timing_tabs").elements.pop().value == tab
+    assert "timing_open" not in state.STATE         # 工作台打开时已取走
+
+
 async def test_nav_goes_to_page(user: User):
     await user.open("/")
     user.find(marker="nav:/data").click()
@@ -138,71 +145,28 @@ async def test_nav_goes_to_page(user: User):
 
 
 async def test_tools_page_entries(user: User, tmp_path, monkeypatch):
-    """工具页的入口：首页「工具」一行直达对应标签；报头「工具」。切换后标签记住"""
+    """工具页：侧栏「工具」进入，切换后标签记住；选股页不再有个股概览、持仓诊断"""
     from simplequant.stocks import diagnosis as D
     monkeypatch.setattr(D, "HOLDINGS_FILE", tmp_path / "holdings.json")
 
     async def on_tab(tab):
         await user.should_see(marker="tools_tabs")
         assert user.find(marker="tools_tabs").elements.pop().value == tab
-    await user.open("/")
-    user.find(marker="home_tools:hd").click()
-    await on_tab("hd")
     await user.open("/selection")
     await user.should_not_see(marker="hd_query")          # 选股页不再有这两个标签
     await user.should_not_see(marker="ov_query")
-    user.find(marker="nav:/tools").click()                 # 报头「工具」，回到上次的标签
-    await on_tab("hd")
-    await user.open("/")
-    user.find(marker="home_tools:ov").click()
+    user.find(marker="nav:/tools").click()
     await on_tab("ov")
+    user.find(marker="tools_tabs").elements.pop().set_value("hd")
+    await settle()
     user.find(marker="nav:/settings").click()
     await user.should_see(marker="llm_preset")
     user.find(marker="nav:/tools").click()
-    await on_tab("ov")                                    # 记住上次的标签
+    await on_tab("hd")                                    # 记住上次的标签
 
 
-async def test_flow_switch_changes_steps(user: User):
-    await user.open("/")
-    user.find(marker="flow:selection").click()
-    await user.should_see(marker="nav:/selection")
-    await user.should_not_see(marker="nav:/optimize")
-    user.find(marker="flow:timing").click()
-    await user.should_see(marker="nav:/optimize")
 
 
-async def test_selection_flow_data_step(user: User):
-    """选股流程的「01 数据」：小字为当前股票池的下载状态；点击到选股页的数据标签（已在选股页时也切过去）；
-    择时流程的「01 数据」仍到数据页"""
-    from gui.common import t, p
-    from simplequant.stocks import UNIVERSES, universe as U
-
-    def tab_value():
-        try:
-            return user.find(marker="sp_tabs").elements.pop().value
-        except AssertionError:          # 页面正在切换
-            return None
-
-    async def on_data_tab():            # 跳转是后台任务：等新页面画出来
-        assert await _wait(lambda: tab_value() == "data")
-        assert state.STATE["sp_tab"] == "data"
-    await user.open("/")
-    user.find(marker="flow:selection").click()
-    await user.should_see(marker="sp_tabs")
-    ok = U.ready("hs300")
-    await user.should_see(t("step.uni_ready" if ok else "step.uni_missing", u=p(UNIVERSES["hs300"]["label"])))
-    user.find(marker="nav:/paper").click()
-    await user.should_see(marker="pp_kind")
-    user.find(marker="nav:/data").click()               # 从模拟盘页（沿用选股流程）
-    await on_data_tab()
-    state.STATE["sp_tab"] = "bt"
-    await user.open("/selection")
-    user.find(marker="nav:/data").click()               # 已在选股页
-    await on_data_tab()
-    user.find(marker="flow:timing").click()
-    await user.should_see(marker="nav:/optimize")
-    user.find(marker="nav:/data").click()
-    await user.should_see("在线下载")
 
 
 # ---------------- 数据页 ----------------
@@ -263,8 +227,9 @@ async def test_switch_language(user: User):
     await user.open("/")
     await user.should_see("Start something new")
     await user.should_not_see("开始新的工作")
-    await user.open("/data")
-    await user.should_see("Timing · Step 1")
+    await user.open("/timing")
+    await user.should_see("Timing workbench")
+    assert user.find(marker="page_eyebrow").elements.pop().text == "Timing strategies"
     user.find("中").click()
 
 
@@ -279,27 +244,28 @@ async def test_theme_cycles_and_persists(user: User):
     assert dark() is True
 
 
-# ---------------- 策略页 ----------------
-async def test_strategy_template_save_and_load(user: User):
-    await user.open("/strategy")
+# ---------------- 择时工作台：策略编辑器 ----------------
+async def test_strategy_template_save_and_load(user: User, lib_dir):
+    """没有数据时工作台只有编辑器与保存"""
+    await user.open("/timing")
     await user.should_see("买入持有")                     # 默认模板及其描述预览
-    save = user.find("保存").elements.pop()
+    save = user.find(marker="bt_save").elements.pop()
     assert not save.enabled                               # 没有名字不能保存
     user.find("策略名称").type("我的均线")
     assert save.enabled
-    user.find("保存").click()
+    user.find(marker="bt_save").click()
     assert "我的均线" in strategies.list_strategies()
     await user.should_see("已保存的策略（1）")
 
     state.reset()
-    await user.open("/strategy")
+    await user.open("/timing")
     user.find("载入").click()
     assert state.strategy()["name"] == "我的均线"
 
 
 async def test_strategy_rule_builder(user: User, lib_dir):
-    _save_prices()                                         # 回测页有数据时才显示「运行」按钮
-    await user.open("/strategy")
+    _save_prices()                                         # 有数据时工作台才有「开始回测」
+    await user.open("/timing")
     user.find(marker="mode").elements.pop().set_value("rule")
     await settle()
     S = state.strategy()
@@ -313,14 +279,14 @@ async def test_strategy_rule_builder(user: User, lib_dir):
     cid = S["rule"]["buy"]["conditions"][-1]["_id"]
     user.find(marker=f"del:{cid}").click()
     assert len(S["rule"]["buy"]["conditions"]) == n
-    user.find("使用此策略回测").click()
-    await user.should_see(marker="run")
-    assert state.STATE["current_spec"]["kind"] == "rule"
+    user.find(marker="run").click()
+    assert await _wait(lambda: state.STATE.get("bt", {}).get("result") is not None)
+    assert state.STATE["bt"]["spec"]["kind"] == "rule"
 
 
 async def test_strategy_rule_pacing(user: User, lib_dir):
     """条件「连续 N 根 K 线」、卖出后冷却、分批建仓：界面改的设置进入规则和预览"""
-    await user.open("/strategy")
+    await user.open("/timing")
     user.find(marker="mode").elements.pop().set_value("rule")
     await settle()
     S = state.strategy()
@@ -347,60 +313,65 @@ async def test_strategy_rule_pacing(user: User, lib_dir):
     assert "scale" not in rule and "cooldown" not in rule
 
 
-async def test_strategy_rule_invalid_blocks_backtest(user: User):
-    await user.open("/strategy")
+async def test_strategy_rule_invalid_blocks_backtest(user: User, lib_dir):
+    _save_prices()
+    await user.open("/timing")
     user.find(marker="mode").elements.pop().set_value("rule")
     await settle()
     S = state.strategy()
     for c in list(S["rule"]["buy"]["conditions"]):
         user.find(marker=f"del:{c['_id']}").click()
-    assert not user.find("使用此策略回测").elements.pop().enabled
+    await settle()
+    assert not user.find(marker="run").elements.pop().enabled
 
 
-async def test_strategy_template_to_code_save_and_load(user: User):
-    await user.open("/strategy")
+async def test_strategy_template_to_code_save_and_load(user: User, lib_dir):
+    await user.open("/timing")
     S = state.strategy()
     S["tpl_key"], S["tpl_params"] = "sma_cross", {"sma_cross": {"fast": 7}}
-    await user.open("/strategy")
+    await user.open("/timing")
     user.find("转换为代码编辑").click()
     await settle()
     assert S["mode"] == "code" and "class Strategy(PerAsset)" in S["code"] and "('fast', 7)" in S["code"]
     await user.should_see("【自定义代码】")
     user.find("策略名称").type("代码均线")
-    user.find("保存").click()
+    user.find(marker="bt_save").click()
     saved = strategies.list_strategies()["代码均线"]
     assert saved["kind"] == "code" and saved["code"] == S["code"]
 
     state.reset()
-    await user.open("/strategy")
+    await user.open("/timing")
     user.find("载入").click()
     await settle()
     assert state.strategy()["mode"] == "code" and state.strategy()["code"] == saved["code"]
 
 
-async def test_strategy_code_errors_block_save(user: User):
+async def test_strategy_code_errors_block_save(user: User, lib_dir):
+    _save_prices()
     S = state.strategy()
     S["mode"] = "code"
-    await user.open("/strategy")
+    await user.open("/timing")
     assert "class Strategy(PerAsset)" in S["code"]                   # 第一次打开放入带注释的示例
     user.find("策略名称").type("坏代码")
     editor = user.find(marker="code").elements.pop()
     editor.set_value("class Strategy(PerAsset)\n    pass\n")
     await user.should_see("第 1 行")
-    assert not user.find("保存").elements.pop().enabled
-    assert not user.find("使用此策略回测").elements.pop().enabled
+    await settle()
+    assert not user.find(marker="run").elements.pop().enabled
+    user.find(marker="bt_save").click()                                 # 有语法错误：不保存
+    assert "坏代码" not in strategies.list_strategies()
 
     editor.set_value("class Strategy(PerAsset):\n    x = no_such_name\n")   # 语法对，但执行定义时出错
-    assert user.find("保存").elements.pop().enabled
-    user.find("保存").click()
+    await settle()
+    user.find(marker="bt_save").click()
     await user.should_see("NameError")
     assert "坏代码" not in strategies.list_strategies()
 
 
-async def test_strategy_code_start_from_template(user: User):
+async def test_strategy_code_start_from_template(user: User, lib_dir):
     S = state.strategy()
     S["mode"] = "code"
-    await user.open("/strategy")
+    await user.open("/timing")
     user.find(marker="code_start").elements.pop().set_value("tpl:boll_breakout")
     user.find(marker="code_start_load").click()
     assert "BollingerBands" in S["code"]
@@ -413,15 +384,13 @@ async def test_backtest_code_strategy_and_runtime_error(user: User, lib_dir):
     from simplequant.strategies import code_strategy
     _save_prices()
     good = code_strategy.skeleton()
-    state.STATE["current_spec"] = {"name": "代码", "kind": "code", "code": good}
-    state.STATE["bt_strategy"] = "__current__"
-    await user.open("/backtest")
+    await _open_timing(user, {"name": "代码", "kind": "code", "code": good})
     user.find(marker="run").click()
     assert await _wait(lambda: state.STATE.get("bt", {}).get("result") is not None)
     assert not state.STATE["bt"]["result"].orders.empty
 
-    state.STATE["current_spec"]["code"] = good.replace("holding = self.getposition(d).size > 0", "holding = 1 / 0")
-    await user.open("/backtest")
+    await _open_timing(user, {"name": "代码", "kind": "code",
+                              "code": good.replace("holding = self.getposition(d).size > 0", "holding = 1 / 0")})
     user.find(marker="run").click()
     await user.should_see("策略代码第")
     user.find("导出策略").click()
@@ -463,7 +432,7 @@ def fake_llm(monkeypatch):
 async def test_strategy_ai_flow(user: User, fake_llm, lib_dir):
     ds = library.save(make_prices(n=20), library.DatasetMeta(id="x_510300", name="沪深300ETF", symbol="510300",
                                                              source="akshare", freq="1d"))
-    await user.open("/strategy")
+    await user.open("/timing")
     user.find(marker="mode").elements.pop().set_value("ai")
     await settle()
     user.find("描述买卖规则").type("放量突破20日新高买入，跌破10日低点或亏5%卖出，要求ROE>15%")
@@ -476,18 +445,14 @@ async def test_strategy_ai_flow(user: User, fake_llm, lib_dir):
     await settle()
     S = state.strategy()
     assert S["mode"] == "rule" and len(S["rule"]["buy"]["conditions"]) == 2
-    user.find("使用此策略回测").click()
-    await user.should_see(marker="run")
-    assert state.STATE["bt_ids"] == [ds.id]               # AI 识别出的 510300 被预选
-    assert user.find(marker="bt_ids").elements.pop().value == [ds.id]
-    await user.should_see("当前策略：放量突破")            # 策略下拉框选中刚才的策略
+    assert user.find(marker="bt_ids").elements.pop().value == [ds.id]     # AI 识别出的 510300 被选中
 
 
 async def test_strategy_ai_condition_kinds_and_changes(user: User, fake_llm, lib_dir):
     """AI 生成的规则逐条标出状态 / 事件；说「上穿」却生成「大于」时提醒；同一描述两次结果不同时提醒"""
     import copy
     import json
-    await user.open("/strategy")
+    await user.open("/timing")
     user.find(marker="mode").elements.pop().set_value("ai")
     await settle()
     user.find("描述买卖规则").type("收盘价上穿20日新高买入")
@@ -507,10 +472,10 @@ async def test_strategy_ai_condition_kinds_and_changes(user: User, fake_llm, lib
     await user.should_not_see("描述中包含「上穿 / 金叉」等表述")
 
 
-async def test_strategy_ai_without_config(user: User, monkeypatch):
+async def test_strategy_ai_without_config(user: User, lib_dir, monkeypatch):
     import simplequant.llm as llm
     monkeypatch.setattr(llm, "load_config", lambda: None)
-    await user.open("/strategy")
+    await user.open("/timing")
     user.find(marker="mode").elements.pop().set_value("ai")
     await settle()
     await user.should_see("前往模型设置")
@@ -518,21 +483,36 @@ async def test_strategy_ai_without_config(user: User, monkeypatch):
     assert not user.find(marker="generate").elements.pop().enabled
 
 
-# ---------------- 回测页 ----------------
+# ---------------- 择时工作台：回测 ----------------
 def _save_prices(sym="510300", n=400, name="沪深300ETF"):
     return library.save(make_prices(n=n), library.DatasetMeta(id=f"x_{sym}", name=name, symbol=sym,
                                                                source="akshare", freq="1d"))
 
 
+async def _open_timing(user: User, spec: str | dict | None = None, tab: str | None = None):
+    """打开择时工作台；spec（模板名或带 name 的策略）先放进编辑器（与其他页面带策略过来相同，见 gui/routes.py）；
+    tab：report / verify"""
+    if isinstance(spec, str):
+        spec = {"name": "", "kind": "template", "template": spec, "params": {}}
+    if spec:
+        state.STATE["timing_spec"] = spec
+    if tab:
+        state.STATE["timing_tab"] = tab
+    await user.open("/timing")
+    await user.should_see(marker="timing_tabs")
+
+
 async def test_backtest_needs_data(user: User, lib_dir):
-    await user.open("/backtest")
-    await user.should_see("前往数据页")
+    """没有数据：工作台就地提供示例数据下载，可以先写策略、导入方案"""
+    await user.open("/timing")
+    await user.should_see(marker="md:market_go")
+    await user.should_see(marker="plan_import")
+    await user.should_not_see(marker="run")
 
 
 async def test_backtest_run_and_results(user: User, lib_dir):
     _save_prices()
-    await user.open("/backtest")
-    user.find(marker="bt_strategy").elements.pop().set_value("tpl:sma_cross")
+    await _open_timing(user, "sma_cross")
     user.find(marker="run").click()
     for _ in range(100):                                  # 回测在后台线程里跑
         if state.STATE.get("bt", {}).get("result") is not None:
@@ -560,8 +540,7 @@ async def test_support_dialog_after_runs(user: User, lib_dir):
     _save_prices()
     g = app.storage.general
     g["runs"] = support.FIRST_ASK - 1
-    await user.open("/backtest")
-    user.find(marker="bt_strategy").elements.pop().set_value("tpl:sma_cross")
+    await _open_timing(user, "sma_cross")
 
     async def run_once():
         state.STATE.pop("bt", None)
@@ -591,9 +570,8 @@ async def test_backtest_phase_check(user: User, lib_dir):
         library.save(make_prices(n=300, seed=i + 1, period=40 + 15 * i),
                      library.DatasetMeta(id=f"x_{sym}", name=sym, symbol=sym, source="akshare", freq="1d"))
     state.STATE["bt_ids"] = ["x_510300", "x_510500"]
-    state.STATE["current_spec"] = {"kind": "template", "template": "momentum_rotation", "name": "轮动",
-                                   "params": {"period": 20, "rebalance_bars": 3}}      # 2 个相位，单进程
-    await user.open("/backtest")
+    await _open_timing(user, {"kind": "template", "template": "momentum_rotation", "name": "轮动",
+                              "params": {"period": 20, "rebalance_bars": 3}})        # 2 个相位，单进程
     user.find(marker="run").click()
     BT = lambda: state.STATE.get("bt", {})
     assert await _wait(lambda: BT().get("result") is not None and "phase_pending" not in BT()
@@ -609,8 +587,7 @@ async def test_backtest_batch_mode(user: User, lib_dir):
     library.save(make_prices(n=300, seed=5, start="2021-06-01"),
                  library.DatasetMeta(id="x_510500", name="中证500ETF", symbol="510500", source="akshare", freq="1d"))
     state.STATE["bt_ids"] = ["x_510300", "x_510500"]
-    await user.open("/backtest")
-    user.find(marker="bt_strategy").elements.pop().set_value("tpl:sma_cross")
+    await _open_timing(user, "sma_cross")
     user.find(marker="bt_mode").elements.pop().set_value("batch")
     await settle()
     assert str(state.STATE["bt_range"][0]) == "2021-01-04"           # 并集：从较早的那个标的开始
@@ -634,8 +611,7 @@ async def test_backtest_same_symbol_two_datasets(user: User, lib_dir):
         library.save(make_prices(n=300, seed=7 if adj else 8),
                      library.DatasetMeta(id=i, name="515080", symbol="515080", source="akshare", freq="1d", adjust=adj))
     state.STATE["bt_ids"] = ["x_hfq", "x_raw"]
-    await user.open("/backtest")
-    user.find(marker="bt_strategy").elements.pop().set_value("tpl:buy_hold")
+    await _open_timing(user, "buy_hold")
     user.find(marker="run").click()
     assert await _wait(lambda: state.STATE.get("bt", {}).get("result") is not None)
     res = state.STATE["bt"]["result"]
@@ -644,7 +620,7 @@ async def test_backtest_same_symbol_two_datasets(user: User, lib_dir):
 
     state.STATE.pop("bt", None)
     state.STATE["bt_ids"] = ["x_hfq", "x_raw"]
-    await user.open("/backtest")
+    await user.open("/timing")
     user.find(marker="bt_mode").elements.pop().set_value("batch")
     await settle()
     user.find(marker="run").click()
@@ -657,8 +633,7 @@ async def test_plan_export_and_import(user: User, lib_dir, monkeypatch):
     from simplequant import plan as plan_mod
     from gui import plan_io
     _save_prices()
-    await user.open("/backtest")
-    user.find(marker="bt_strategy").elements.pop().set_value("tpl:sma_cross")
+    await _open_timing(user, "sma_cross")
     user.find(marker="run").click()
     assert await _wait(lambda: state.STATE.get("bt", {}).get("result") is not None)
     got = {}
@@ -679,8 +654,8 @@ async def test_plan_export_and_import(user: User, lib_dir, monkeypatch):
         return library.save(make_prices(), library.DatasetMeta(id="dl_510300", name=name, symbol=symbol,
                                                                source=source, freq=freq, adjust=adjust))
     monkeypatch.setattr(plan_io, "fetch_to_library", fake_fetch)
-    await user.open("/backtest")
-    await user.should_see("前往数据页")
+    await user.open("/timing")
+    await user.should_see(marker="md:market_go")
     user.find(marker="plan_import").click()
     up = user.find(marker="plan_upload").elements.pop()
     await up.handle_uploads([up.SmallFileUpload("x.sqplan", "application/json", got["data"])])
@@ -694,7 +669,7 @@ async def test_plan_export_and_import(user: User, lib_dir, monkeypatch):
 
 
 async def test_backtest_cash_dividend(user: User, lib_dir, monkeypatch):
-    """回测页选「现金分红」：分红到账、显示分红指标；不支持的 CSV 数据保留原样并提示"""
+    """工作台选「现金分红」：分红到账、显示分红指标；不支持的 CSV 数据保留原样并提示"""
     from simplequant.data import cash_dividend
     df = make_prices()
     monkeypatch.setattr(cash_dividend, "fund_dividends",
@@ -704,9 +679,8 @@ async def test_backtest_cash_dividend(user: User, lib_dir, monkeypatch):
     library.save(make_prices(seed=3), library.DatasetMeta(id="x_csv", name="自导入", symbol="自导入", source="csv",
                                                           freq="1d"))
     state.STATE["bt_ids"] = ["x_510300", "x_csv"]
-    await user.open("/backtest")
+    await _open_timing(user, "buy_hold")
     await user.should_see("为不复权数据")                  # 测试数据都是不复权的：提示假信号
-    user.find(marker="bt_strategy").elements.pop().set_value("tpl:buy_hold")
     user.find(marker="bt_dividend").elements.pop().set_value("cash")
     await settle()
     assert state.STATE["bt_broker"]["dividend"] == "cash"
@@ -721,14 +695,13 @@ async def test_backtest_cash_dividend(user: User, lib_dir, monkeypatch):
 async def test_backtest_dca(user: User, lib_dir):
     """定投：没填追加金额时提示等同于买入持有；填了以后显示累计投入、XIRR，资金曲线带累计投入"""
     _save_prices()
-    await user.open("/backtest")
-    user.find(marker="bt_strategy").elements.pop().set_value("tpl:dca")
+    await _open_timing(user, "dca")
     user.find(marker="run").click()
     assert await _wait(lambda: state.STATE.get("bt", {}).get("result") is not None)
     await user.should_see("等同于买入持有")
 
     state.STATE.pop("bt", None)
-    await user.open("/backtest")
+    await user.open("/timing")
     user.find(marker="bt_contribution").elements.pop().set_value(2000)
     await settle()
     assert state.STATE["bt_broker"]["contribution"] == 2000
@@ -742,35 +715,27 @@ async def test_backtest_dca(user: User, lib_dir):
 
 
 async def test_backtest_saved_strategy_keeps_cash(user: User, lib_dir):
-    """回测页保存策略时记下资金与费率；改了资金后再选它，恢复成保存时的（控件也跟着变）；参数优化页选它也恢复"""
+    """工作台保存策略时记下资金与费率；改了资金后再载入它，恢复成保存时的（控件也跟着变）"""
     _save_prices()
     state.STATE["bt_broker"] = {"cash": 50_000, "preset": "etf", "t1": True, "slippage": 3.0,
                                 "custom": {"etf": {"commission": 0.5, "min_commission": 0, "stamp_duty": 0}}}
-    await user.open("/backtest")
-    user.find(marker="bt_strategy").elements.pop().set_value("tpl:sma_cross")
+    await _open_timing(user, "sma_cross")
     await settle()
     user.find(marker="bt_save_name").elements.pop().set_value("均线5万")
+    await settle()
     user.find(marker="bt_save").click()
     b = strategies.strategy_brokers()["均线5万"]
     assert b["cash"] == 50_000 and b["commission"] == pytest.approx(0.5e-4) and b["slippage"] == pytest.approx(3e-4)
     assert "broker" not in strategies.list_strategies()["均线5万"]
 
     state.STATE["bt_broker"].update(cash=200_000, slippage=10.0)
-    state.STATE["bt_strategy"] = "tpl:sma_cross"
-    await user.open("/backtest")
-    user.find(marker="bt_strategy").elements.pop().set_value("saved:均线5万")
+    await _open_timing(user, "buy_hold")
+    user.find(marker="load_saved:均线5万").click()
     await settle()
     saved = state.STATE["bt_broker"]
     assert saved["cash"] == 50_000 and saved["slippage"] == pytest.approx(3) and saved["custom"]["etf"]["commission"] == 0.5
     cash = next(e for e in user.find(kind=ui.number).elements if e.props.get("label") == "初始资金（元）")
     assert cash.value == 50_000
-
-    state.STATE["opt_broker"] = {"cash": 300_000, "preset": "etf", "t1": True, "slippage": 5.0, "custom": {}}
-    _opt_setup()
-    await user.open("/optimize")
-    user.find(marker="opt_strategy").elements.pop().set_value("saved:均线5万")
-    await settle()
-    assert state.STATE["opt_broker"]["cash"] == 50_000
 
 
 async def test_optimize_cash_dividend(user: User, lib_dir, monkeypatch):
@@ -778,9 +743,9 @@ async def test_optimize_cash_dividend(user: User, lib_dir, monkeypatch):
     monkeypatch.setattr(cash_dividend, "fund_dividends", lambda s: cash_dividend.EMPTY)
     _save_prices(n=700)
     _opt_setup()
-    state.STATE["opt_broker"] = {"cash": 100_000, "preset": "etf", "t1": True, "slippage": 5.0, "custom": {},
-                                 "dividend": "cash"}
-    await user.open("/optimize")
+    state.STATE["bt_broker"] = {"cash": 100_000, "preset": "etf", "t1": True, "slippage": 5.0, "custom": {},
+                                "dividend": "cash"}
+    await _open_timing(user, "sma_cross", tab="verify")
     user.find(marker="opt_run").click()
     assert await _wait(lambda: state.STATE["opt"].get("result"))
     assert state.STATE["opt"]["result"]["compare"]["is_best"]["dividend_cash"] == 0
@@ -791,8 +756,7 @@ async def test_backtest_recorded_and_reopened_from_home(user: User, lib_dir):
     from gui import history
     history.clear()
     _save_prices()
-    await user.open("/backtest")
-    user.find(marker="bt_strategy").elements.pop().set_value("tpl:sma_cross")
+    await _open_timing(user, "sma_cross")
     user.find(marker="run").click()
     await _wait(lambda: state.STATE.get("bt", {}).get("result") is not None)
     await user.should_see("下一步")
@@ -811,8 +775,7 @@ async def test_backtest_recorded_and_reopened_from_home(user: User, lib_dir):
 
 async def test_backtest_export_menu(user: User, lib_dir):
     _save_prices()
-    await user.open("/backtest")
-    user.find(marker="bt_strategy").elements.pop().set_value("tpl:sma_cross")
+    await _open_timing(user, "sma_cross")
     await settle()
     user.find("导出策略").click()
     await user.should_see("聚宽 JoinQuant")
@@ -825,7 +788,7 @@ async def test_backtest_mixed_freq_blocks_run(user: User, lib_dir):
     _save_prices()
     library.save(make_prices(n=300, freq="min"), library.DatasetMeta(id="x_m", name="分钟", symbol="m",
                                                                        source="csv", freq="1m"))
-    await user.open("/backtest")
+    await user.open("/timing")
     user.find(marker="bt_ids").elements.pop().set_value(["x_510300", "x_m"])
     await user.should_see("K 线周期不一致")
     assert not user.find(marker="run").elements.pop().enabled
@@ -843,7 +806,7 @@ async def test_backtest_ai_explain(user: User, lib_dir, monkeypatch):
     monkeypatch.setattr(llm, "load_config", lambda: llm.LLMConfig.from_preset("deepseek", api_key="x"))
     monkeypatch.setattr(llm, "get_provider", lambda cfg: Fake())
     _save_prices()
-    await user.open("/backtest")
+    await user.open("/timing")
     user.find(marker="run").click()
     for _ in range(100):
         if state.STATE.get("bt", {}).get("result") is not None:
@@ -855,7 +818,7 @@ async def test_backtest_ai_explain(user: User, lib_dir, monkeypatch):
     assert "Trade details" in Fake.sent[-1] and "closed_trades" in Fake.sent[-1]     # 交易明细与期末持仓一起发给模型
 
 
-# ---------------- 参数优化页 ----------------
+# ---------------- 参数优化（工作台「验证」标签） ----------------
 async def _wait(cond, n=400):
     for _ in range(n):
         if cond():
@@ -864,17 +827,17 @@ async def _wait(cond, n=400):
     return False
 
 
-def _opt_setup():
-    """单进程、小网格，测试跑得快"""
+def _opt_setup(item: str = "optimize"):
+    """单进程、小网格，测试跑得快；工作台打开「验证」标签的参数优化（item="walkforward"：滚动优化）"""
     state.STATE["opt"] = {"mode": "grid", "chosen": {}, "ranges": {}, "metric": "sharpe", "oos": 30, "workers": 1,
                           "train": 12, "test": 6, "window": "rolling", "stitch": "continuous"}
-    state.STATE["opt_strategy"] = "tpl:sma_cross"
+    state.STATE["timing_vf"] = item
 
 
 async def test_optimize_grid_flow(user: User, lib_dir):
     _save_prices(n=700)
     _opt_setup()
-    await user.open("/optimize")
+    await _open_timing(user, "sma_cross", tab="verify")
     await user.should_see("组参数")                      # 组合数估算
     user.find(marker="opt_run").click()
     assert await _wait(lambda: state.STATE["opt"].get("result"))
@@ -884,13 +847,11 @@ async def test_optimize_grid_flow(user: User, lib_dir):
     res = state.STATE["opt"]["result"]
     assert len(res["axes"]) == 2 and not res["df"].empty
     assert any(c["key"] in ("cred.oos_ok", "cred.oos_worse") for c in res["checks"])
+    # 以最优参数回测：放进编辑器、回到报告标签并运行；提示这组参数是从多少组里挑出来的
     user.find(marker="use_best").click()
-    await user.should_see(marker="run")
-    assert state.STATE["current_spec"]["template"] == "sma_cross"
-    await user.should_see("当前策略：")
-    # 用最优参数回测：提示这组参数是从多少组里挑出来的
-    user.find(marker="run").click()
     assert await _wait(lambda: state.STATE.get("bt", {}).get("result") is not None)
+    assert state.STATE["bt"]["spec"]["template"] == "sma_cross"
+    assert user.find(marker="timing_tabs").elements.pop().value == "report"
     tuned = [c for c in state.STATE["bt"]["checks"] if c["key"] == "cred.tuned"]
     assert tuned and tuned[0]["args"]["n"] == res["tried"] > 1
     await user.should_see("组组合中的最优者")
@@ -899,23 +860,26 @@ async def test_optimize_grid_flow(user: User, lib_dir):
 async def test_optimize_param_pick_limits_and_strategy_change(user: User, lib_dir):
     _save_prices(n=300)
     _opt_setup()
-    await user.open("/optimize")
+    await _open_timing(user, "sma_cross", tab="verify")
     sel = user.find(marker="opt_params").elements.pop()
     sel.set_value([])
     await settle()
     assert not user.find(marker="opt_run").elements.pop().enabled     # 没选参数不能跑
-    user.find(marker="opt_strategy").elements.pop().set_value("tpl:buy_hold")
+    load_spec = routes()["/timing"].__globals__["load_spec"]           # 编辑器里换一个策略
+    load_spec(state.strategy(), {"kind": "template", "template": "buy_hold", "params": {}}, "")
+    user.find(marker="tab:report").click()
+    user.find(marker="tab:verify").click()
     await settle()
     assert user.find(marker="opt_params").elements                     # 换策略后参数区重画、不报错
 
 
 async def test_optimize_walkforward_flow(user: User, lib_dir):
     _save_prices(n=900)
-    _opt_setup()
+    _opt_setup("walkforward")
     O = state.STATE["opt"]
     O["mode"] = "wf"
     tbs_key = None
-    await user.open("/optimize")
+    await _open_timing(user, "sma_cross", tab="verify")
     await user.should_see("个窗口")                      # 窗口数和回测次数估算
     # 把网格缩小到每个参数 2 个取值
     for k, ranges in O["ranges"].items():
@@ -938,14 +902,24 @@ def _hs300_ready():
 needs_stocks = pytest.mark.skipif(not _hs300_ready(), reason="沪深300数据未下载")
 
 
+def _sel_route(tab: str) -> str:
+    """tab：选股页的 bt / verify / wf（验证标签的滚动优化），或因子实验室的 res / cf / mine；返回要打开的页面"""
+    if tab in ("res", "cf", "mine"):
+        state.STATE["lab_tab"] = tab
+        return "/factors"
+    if tab == "wf":
+        tab, state.STATE["sp_vf"] = "verify", "walkforward"
+    state.STATE["sp_tab"] = tab
+    return "/selection"
+
+
 async def _open_selection(user: User, tab="bt"):
-    """从 2022 年开始，打开选股页并等面板载入完成"""
+    """从 2022 年开始，打开选股页（研究类的 tab 打开因子实验室）并等面板载入完成"""
     import datetime as dt
     from gui.pages.selection import sp_state
     SP = sp_state()
     SP["ranges"]["hs300"] = (dt.date(2022, 1, 4), dt.date(2100, 1, 1))     # 结束日会被截到数据末尾
-    state.STATE["sp_tab"] = tab
-    await user.open("/selection")
+    await user.open(_sel_route(tab))
     assert await _wait(lambda: state.STATE.get("sp_panel_key") is not None, n=2400), "面板没有载入"
     await settle()
     return SP
@@ -1232,7 +1206,7 @@ async def test_selection_plan_export_and_import(user: User, monkeypatch):
     # 换一台「电脑」：自定义因子和界面状态都没有（选股数据相同）
     cf.delete_factor(key)
     state.reset()
-    await user.open("/backtest")                          # 回测页也能导入选股方案
+    await user.open("/timing")                            # 择时工作台也能导入选股方案
     user.find(marker="plan_import").click()
     up = user.find(marker="plan_upload").elements.pop()
     await up.handle_uploads([up.SmallFileUpload("x.sqplan", "application/json", got["data"])])
@@ -1420,7 +1394,7 @@ async def test_selection_mining(user: User, monkeypatch, tmp_path):
     await user.should_see("检验期")
     user.find(marker="mine_start").click()
     assert await _wait(lambda: Fake.sent)
-    await user.open("/selection")                     # 挖掘仍在后台跑：新页面接着显示，结束后刷新结果
+    await user.open("/factors")                       # 挖掘仍在后台跑：新页面接着显示，结束后刷新结果
     assert await _wait(lambda: state.STATE.get("sp_panel_key") is not None, n=2400)
     assert SP["mine"]["running"]
     await asyncio.sleep(1)
@@ -1511,8 +1485,7 @@ async def _open_cb(user: User, tab="bt"):
     from gui.pages.selection import sp_state
     SP = sp_state()
     SP["ranges"]["cb"] = (dt.date(2021, 1, 4), dt.date(2100, 1, 1))
-    state.STATE["sp_tab"] = tab
-    await user.open("/selection")
+    await user.open(_sel_route(tab))
     assert await _wait(lambda: state.STATE.get("sp_panel_key") is not None, n=1200)
     await settle()
     state.STATE["sp_panel_key"] = None
@@ -1600,8 +1573,8 @@ async def test_selection_cb_research_and_data_tab(user: User):
     user.find(marker="sp_analyze").click()
     assert await _wait(lambda: SP.get("report"), n=1200)
     await user.should_see("IC 均值")
-    state.STATE["sp_tab"] = "data"
-    await user.open("/selection")
+    state.STATE["data_tab"] = "cb"                    # 数据中心的「可转债」标签
+    await user.open("/data")
     await user.should_see("可转债总数")
     await user.should_see("回测规则说明")
 
@@ -1642,33 +1615,10 @@ def test_masthead_date():
     app.storage.general.pop("lang", None)
 
 
-def test_ui_choice_default_and_explicit(monkeypatch):
-    """界面版本：没选过按默认；明确选了经典的，默认改成新版（3.0）后仍是经典"""
+async def test_home_ui_switched_note(user: User, lib_dir):
+    """经典界面移除后：已有数据的老用户（没选过界面、或选的是经典）首页提示一次，点「知道了」后不再出现；
+    3.x 里明确选过新版的、新装还没有数据的都不提示"""
     from nicegui import app
-    from gui import common
-    assert common.ui_choice() is None and not common.new_ui()
-    monkeypatch.setattr(common, "UI_DEFAULT", "new")
-    assert common.new_ui()
-    common.set_ui("classic")
-    assert common.ui_choice() == "classic" and not common.new_ui()
-    app.storage.general["ui"] = "unknown"            # 读到不认识的值当作没选过
-    assert common.ui_choice() is None and common.new_ui()
-
-
-def test_ui_default_is_new():
-    """3.0 起没选过界面的用户默认用新版（夹具为经典测试把默认值改成了经典；重新载入模块读写死的值，
-    测试结束时夹具的 monkeypatch 还原成它记下的原值，也就是 "new"）"""
-    from gui import common
-    assert importlib.reload(common).UI_DEFAULT == "new"
-    assert common.ui_choice() is None and common.new_ui()
-
-
-async def test_home_ui_switched_note(user: User, lib_dir, monkeypatch):
-    """默认改成新版后：没选过界面、已有数据的老用户首页提示一次，点「知道了」后不再出现；
-    明确选过界面（含选了新版）的、新装还没有数据的都不提示"""
-    from nicegui import app
-    from gui import common
-    monkeypatch.setattr(common, "UI_DEFAULT", "new")
     await user.open("/")
     await user.should_not_see(marker="home_ui_switched")         # 新装：没有数据，也没有报告
     _save_prices()
@@ -1676,11 +1626,14 @@ async def test_home_ui_switched_note(user: User, lib_dir, monkeypatch):
     await user.should_see(marker="home_ui_switched")
     user.find(marker="home_ui_switched_ok").click()
     await settle()
-    assert app.storage.general["ui_switch_seen"] and common.ui_choice() is None
+    assert app.storage.general["ui_switch_seen"]
     await user.open("/")
     await user.should_not_see(marker="home_ui_switched")
     app.storage.general.pop("ui_switch_seen")
-    common.set_ui("new")
+    app.storage.general["ui"] = "classic"                    # 3.x 里选了经典：也提示
+    await user.open("/")
+    await user.should_see(marker="home_ui_switched")
+    app.storage.general["ui"] = "new"                        # 选过新版：不提示
     await user.open("/")
     await user.should_not_see(marker="home_ui_switched")
 
@@ -1768,50 +1721,30 @@ def t_(key: str) -> str:
     return t(key)
 
 
-async def test_settings_switch_ui(user: User):
-    """设置页切到新版：报头（流程切换、步骤条）换成侧栏，当前栏目高亮；切回经典恢复报头"""
-    from nicegui import app
+async def test_settings_no_ui_switch(user: User):
+    """经典界面移除后：设置页没有「界面」开关，每页都是侧栏"""
     await user.open("/settings")
-    await user.should_see(marker="flow:timing")
-    await user.should_not_see(marker="sq_sidebar")
-    user.find(marker="set_ui").elements.pop().set_value("new")
-    assert app.storage.general["ui"] == "new"
-
-    await user.open("/strategy")
     await user.should_see(marker="sq_sidebar")
-    await user.should_not_see(marker="flow:timing")
-    await user.should_see(marker="nav:/tools")
-    assert "on" in user.find(marker="nav:/timing").elements.pop().classes        # 经典策略页也算「择时策略」
-    assert "on" not in user.find(marker="nav:/selection").elements.pop().classes
-    user.find(marker="nav:/settings").click()
-    await user.should_see(marker="set_ui")
-
-    user.find(marker="set_ui").elements.pop().set_value("classic")
-    assert app.storage.general["ui"] == "classic"
-    await user.open("/")
-    await user.should_see(marker="flow:timing")
-    await user.should_not_see(marker="sq_sidebar")
+    await user.should_see(marker="llm_preset")
+    await user.should_not_see(marker="set_ui")
 
 
 async def test_new_ui_page_eyebrow(user: User):
-    """页面眉标：经典界面是「流程 · 第几步」；新版是所在栏目，与标题相同时用英文大写"""
-    from gui import common
+    """页面眉标：所在栏目，与标题相同时用英文大写"""
 
     async def eyebrow(route):
         await user.open(route)
         await user.should_see(marker="page_eyebrow")
         return user.find(marker="page_eyebrow").elements.pop().text
 
-    assert await eyebrow("/strategy") == "择时策略 · 第 2 步"
-    common.set_ui("new")
-    assert await eyebrow("/strategy") == "择时策略"
-    assert await eyebrow("/backtest") == "择时策略"
+    assert await eyebrow("/timing") == "择时策略"
+    assert await eyebrow("/factors") == "FACTOR LAB"
     assert await eyebrow("/paper") == "PAPER TRADING"
     assert await eyebrow("/settings") == "SETTINGS"
 
 
 def test_narrow_rules_shared_by_media_and_container():
-    """窄宽度规则：经典界面按窗口（@media），新版按内容区（@container sqpage），两边用同一份规则"""
+    """窄宽度规则：按内容区（@container sqpage），老内核退回按窗口（@media），两边用同一份规则"""
     from gui import theme
     for w, rules in ((1150, theme._NARROW_1150), (860, theme._NARROW_860), (640, theme._NARROW_640)):
         assert f"@media (max-width: {w}px) {{" in theme.CSS and f"@container sqpage (max-width: {w}px) {{" in theme.CSS
@@ -1822,10 +1755,9 @@ def test_narrow_rules_shared_by_media_and_container():
 async def test_new_ui_home_progress(user: User, paper_dir):
     """新版首页：「继续上次的工作」显示四步进度（未保存 → 建议先设置；保存并开了模拟账户 → 只差验证），
     点一步去对应的页面；「工具」那一行不显示（侧栏有）"""
-    from gui import common, history
+    from gui import history
     from simplequant.engine import BrokerConfig
     from simplequant.paper import create_account
-    common.set_ui("new")
     history.clear()
     spec = {"kind": "template", "template": "sma_cross", "params": {}}
     history.add("bt", "均线", "510300 · 日线", {"total_return": 0.25}, data="510300", strategy="均线",
@@ -1857,8 +1789,6 @@ def _expanded(user: User, marker: str) -> bool:
 async def test_new_ui_timing_workbench(user: User, lib_dir):
     """择时工作台：改策略 → 运行 → 设置收起、报告出来 → 点进度「设置」展开 → 写到一半的条件还在 → 再运行；
     运行不自动保存；保存后进度「设置」打勾，再改规则变成「有改动未保存」"""
-    from gui import common
-    common.set_ui("new")
     _save_prices()
     S = state.strategy()
     BT = lambda: state.STATE.get("bt", {})
@@ -1911,10 +1841,8 @@ async def test_new_ui_timing_workbench(user: User, lib_dir):
 
 async def test_new_ui_run_compare(user: User, lib_dir):
     """择时工作台「与上次相比」：第一次运行不显示；再运行一次写「策略未改动」；换成规则策略后写出换了什么；
-    「最近 n 次运行」弹窗列出每次运行；经典回测页跑出的报告没有编号，回到工作台也不显示对比"""
-    from gui import common
+    「最近 n 次运行」弹窗列出每次运行"""
     from ui.shared import run_diff
-    common.set_ui("new")
     _save_prices()
     BT = lambda: state.STATE.get("bt", {})
     runs = lambda: state.STATE["runs"]["timing"]
@@ -1948,21 +1876,12 @@ async def test_new_ui_run_compare(user: User, lib_dir):
     await user.should_see("本次启动后的第一次运行")
     assert len(user.find(marker="run_item:2").elements) == 1
 
-    common.set_ui("classic")                                  # 经典回测页跑一次：报告没有编号
-    await user.open("/backtest")
-    await run_once()
-    assert "run_no" not in BT() and len(runs()) == 3
-    common.set_ui("new")
-    await user.open("/timing")
-    await user.should_not_see(marker="run_diff")
 
 
 async def test_new_ui_timing_errors_and_saved(user: User, lib_dir):
     """工作台：规则有错时不能运行；载入已保存的策略恢复它的资金；没有数据时只显示编辑器，也能保存"""
-    from gui import common
     from simplequant.engine import BrokerConfig
     from dataclasses import asdict
-    common.set_ui("new")
     strategies.save_strategy("五万均线", {"kind": "template", "template": "sma_cross", "params": {"fast": 7}},
                              broker=asdict(BrokerConfig(cash=50_000)))
     await user.open("/timing")                               # 还没有数据
@@ -1991,11 +1910,9 @@ async def test_new_ui_timing_errors_and_saved(user: User, lib_dir):
 
 
 async def test_new_ui_entries_open_workbench(user: User, lib_dir):
-    """新版界面下各入口都到择时工作台并停在对应的位置：首页「开始新的工作」（设置展开、对应的编写方式）、
-    经典回测页的「编辑或新建策略」（带着选中的策略）、首页「打开回测报告」（恢复策略并重新运行）、
-    参数优化页「以最优参数回测」（带着最优参数）"""
-    from gui import common, history
-    common.set_ui("new")
+    """各入口都到择时工作台并停在对应的位置：首页「开始新的工作」（设置展开、对应的编写方式）、
+    首页「打开回测报告」（恢复策略并重新运行）"""
+    from gui import history
     history.clear()
     _save_prices(n=700)
     S = state.strategy
@@ -2006,12 +1923,7 @@ async def test_new_ui_entries_open_workbench(user: User, lib_dir):
     await user.should_see(marker="timing_strategy")
     assert S()["mode"] == "code" and _expanded(user, "bt_setup")
 
-    await user.open("/backtest")                             # 经典回测页在新版界面下仍能打开
-    user.find(marker="bt_strategy").elements.pop().set_value("tpl:boll_breakout")
-    await settle()
-    user.find("编辑或新建策略").click()
-    await user.should_see(marker="timing_strategy")
-    assert S()["mode"] == "template" and S()["tpl_key"] == "boll_breakout" and _expanded(user, "bt_setup")
+    await _open_timing(user, "boll_breakout")
     user.find(marker="run").click()
     assert await _wait(lambda: BT().get("result") is not None)
     assert history.recent()[0]["restore"]["spec"]["template"] == "boll_breakout"
@@ -2023,22 +1935,11 @@ async def test_new_ui_entries_open_workbench(user: User, lib_dir):
     assert await _wait(lambda: BT().get("result") is not None)
     assert S()["mode"] == "template" and S()["tpl_key"] == "boll_breakout"
 
-    _opt_setup()
-    await user.open("/optimize")
-    user.find(marker="opt_run").click()
-    assert await _wait(lambda: state.STATE["opt"].get("result"))
-    best = state.STATE["opt"]["result"]["best_spec"]
-    await user.should_see(marker="use_best")                 # 结果区下一轮才画出来
-    user.find(marker="use_best").click()
-    await user.should_see(marker="timing_strategy")
-    assert S()["tpl_key"] == "sma_cross" and S()["tpl_params"]["sma_cross"] == best["params"]
-
 
 async def test_new_ui_timing_verify_tab(user: User, lib_dir):
     """工作台「验证」标签：用设置区的数据与策略做参数优化 → 以最优参数回测（回到报告、提示挑选次数）→ 报告「下一步」
     回到验证 → 滚动优化；做过的检验记进报告记录，重启后首页进度的「验证」仍是完成"""
-    from gui import common, history
-    common.set_ui("new")
+    from gui import history
     history.clear()
     _save_prices(n=900)
     _opt_setup()
@@ -2107,10 +2008,8 @@ async def test_new_ui_sidebar(user: User, paper_dir):
     """新版侧栏：当前栏目高亮；模拟盘旁显示全部账户的待执行交易合计（暂停的不算，没有时不显示）；
     窄窗口的展开 / 收起记住状态，换页后仍然有效"""
     from nicegui import app
-    from gui import common
     from simplequant.engine import BrokerConfig
     from simplequant.paper import create_account
-    common.set_ui("new")
     spec = {"kind": "template", "template": "buy_hold", "params": {}}
     asset = [{"source": "akshare", "symbol": "510300", "asset": "etf", "name": "510300"}]
 
@@ -2637,14 +2536,14 @@ async def test_allocation_add_candidate_and_missing_data(user: User, lib_dir):
 
 
 async def test_backtest_picks_dataset_that_replaced_remembered_one(user: User, lib_dir):
-    """回测页记住的数据被重新下载替换后，自动改选新数据（照加法复权提示重新下载后，不再用旧数据回测）"""
+    """工作台记住的数据被重新下载替换后，自动改选新数据（照加法复权提示重新下载后，不再用旧数据回测）"""
     old = library.save(make_prices(n=60), library.DatasetMeta(id="x_old", name="510300 沪深300ETF", symbol="510300",
                                                               source="akshare", freq="1d", adjust="hfq"))
     new = library.save(make_prices(n=80), library.DatasetMeta(id="x_new", name="510300 沪深300ETF", symbol="510300",
                                                               source="akshare", freq="1d", adjust="hfq"))
     state.STATE["bt_ids"] = [old.id]
     library.replace(old.id, new.id)
-    await user.open("/backtest")
+    await user.open("/timing")
     await user.should_see(marker="run")
     assert user.find(marker="bt_ids").elements.pop().value == [new.id]
     assert state.STATE["bt_ids"] == [new.id]
@@ -2660,11 +2559,9 @@ def _shown(user: User, marker: str) -> bool:
 async def test_new_ui_factor_lab_no_data(user: User, monkeypatch):
     """因子实验室：股票池没有数据时三个标签都提示下载，按钮到数据中心的「选股数据」并选好股票池；
     侧栏「因子实验室」高亮，标签记住"""
-    from gui import common
     from gui.common import t
     bar_globals = routes()["/factors"].__globals__["universe_bar"].__globals__    # 页面实际用的那个模块
     monkeypatch.setitem(bar_globals, "universe_ready", lambda u: False)
-    common.set_ui("new")
     state.STATE["lab_tab"] = "cf"
     await user.open("/factors")
     await user.should_see(marker="lab_tabs")
@@ -2687,17 +2584,10 @@ async def test_new_ui_factor_lab_no_data(user: User, monkeypatch):
 
 async def test_new_ui_data_center(user: User, monkeypatch):
     """新版数据中心：行情 / 选股数据 / 可转债 / 利率四个标签，标签记住；选股数据可换股票池（不改选股页的股票池）；
-    新版选股页没有数据标签，没有数据时给出去数据中心的按钮；经典数据页不变"""
-    from gui import common, routes as R
+    新版选股页没有数据标签，没有数据时给出去数据中心的按钮"""
+    from gui import routes as R
     from gui.common import t
     from gui.pages.selection import sp_state
-    common.set_ui("classic")
-    await user.open("/data")
-    await user.should_see(t("data.tab_download"))
-    await user.should_not_see(marker="data_tabs")
-    await user.should_see(marker="rates_update")             # 经典：利率卡片在在线下载下面
-
-    common.set_ui("new")
     import sys
     data_globals = routes()["/data"].__globals__
     monkeypatch.setitem(sys.modules["gui.sel_panel"].__dict__, "universe_ready", lambda u: False)   # 当作都没有数据
@@ -2724,15 +2614,11 @@ async def test_new_ui_data_center(user: User, monkeypatch):
     assert state.STATE["data_tab"] == "cb"
     await user.open("/data")
     assert panels().value == "cb"                            # 记住标签
-    assert data_globals["new_ui"]()
 
-    # routes.download：可转债股票池去「可转债」标签；经典界面去选股页的数据标签
+    # routes.download：可转债股票池去「可转债」标签，其他去「选股数据」标签
     sp_state()["universe"] = "cb"
     assert R.download() == "/data" and state.STATE["data_tab"] == "cb"
     assert R.download("sz50") == "/data" and state.STATE["data_tab"] == "stocks" and state.STATE["data_uni"] == "sz50"
-    common.set_ui("classic")
-    assert R.download() == "/selection" and state.STATE["sp_tab"] == "data"
-    common.set_ui("new")
     sp_state()["universe"] = "hs300"
 
     # 新版选股页：没有数据标签；没有数据时「前往下载」去数据中心
@@ -2751,7 +2637,6 @@ async def test_new_ui_factor_lab_mining_same_page(user: User, monkeypatch, tmp_p
     import json
     from dataclasses import asdict
     import simplequant.llm as llm
-    from gui import common
     from gui.pages.selection import sp_state
     from simplequant.stocks import custom_factors, mining as MN
 
@@ -2763,7 +2648,6 @@ async def test_new_ui_factor_lab_mining_same_page(user: User, monkeypatch, tmp_p
     monkeypatch.setattr(llm, "load_config", lambda: llm.LLMConfig.from_preset("deepseek", api_key="x"))
     monkeypatch.setattr(llm, "get_provider", lambda cfg: Fake())
     monkeypatch.setattr(custom_factors, "FACTOR_DIR", tmp_path / "factors")
-    common.set_ui("new")
     SP = sp_state()
     SP["ranges"]["hs300"] = (dt.date(2022, 1, 4), dt.date(2100, 1, 1))
     SP["mine"] = {"cfg": {**asdict(MN.MineConfig()), "rounds": 1, "per_round": 1, "min_t": 0.0, "max_corr": 0.99},
@@ -2784,10 +2668,8 @@ async def test_new_ui_factor_lab(user: User):
     """因子实验室：与选股页共用股票池、区间和面板（不重复载入）、研究结果；保存自定义因子后因子研究的下拉框跟着变，
     删除后选股回测的因子列表去掉它"""
     import datetime as dt
-    from gui import common
     from gui.pages.selection import sp_state
     from simplequant.stocks import FACTORS, custom_factors
-    common.set_ui("new")
     SP = sp_state()
     SP["ranges"]["hs300"] = (dt.date(2022, 1, 4), dt.date(2100, 1, 1))
     state.STATE["lab_tab"] = "res"
@@ -2834,9 +2716,8 @@ async def test_new_ui_factor_lab(user: User):
 
 @needs_stocks
 async def test_new_ui_selection_workbench(user: User):
-    """新版选股页：只有「选股回测 / 验证 / 数据」三个标签（研究类的旧标签回到选股回测）；顶部进度随回测更新，
-    点「验证」到验证标签；可信度、调仓日检验、滚动优化三项及状态；经典的「滚动优化」标签进来时打开验证里的滚动优化"""
-    from gui import common
+    """选股页：只有「选股回测 / 验证」两个标签；顶部进度随回测更新，点「验证」到验证标签；
+    可信度、调仓日检验、滚动优化三项及状态；从首页进度的「验证」进来时打开验证里的滚动优化"""
     from gui.common import t
 
     def tab():
@@ -2848,8 +2729,7 @@ async def test_new_ui_selection_workbench(user: User):
 
     def status(k):          # 左列某一项的状态小字
         return user.find(marker=f"vf:{k}").elements.pop().default_slot.children[1].text
-    common.set_ui("new")
-    SP = await _open_selection(user, "res")
+    SP = await _open_selection(user)
     assert tab() == "bt"
     await user.should_not_see(marker="sp_res_factor")
     assert not cell("backtest")["done"]
@@ -2874,8 +2754,7 @@ async def test_new_ui_selection_workbench(user: User):
 
     # 改了设置：回测结果不再算数，可信度一项要求先回测
     SP["top_n"] = SP["top_n"] + 5
-    state.STATE["sp_tab"] = "wf"                            # 经典界面的标签名（首页进度「验证」一步用它）
-    state.STATE["sp_vf"] = "credibility"
+    state.STATE["sp_tab"], state.STATE["sp_vf"] = "verify", "walkforward"     # 首页进度「验证」一步就是这样打开的
     await user.open("/selection")
     assert await _wait(lambda: _has(user, "spwf_run"), n=2400)
     assert tab() == "verify" and state.STATE["sp_vf"] == "walkforward"
@@ -2890,11 +2769,8 @@ async def test_new_ui_selection_workbench(user: User):
 
 @needs_stocks
 async def test_new_ui_selection_run_diff(user: User):
-    """新版选股页报告顶部「与上次相比」：第一次没有；改持有数再跑，写出选股设置的变化和指标；
-    经典界面跑出的结果没有编号，切回新版不显示对比"""
-    from gui import common
+    """新版选股页报告顶部「与上次相比」：第一次没有；改持有数再跑，写出选股设置的变化和指标"""
     from ui.shared import run_diff
-    common.set_ui("new")
     runs = lambda: state.STATE["runs"]["sel"]
     SP = await _open_selection(user)
 
@@ -2916,22 +2792,12 @@ async def test_new_ui_selection_run_diff(user: User):
     for line in lines:
         await user.should_see(line)
 
-    common.set_ui("classic")                                  # 经典界面跑一次：没有编号，不新增记录
-    SP = await _open_selection(user)
-    await run_once()
-    assert SP["run_no"] is None and len(runs()) == 2
-    common.set_ui("new")
-    await _open_selection(user)
-    assert await _wait(lambda: _has(user, "sp_run"), n=2400)
-    await user.should_not_see(marker="run_diff")
 
 
 @needs_stocks
 async def test_new_ui_selection_lab_jumps(user: User):
     """选股设置里的因子「去实验室检验」：打开因子研究并选好它；实验室「用这个因子回测」：加进因子列表（方向按 IC 正负，
     已有的不重复加），回到选股页的选股回测"""
-    from gui import common
-    common.set_ui("new")
     SP = await _open_selection(user, "bt")
     assert [f["key"] for f in SP["factors"]] == ["ep", "ret20"]
     user.find(marker="sp_to_lab:ret20").click()
@@ -2995,7 +2861,6 @@ class _FakeStockStore:
 async def test_missing_data_bar(user: User):
     """缺数据提示条：点「下载」在原地下载（只下这一类）并显示进度，成功后调用 on_done；同一时间只允许一项下载，
     另一项按钮变灰；出错的股票、失败原因显示在提示条里；排雷数据给出要几天的估计"""
-    import sys
     from nicegui import ui
     from gui.common import t
     md = importlib.import_module("gui.missing_data")
@@ -3036,15 +2901,13 @@ async def test_missing_data_bar(user: User):
 
 @needs_stocks
 async def test_new_ui_selection_missing_risk(user: User, monkeypatch):
-    """新版选股回测：用了排雷条件但面板没有排雷数据时，显示就地下载的提示条（经典是去数据页的提示）；
+    """新版选股回测：用了排雷条件但面板没有排雷数据时，显示就地下载的提示条；
     下载只补排雷数据，起始年为数据首年的前一年，完成后重新载入面板"""
     import sys
-    from gui import common
     from simplequant.stocks import StockStore, universe as U
     md = importlib.import_module("gui.missing_data")
     md._JOBS.clear()
     fake = _FakeStockStore()
-    common.set_ui("new")
     SP = await _open_selection(user, "bt")
     key = state.STATE["sp_panel_key"]
     panel = next(v for k, v in sys.modules["gui.sel_panel"]._PANELS.items() if k[:3] == key)
@@ -3067,9 +2930,7 @@ async def test_new_ui_selection_missing_risk(user: User, monkeypatch):
 
 
 async def test_new_ui_timing_downloads_sample(user: User, lib_dir, monkeypatch):
-    """择时工作台：本地没有行情时就地下载 510300 示例日线，下载完回到工作台可以回测；经典回测页照旧提示去数据页"""
-    import sys
-    from gui import common
+    """择时工作台：本地没有行情时就地下载 510300 示例日线，下载完回到工作台可以回测"""
     from simplequant import data as data_mod
     md = importlib.import_module("gui.missing_data")
     md._JOBS.clear()
@@ -3079,7 +2940,6 @@ async def test_new_ui_timing_downloads_sample(user: User, lib_dir, monkeypatch):
         calls.append((src, sym, start, kw.get("freq"), kw.get("adjust"), kw.get("asset")))
         return _save_prices()
     monkeypatch.setattr(data_mod, "fetch_to_library", fake_fetch)
-    common.set_ui("new")
     await user.open("/timing")
     await user.should_see(marker="md:market")
     await user.should_see(marker="bt_save_name")                   # 没有数据也能先写策略、保存
@@ -3092,7 +2952,6 @@ async def test_new_ui_timing_downloads_sample(user: User, lib_dir, monkeypatch):
 
 async def test_new_ui_timing_updates_rates(user: User, lib_dir, monkeypatch):
     """择时工作台：规则用到利率但本地没有利率数据时，设置区下面就地更新利率，更新完提示消失"""
-    from gui import common
     from gui.common import t
     from simplequant.bonds import rates as rates_mod
     from simplequant.rules import make_ind
@@ -3106,7 +2965,6 @@ async def test_new_ui_timing_updates_rates(user: User, lib_dir, monkeypatch):
         have["ok"] = True
     monkeypatch.setattr(rates_mod.RatesStore, "ready", lambda self: have["ok"])
     monkeypatch.setattr(rates_mod.RatesStore, "update", fake_update)
-    common.set_ui("new")
     _save_prices()
     S = state.strategy()
     S["mode"] = "rule"
@@ -3243,10 +3101,8 @@ async def test_paper_progress_survives_leaving_page(user: User, paper_dir, monke
     """模拟盘更新的进度不跟着页面走：换到别的页面时侧栏「模拟盘」旁显示百分比，回到模拟盘页仍有进度条、
     「更新」按钮变灰；更新在哪个页面结束，就在哪个页面弹结果"""
     import threading
-    from gui import common
     from simplequant.engine import BrokerConfig
     from simplequant.paper import create_account
-    common.set_ui("new")
     for name in ("甲", "乙"):
         create_account(name, {"kind": "template", "template": "buy_hold", "params": {}}, BrokerConfig(), "2026-01-05",
                        assets=[{"source": "akshare", "symbol": "510300", "asset": "etf", "name": "510300"}])

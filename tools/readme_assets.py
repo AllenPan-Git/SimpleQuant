@@ -72,7 +72,7 @@ async def banners():
 
 # ---------------- 截图 ----------------
 # 名称: (路径, 点击, 裁剪(起始文字, 结束文字, 上留白, 下留白)) ；文字按语言给出。
-# 3.0 起截新版界面（readme_server.py 设好 ui = "new"）：择时在工作台 /timing，因子挖掘在因子实验室 /factors
+# 择时在工作台 /timing，因子挖掘在因子实验室 /factors
 SHOTS = {
     "home": ("/", [], {"zh": (None, "免费数据源对比", 0, -24), "en": (None, "Free data sources compared", 0, -24)}),
     "backtest": ("/timing", [], {"zh": (None, "图 1", 0, 40), "en": (None, "Figure 1", 0, 40)}),

@@ -82,8 +82,6 @@ A risk assessment modelled on broker suitability questionnaires (C1 conservative
 
 The interface is available in **Chinese and English**, with light and dark themes.
 
-**Classic interface**: the 2.x interface (workflow switcher and step bar at the top, with separate Strategy, Backtest and Optimize pages) can still be chosen under Settings → Interface; strategies, data and paper accounts are shared by both. It gets no new features and will be removed in a later release. Users who explicitly chose "Classic" in 2.x keep it after upgrading. Feedback is welcome in [Discussions](https://github.com/AllenPan-Git/SimpleQuant/discussions).
-
 ## Installation
 
 SimpleQuant runs on Windows 10 / 11 (64-bit), macOS 11 or later (Apple silicon) and Linux (x86_64). Download the file for your system from this repository's **Releases** page:
@@ -250,7 +248,7 @@ Price: close/open/high/low, N-day high/low; trend: MA, EMA, MACD, MA slope, BIAS
 
 ```
 main.py                    entry point (desktop window / --browser / --paper / --run-script)
-gui/                       UI (NiceGUI): app (routes), layout (sidebar; header and step bar of the classic interface), pages/, components, widgets, theme
+gui/                       UI (NiceGUI): app (routes), layout (sidebar), pages/, components, widgets, theme
 ui/                        framework-independent parts: texts (UI strings), charts, shared (page logic)
 simplequant/data/          data sources (akshare / baostock / tdx_local / csv), local library, cash-dividend prices
 simplequant/engine/        backtest runner, A-share cost model, strategy base (lots / T+1 / dividends), metrics, optimization, walk-forward, credibility checks
@@ -285,7 +283,7 @@ SimpleQuant is free and open source, and every feature is available to everyone.
 
 Since 3.1, the first time SimpleQuant opens, the home page asks whether to send anonymous usage statistics (checked by default; it takes effect only after clicking OK). It can be turned off at any time under Settings → Usage statistics & feedback, where "See what is sent" shows the exact content.
 
-- **Sent**: a randomly generated install ID (not linked to any personal information), version, system, interface language, new / classic interface; the number of days after installation at which data download, backtest, validation, paper trading etc. were first used; daily counts of page views and main buttons; the type and program location of errors (not the message)
+- **Sent**: a randomly generated install ID (not linked to any personal information), version, system, interface language and interface version; the number of days after installation at which data download, backtest, validation, paper trading etc. were first used; daily counts of page views and main buttons; the type and program location of errors (not the message)
 - **Never sent**: strategies, stock codes, capital, backtest results, file paths, API keys. The IP address is used only for server-side rate limiting and is not stored
 - **Frequency**: at most once a day; if the network is unavailable, it waits until next time without affecting anything
 - **Feedback**: the feedback box in Settings submits anonymously with the version and system; it is not linked to the install ID and collects no contact details

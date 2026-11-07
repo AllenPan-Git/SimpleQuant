@@ -24,11 +24,11 @@ PAPER, DARK_PAGE = "#F5F1EA", "#191714"
 DARK_CARD = "#211E1A"
 SANS_PLOT = "Segoe UI, Inter, Microsoft YaHei UI, PingFang SC, sans-serif"
 
-# 新版界面的侧栏：宽度、图标列宽度；窗口窄于 SIDE_MINI_BELOW 时折成图标列
+# 侧栏：宽度、图标列宽度；窗口窄于 SIDE_MINI_BELOW 时折成图标列
 SIDE_W, SIDE_MINI_W, SIDE_MINI_BELOW = 200, 64, 1100
 _MINI = "body.sq-new:not(.sq-side-open)"      # 窄窗口、没有手动展开时 = 图标列
 
-# 内容区变窄时的规则（报头的规则不在这里）：经典界面按窗口宽度（@media），新版界面按内容区宽度（@container），共用这三段
+# 内容区变窄时的规则：按内容区宽度（@container）；不支持容器查询的老内核退回按窗口宽度（@media），共用这三段
 _NARROW_1150 = """\
   .sq-main { padding-left: 20px !important; padding-right: 20px !important; }
   .sq-report { grid-template-columns: minmax(0, 1fr) !important; }
@@ -39,7 +39,7 @@ _NARROW_1150 = """\
   .sq-chip-row { flex-wrap: wrap; }
   /* 吸顶按钮换到设置区上方，整行铺底色（吸顶时免得和下面的表单叠在一起），表单不再被按钮列挤窄 */
   .sq-setup-sticky { flex-wrap: wrap; }
-  .sq-setup-sticky > .sq-setup-actions { order: -1; width: 100%; top: var(--sq-header-h, 64px); padding-bottom: 8px;
+  .sq-setup-sticky > .sq-setup-actions { order: -1; width: 100%; top: 0px; padding-bottom: 8px;
     background: var(--sq-page); }
   .sq-setup-btns { flex-direction: row; flex-wrap: wrap; }
 """
@@ -121,29 +121,8 @@ code, pre {{ font-family: var(--sq-mono); }}
 .sq-rule-top {{ border-top: 1px solid var(--sq-text); }}
 .sq-rule-bottom {{ border-bottom: 1px solid var(--sq-border); }}
 
-/* 顶栏：报头 + 步骤条 */
-.sq-header {{ background: var(--sq-page) !important; color: var(--sq-text) !important;
-  border-bottom: 1px solid var(--sq-text); }}
 .sq-logo {{ font-family: var(--sq-serif); font-weight: 600; font-size: 21px; letter-spacing: .01em; cursor: pointer; white-space: nowrap; }}
 .sq-logo span {{ color: var(--sq-red); }}
-.sq-mode {{ font-size: 13.5px; color: var(--sq-muted); cursor: pointer; white-space: nowrap; }}
-.sq-mode:hover {{ color: var(--sq-text); }}
-.sq-mode-on {{ color: var(--sq-text); text-decoration: underline; text-underline-offset: 6px;
-  text-decoration-color: var(--sq-red); }}
-.sq-step {{ display: flex; align-items: baseline; gap: 8px; padding: 2px 6px; cursor: pointer; color: var(--sq-muted); }}
-.sq-step .n {{ font: 400 20px/1 var(--sq-fig); color: var(--sq-faint); }}
-.sq-step .t {{ font-size: 14px; white-space: nowrap; line-height: 1.35; }}
-.sq-step small {{ display: block; font-size: 11.5px; color: var(--sq-faint); line-height: 1.3; max-width: 9em;
-  overflow: hidden; text-overflow: ellipsis; }}
-.sq-step:hover .t {{ color: var(--sq-text); }}
-.sq-step-done .n {{ color: var(--sq-text); }}
-.sq-step-done .t {{ color: var(--sq-text2); }}
-.sq-step-cur .n {{ color: var(--sq-red); }}
-.sq-step-cur .t > span {{ color: var(--sq-text); font-weight: 600; text-decoration: underline; text-underline-offset: 3px;
-  text-decoration-color: var(--sq-red); text-decoration-thickness: 2px; }}
-.sq-step .t small {{ margin-top: 3px; }}
-.sq-link {{ width: 26px; height: 1px; background: var(--sq-border); margin: 0 4px; }}
-.sq-link-done {{ background: var(--sq-text); }}
 .sq-top-link {{ font-size: 13px; color: var(--sq-muted); cursor: pointer; white-space: nowrap; }}
 .sq-top-link:hover, .sq-top-link.on {{ color: var(--sq-text); }}
 .sq-top-link.on {{ text-decoration: underline; text-underline-offset: 6px; text-decoration-color: var(--sq-red); }}
@@ -174,7 +153,7 @@ code, pre {{ font-family: var(--sq-mono); }}
 /* 第一格平时贴齐页面左边；铺了底色时、或每格都能点（工作台的策略进度，看起来是一排按钮）时，第一格与其余各格留同样的左边距 */
 .sq-pipe > .next:first-child, .sq-progress > div:first-child {{ padding-left: 14px; }}
 .sq-pipe .next .k {{ color: var(--sq-red); letter-spacing: .04em; }}
-/* 新版界面的策略进度（components.strategy_progress）：格子可点时悬停给下划线 */
+/* 策略进度（components.strategy_progress）：格子可点时悬停给下划线 */
 .sq-progress-link {{ cursor: pointer; }}
 .sq-progress-link:hover .v {{ text-decoration: underline; text-decoration-color: var(--sq-red); text-underline-offset: 4px; }}
 .sq-start {{ padding: 22px 24px 20px 0; min-width: 0; }}
@@ -235,8 +214,8 @@ code, pre {{ font-family: var(--sq-mono); }}
 .sq-chip-row-wrap {{ flex-wrap: wrap; }}
 .sq-setup-row {{ scroll-margin-top: 12px; }}
 
-/* 设置区右侧的操作按钮：设置展开、表单很长时吸在报头下面（报头高度由 HEAD_JS 写进 --sq-header-h，窄窗口会换行变高） */
-.sq-setup-actions {{ position: sticky; top: calc(var(--sq-header-h, 64px) + 12px); z-index: 5; flex-shrink: 0; }}
+/* 设置区右侧的操作按钮：设置展开、表单很长时吸在窗口上沿 */
+.sq-setup-actions {{ position: sticky; top: 12px; z-index: 5; flex-shrink: 0; }}
 /* 标签页里的吸顶：Quasar 的标签页容器 .q-panel-parent 是 overflow: hidden，每页外面的 .q-panel.scroll 是 overflow: auto，
    都会让吸顶失效。容器改 clip（同样裁掉切换动画，但不算滚动容器）；.q-panel 高度随内容，本来就不出滚动条，改 visible */
 .q-panel-parent:has(.sq-setup-actions) {{ overflow: clip; }}
@@ -259,13 +238,12 @@ code, pre {{ font-family: var(--sq-mono); }}
 .sq-vf-sub {{ font-size: 12px; color: var(--sq-muted); }}
 .sq-vf-sub.ok {{ color: var(--sq-down); }}
 
-/* 新版界面（body.sq-new）：左侧栏。守住研报风格：纸色底、细线分组、宋体标志，当前栏目浅红底 + 左侧红条（同 .sq-next-rec）。
+/* 左侧栏（样式写在 body.sq-new 下，两套界面并存时留下的类名）。守住研报风格：纸色底、细线分组、宋体标志，当前栏目浅红底 + 左侧红条（同 .sq-next-rec）。
    没有顶栏，吸顶元素的 top 取 0。
    窄窗口折成图标列不用 Quasar 抽屉的 mini 属性：它只能由 Python 设定，Python 不知道窗口多宽，要等浏览器回报，
    每次换页都会先宽后窄闪一下。改用 @media 盖掉抽屉和内容区的内联宽度（!important 优先于内联样式）；
    用户在窄窗口点「展开侧栏」后 body 加 sq-side-open，恢复原宽度，内容区跟着让开 */
-body.sq-new {{ --sq-header-h: 0px; }}
-/* 像报纸的目录：与正文同一张纸（不用深一档的底色），标志下一条墨线（同经典界面报头）；
+/* 像报纸的目录：与正文同一张纸（不用深一档的底色），标志下一条墨线；
    宽窗口不显示图标、栏目名用宋体；当前栏目墨色加粗 + 左侧朱红细条，不填色块；待执行笔数是朱红 Georgia 数字 */
 .sq-new .q-drawer {{ background: var(--sq-page); border-color: var(--sq-border) !important; }}
 .sq-new .sq-side {{ background: var(--sq-page); padding: 26px 18px 12px; overflow-x: hidden; align-items: stretch; }}
@@ -403,26 +381,16 @@ body.body--dark .q-btn.bg-primary, body.body--dark .q-btn.bg-primary .q-btn__con
 .js-plotly-plot .modebar-btn path {{ fill: var(--sq-faint) !important; }}
 
 /* ---------------- 窗口变窄 ---------------- */
-@media (max-width: 1320px) {{
-  .sq-step small {{ display: none; }}
-  .sq-link {{ width: 16px; }}
-}}
 @media (max-width: 1150px) {{
-  .sq-header {{ flex-wrap: wrap; row-gap: 4px; padding-left: 20px !important; padding-right: 20px !important; }}
-  .sq-top-right {{ margin-left: auto; }}
-  .sq-steps {{ order: 3; width: 100%; justify-content: center; padding-top: 6px; border-top: 1px solid var(--sq-border2); }}
-  .sq-step small {{ display: block; }}
 {_NARROW_1150}}}
 @media (max-width: 860px) {{
-  .sq-step small {{ display: none; }}
-  .sq-mode {{ font-size: 12.5px; }}
 {_NARROW_860}}}
 @media (max-width: 640px) {{
 {_NARROW_640}}}
 
-/* 新版界面：内容区 = 窗口减去侧栏，上面按窗口宽度的规则会该生效时没生效（不会误生效：内容区总比窗口窄），
+/* 内容区 = 窗口减去侧栏，上面按窗口宽度的规则会该生效时没生效（不会误生效：内容区总比窗口窄），
    所以把内容区设成查询容器，同样的规则再按内容区宽度来一遍。不支持容器查询的老内核（Safari 15 及以前）忽略这一段，
-   退回按窗口宽度，和加侧栏之前一样 */
+   只按窗口宽度 */
 .sq-new .q-page-container {{ container: sqpage / inline-size; }}
 @container sqpage (max-width: 1150px) {{
 {_NARROW_1150}  .sq-setup-sticky > .sq-setup-actions {{ padding-top: 10px; }}     /* 没有报头，吸顶时贴着窗口上沿，留一点白 */
@@ -433,28 +401,10 @@ body.body--dark .q-btn.bg-primary, body.body--dark .q-btn.bg-primary .q-btn__con
 {_NARROW_640}}}
 """
 
-# 报头高度写进 CSS 变量 --sq-header-h（吸顶元素用）。报头在窄窗口会换行变高，所以用 ResizeObserver 跟着改；
-# 报头由 Vue 挂载，脚本运行时可能还没有，先每 0.1 秒找一次
-HEAD_JS = """<script>
-(function () {
-  var seen = null;
-  function sync() {
-    var h = document.querySelector('.sq-header');
-    if (!h) return;
-    document.documentElement.style.setProperty('--sq-header-h', h.offsetHeight + 'px');
-    if (h !== seen && window.ResizeObserver) { seen = h; new ResizeObserver(sync).observe(h); }
-  }
-  var tries = 0, timer = setInterval(function () { sync(); if (seen || ++tries > 100) clearInterval(timer); }, 100);
-  window.addEventListener('resize', sync);
-})();
-</script>"""
-
-
 def install():
     """程序启动时调用一次：字体等静态文件 + 全局样式"""
     app.add_static_files("/static", STATIC)
     ui.add_css(CSS, shared=True)
-    ui.add_head_html(HEAD_JS, shared=True)
 
 
 def apply(dark: bool | None):

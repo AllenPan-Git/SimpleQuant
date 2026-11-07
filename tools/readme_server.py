@@ -154,7 +154,7 @@ def seed():
     app.storage.general["lang"] = LANG
     app.storage.general["dark"] = THEME == "dark"
     app.storage.general["recent"] = []
-    app.storage.general["ui"] = "new"
+    app.storage.general["ui"] = "new"           # 首页不显示「经典界面已移除」的提示（home.switched_to_new）
     history.add("sel", "沪深300 低估值 + 反转" if ZH else "CSI 300 value + reversal",
                 ("沪深300" if ZH else "CSI 300") + " · 2020-01-02 ~ 2026-09-28",
                 {"total_return": 0.216, "sharpe": 0.94}, data="沪深300" if ZH else "CSI 300", strategy="")

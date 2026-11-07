@@ -1,4 +1,4 @@
-"""第 4 页：参数优化（网格搜索 / 滚动优化）"""
+"""参数优化面板 optimize_panel（网格搜索 / 滚动优化），放在择时工作台的「验证」标签里"""
 
 import inspect
 from dataclasses import asdict
@@ -15,12 +15,10 @@ from simplequant.engine.optimize import (optimize, value_range, build_grid, spli
                                          apply_combo, yearly_ranks, TARGET_METRICS, MAX_COMBOS, default_workers)
 from simplequant.engine.walkforward import (walk_forward, make_windows, count_backtests, STITCH_MODES,
                                             MAX_BACKTESTS as WF_MAX)
-from gui import state, routes, history
+from gui import state, history
 from gui.common import t, lang
-from gui.components import (require_data, data_selector, strategy_selector, broker_settings, load_prices,
-                            prepare_prices, metric_tile, walkforward_results, dividend_notices,
+from gui.components import (load_prices, prepare_prices, metric_tile, walkforward_results, dividend_notices,
                             unadjusted_warning, fallback_warning, percentile_warnings, warm_start, credibility_box)
-from gui.layout import frame, page_title
 from gui.widgets import section, df_table, plot, notice, Progress
 from ui.charts import heatmap, param_curve
 from ui.shared import default_range, fmt_metric
@@ -28,21 +26,8 @@ from ui.shared import default_range, fmt_metric
 DENSE = "outlined dense options-dense"
 
 
-def page():
-    with frame("/optimize"):
-        page_title("/optimize", t("opt.intro"))
-        by_id = require_data()
-        if by_id is None:
-            return
-        panel = SimpleNamespace()        # 下面两个选择区块改动时通知优化面板（面板最后才建，回调晚绑定）
-        pick = data_selector(by_id, "opt", lambda: panel.update())
-        strat = strategy_selector("opt", lambda: panel.strategy_changed(), on_broker=lambda b: make_broker.load(b))
-        make_broker = broker_settings("opt", show_dividend=True, show_contribution=True)
-        panel = optimize_panel(by_id, pick, strat, make_broker)
-
-
 def opt_state() -> dict:
-    """参数优化的设置与结果（经典优化页与择时工作台的「验证」标签共用）"""
+    """参数优化的设置与结果（择时工作台的「验证」标签）"""
     return state.STATE.setdefault("opt", {"mode": "grid", "chosen": {}, "ranges": {}, "metric": TARGET_METRICS[0],
                                           "oos": 30, "workers": default_workers(), "train": 24, "test": 6,
                                           "window": "rolling", "stitch": next(iter(STITCH_MODES))})
@@ -51,9 +36,9 @@ def opt_state() -> dict:
 def optimize_panel(by_id: dict, pick, strat: dict, make_broker, fixed_mode: bool = False,
                    on_use_best=None) -> SimpleNamespace:
     """
-    参数优化面板（网格搜索 / 滚动优化）：数据、策略、资金由外面传入（经典优化页是自己的三个选择区块）。
+    参数优化面板（网格搜索 / 滚动优化）：数据、策略、资金由外面传入（择时工作台的设置区）。
     strat 里有 "errors" 时不能运行。fixed_mode：不显示「普通优化 / 滚动优化」切换（由外面调 set_mode 切换，择时工作台用）；
-    on_use_best(带名称的最优策略, {"spec", "n"})：替换「以最优参数回测」（默认去回测页）。
+    on_use_best(带名称的最优策略, {"spec", "n"})：「以最优参数回测」（工作台把最优参数放进编辑器并运行）。
     返回的对象：update()（数据或资金改了）、strategy_changed()（策略改了，参数区重画）、set_mode(模式)；
     可替换的回调 .on_done()（一次优化结束，成功与否都调用）
     """
@@ -465,11 +450,6 @@ def _grid_results(res: dict, on_use_best=None):
                                 {"spec": res["best_spec"], "n": res.get("tried", 0)})
                 if inspect.isawaitable(r):
                     await r
-                return
-            state.STATE["current_spec"] = {"name": (name.value or "").strip() or t("opt.tuned"), **res["best_spec"]}
-            state.STATE["tuned"] = {"spec": res["best_spec"], "n": res.get("tried", 0)}     # 回测页据此提示
-            state.STATE["bt_strategy"] = "__current__"
-            ui.navigate.to(routes.timing("backtest", spec=state.STATE["current_spec"]))
         ui.button(t("strat.save"), icon="save", on_click=save).props("outline no-caps")
         ui.button(t("opt.use_best"), icon="play_arrow", on_click=use_best).props("unelevated no-caps") \
             .mark("use_best")

@@ -18,8 +18,8 @@ from nicegui import app, ui  # noqa: E402
 from simplequant.data import library  # noqa: E402
 from gui import theme  # noqa: E402
 from gui.layout import PAGES  # noqa: E402
-from gui.pages import (home, data, strategy, backtest, optimize, selection, paper, settings, allocation, tools,  # noqa: E402
-                       timing, factors)
+from gui import routes  # noqa: E402
+from gui.pages import home, data, selection, paper, settings, allocation, tools, timing, factors  # noqa: E402
 
 ICON = Path(__file__).with_name("static") / "icon.png"
 
@@ -27,9 +27,6 @@ ICON = Path(__file__).with_name("static") / "icon.png"
 ROUTES = {
     "/": home.page,
     "/data": data.page,
-    "/strategy": strategy.page,
-    "/backtest": backtest.page,
-    "/optimize": optimize.page,
     "/timing": timing.page,
     "/selection": selection.page,
     "/factors": factors.page,
@@ -39,12 +36,23 @@ ROUTES = {
     "/tools": tools.page,
 }
 
+# 经典界面的旧路由（界面重构计划 4.8 移除）→ 择时工作台对应的地方：旧书签、浏览器历史还能打开
+OLD_ROUTES = {"/strategy": "strategy", "/backtest": "backtest", "/optimize": "verify"}
+
+
+def _old_route(step: str):
+    def page():
+        ui.navigate.to(routes.timing(step))
+    return page
+
 
 def register():
     """注册全部路由（显式调用而不用装饰器，界面测试重置 NiceGUI 后可以重新注册）"""
     theme.install()
     for route, _, _ in PAGES:
         ui.page(route)(ROUTES[route])
+    for route, step in OLD_ROUTES.items():
+        ui.page(route)(_old_route(step))
 
 
 def _start_update_check():

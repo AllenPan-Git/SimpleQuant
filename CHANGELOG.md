@@ -10,10 +10,12 @@ Changes in each release. `tools/release.py` copies the matching section into the
 ### 更新内容
 - 新增：模拟盘更新进度条。显示第几个账户、当前步骤（如「下载日线 · 120 / 332」）、百分比与用时，运行日志收进折叠区；更新期间切换到其他页面不会中断也不会丢失进度，侧栏「模拟盘」旁显示百分比和一条细进度线，回到模拟盘页仍可看到进度，更新结束时在当前页面提示结果；更新期间「更新」按钮变灰，避免重复启动
 - 改进：数据下载等处的进度条统一为朱红（之前被默认样式盖成墨色）
+- 移除：经典界面（顶部流程切换与步骤条，策略、回测、参数优化各占一页），设置页的「界面」选项一并去掉。3.x 中仍在使用经典界面的用户升级后自动换到侧栏界面，首页提示一次；策略、数据与模拟账户不受影响。旧的策略、回测、参数优化页地址会转到「择时策略」工作台
 
 ### Changes
 - New: a progress bar for paper-account updates, showing the current account, step (e.g. "Downloading daily bars · 120 / 332"), percentage and elapsed time, with the run log in a collapsible section. Switching pages during an update no longer loses the progress: the sidebar shows a percentage and a thin progress line next to Paper trading, the paper trading page still shows the progress when you return, and the result is announced on whichever page is open when the update finishes. The update buttons are disabled while an update is running to avoid starting it twice
 - Improved: progress bars for data downloads and elsewhere are now vermilion, as intended (the default style had turned them ink-black)
+- Removed: the classic interface (workflow switcher and step bar at the top, with separate Strategy, Backtest and Optimize pages), along with the Interface option in Settings. Anyone still using it in 3.x is moved to the sidebar interface on upgrade, with a one-time note on the home page; strategies, data and paper accounts are unaffected. The old Strategy, Backtest and Optimize page addresses now open the Timing workbench
 
 ## 3.1.0（2026-11-06）
 

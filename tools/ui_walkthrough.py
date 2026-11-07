@@ -1,8 +1,7 @@
 """
 打包版的界面自动测试（由 gui/uitest.py 在真正的桌面窗口里运行；tools/smoke_test.py --ui 调用）
-按 docs/mac-test.md 的清单走一遍：首页、语言与主题、下载数据、择时工作台回测、原生图、经典界面的策略 → 回测、
-设置页检查更新、定时任务创建与删除、模拟账户。3.0 起默认是新版界面（临时数据目录里没选过界面），主线走新版；
-经典界面删除前另走一步经典的策略页 → 回测页。每步截图。依赖网络的步骤失败只记 WARN（GitHub 的机器在国外，国内数据源未必连得上），
+按 docs/mac-test.md 的清单走一遍：首页、语言与主题、下载数据、择时工作台回测、原生图、
+设置页检查更新、定时任务创建与删除、模拟账户。每步截图。依赖网络的步骤失败只记 WARN（GitHub 的机器在国外，国内数据源未必连得上），
 此时用随机生成的行情继续后面的步骤。
 """
 
@@ -14,10 +13,8 @@ import sys
 import numpy as np
 import pandas as pd
 
-from nicegui import app
-
 from gui import state
-from gui.common import set_dark, set_lang, set_ui, ui_choice
+from gui.common import set_dark, set_lang
 from simplequant.data import library
 from simplequant.paper import list_accounts, schedule
 
@@ -93,7 +90,6 @@ async def main(d):
 
     if await d.step("择时工作台回测", workbench):
         await d.step("Backtrader 原生图（检查中文）", native_chart)
-    await d.step("经典界面：策略页 → 回测", lambda: classic_backtest(d))
 
     async def settings():
         from simplequant.update.client import UPDATER
@@ -148,42 +144,6 @@ async def main(d):
     if downloaded:          # 模拟账户每天会重新下载行情；没联网时跳过
         await d.step("新建模拟账户（需联网）", account, required=False)
 
-
-
-async def classic_backtest(d):
-    """经典界面（4.8 删除经典界面时去掉这一步）：设置页切到经典 → 策略页「使用此策略回测」→ 回测页运行。
-    做完恢复原来的界面设置（没选过的仍是没选过），后面的步骤照旧走默认的新版"""
-    prev = ui_choice()
-    try:
-        await d.goto("/settings")
-        old = {c.id for c in type(d.client).instances.values()}
-        with d.client:          # 与用户点选相同：写入设置并重新载入页面
-            d.one(marker="set_ui").set_value("classic")
-        await d.wait_client("/settings", exclude=old)
-        d.one(marker="flow:timing")             # 经典报头
-        s = state.strategy()
-        s["mode"], s["tpl_key"] = "template", "sma_cross"
-        await d.goto("/strategy")
-        await d.shot("strategy-classic")
-        old = {c.id for c in type(d.client).instances.values()}
-        await d.click(content="使用此策略回测")
-        await d.wait_client("/backtest", exclude=old)
-        d.one(marker="bt_strategy").set_value("tpl:sma_cross")
-        await asyncio.sleep(1)
-        first = state.STATE.get("bt", {}).get("result")
-        await d.click(marker="run")
-        def new_result():       # 按对象身份比（结果是 dataclass，== 会去比里面的 DataFrame）
-            r = state.STATE.get("bt", {}).get("result")
-            return r is not None and r is not first
-        await d.until(new_result, timeout=120, what="classic backtest")
-        await d.see("总收益率")
-        await d.shot("backtest-classic")
-        return f"{len(state.STATE['bt']['result'].orders)} orders"
-    finally:
-        if prev:
-            set_ui(prev)
-        else:
-            app.storage.general.pop("ui", None)
 
 
 async def _fake():

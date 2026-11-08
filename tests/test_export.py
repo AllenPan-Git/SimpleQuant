@@ -118,7 +118,8 @@ def test_script_header_and_selection_script():
     assert "run_selection" in sel and "'universe': 'hs300'" in sel
 
 
-@pytest.mark.parametrize("name", ["streak", "cooldown", "scale_gain", "scale_drop", "scale_signal"])
+@pytest.mark.parametrize("name", ["streak", "cooldown", "scale_gain", "scale_drop", "scale_signal",
+                                  "trailing", "max_hold", "min_hold"])
 def test_rule_features_export_identically(name):
     """连续 N 根 K 线、冷却期、分批建仓：导出的 Python 脚本与回测逐笔相同"""
     from test_platform_export import FEATURE_RULES

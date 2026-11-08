@@ -328,6 +328,7 @@ class _Orders(object):
 
 
 # ============================== 策略 ==============================
+POSITION_INDS = ("pnl_pct", "dd_from_high", "hold_days")      # 依赖持仓的指标（不是行情指标线）
 _CMP = {">": lambda a, b: a > b, "<": lambda a, b: a < b, ">=": lambda a, b: a >= b, "<=": lambda a, b: a <= b}
 
 
@@ -360,7 +361,7 @@ def _rule_warmup(rule, lines_by_name):
             for c in (rule.get(side) or {}).get("conditions", []):
                 mps, line_mps = [], []
                 for s in (c["left"], c["right"]):
-                    if s.get("ind") == "pnl_pct":
+                    if s.get("ind") in POSITION_INDS:
                         continue
                     arr, mp = _operand_line(lines, s, n)
                     mps.append(mp)
@@ -385,6 +386,8 @@ def _check(cond, lines, book_pos, close):
         if spec["ind"] == "pnl_pct":
             shares, cost = int(book_pos.get("shares", 0)), float(book_pos.get("cost", 0) or 0)
             return (close[-1] / cost - 1) * 100 if shares > 0 and cost > 0 else NAN
+        if spec["ind"] in ("dd_from_high", "hold_days"):      # _run_rule 按建仓那根 K 线算好放进 book_pos
+            return float(book_pos.get(spec["ind"], NAN))
         return float(lines.get(spec)[0][-1 - k])
 
     def at(k):
@@ -414,10 +417,18 @@ def _run_rule(spec, hist, o):
     # 与 RuleStrategy.next 一致：分批建仓首次买 1 份，加仓、冷却都按发出委托时的 K 线序号计（存在 state 里）
     scale, cooldown = rule.get("scale"), int(rule.get("cooldown", 0))
     parts = scale["adds"] + 1 if scale else 1
-    sold_at, adds, ref = (o.state.setdefault(k, {}) for k in ("sold_at", "adds", "ref"))
+    sold_at, adds, ref, entry = (o.state.setdefault(k, {}) for k in ("sold_at", "adds", "ref", "entry"))
     for n in names:
         pos = o.book["pos"].get(n) or {}
         close = hist[n]["close"]
+        # 与 BaseStrategy.hold_days / drawdown_from_high 一致：第一次看到持仓时，最新这根 K 线就是开盘成交的那根
+        if o.shares(n) > 0:
+            e = entry.setdefault(n, o.bars(n))
+            peak = float(np.max(close[e - 1:]))
+            pos = dict(pos, hold_days=float(o.bars(n) - e + 1),
+                       dd_from_high=(1 - close[-1] / peak) * 100 if peak > 0 else NAN)
+        else:
+            entry.pop(n, None)
         if o.shares(n) <= 0:
             if cooldown and n in sold_at and o.bars(n) - sold_at[n] <= cooldown:
                 continue

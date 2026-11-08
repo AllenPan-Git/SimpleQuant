@@ -137,6 +137,10 @@ class RuleStrategy(_PerAsset):
                 pos = self.getposition(d)
                 return (d.close[0] / pos.price - 1) * 100 if pos.size > 0 and pos.price > 0 else math.nan
             return pnl
+        if spec["ind"] == "dd_from_high":
+            return lambda k=0: self.drawdown_from_high(d)
+        if spec["ind"] == "hold_days":
+            return lambda k=0: self.hold_days(d)
         line = self._line(d, spec)
         return lambda k=0: line[-k]
 
@@ -179,7 +183,7 @@ class RuleStrategy(_PerAsset):
             for c in (self.rule.get(side) or {}).get("conditions", []):
                 for pos, other in (("left", "right"), ("right", "left")):
                     s = c[pos]
-                    if "value" in s or s["ind"] in ("pnl_pct", "close", "open", "high", "low", "volume"):
+                    if "value" in s or s["ind"] in ("close", "open", "high", "low", "volume")                             or INDICATORS.get(s["ind"], {}).get("position"):
                         continue
                     base = {k: v for k, v in s.items() if k != "line"}
                     g = groups.setdefault(json.dumps(base, sort_keys=True), {

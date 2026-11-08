@@ -49,6 +49,7 @@ class BaseStrategy(bt.Strategy):
         self.contributed = 0.0     # 累计追加的资金
         self.new_cash = 0.0        # 当天到账的追加资金（没有为 0）
         self._cash_day = None      # 闲置现金利息算到哪一天
+        self._entry = {}           # data -> [建仓成交那根的 len(d), 最高收盘价算到的 len(d), 建仓以来最高收盘价]
         self.cash_interest = 0.0   # 闲置现金累计利息
 
     # ---------- 工具 ----------
@@ -64,6 +65,23 @@ class BaseStrategy(bt.Strategy):
     def has_pending(self, data) -> bool:
         return data in self._pending
 
+    def hold_days(self, data) -> float:
+        """本轮持仓已持有几根 K 线（建仓成交那根算第 1 根，加仓不重新计）；空仓时为 NaN"""
+        e = self._entry.get(data)
+        if e is None or self.getposition(data).size <= 0:
+            return float("nan")
+        return float(len(data) - e[0] + 1)
+
+    def drawdown_from_high(self, data) -> float:
+        """当前收盘价比本轮建仓以来（含成交那根）的最高收盘价低了多少（%，≥ 0）；空仓时为 NaN"""
+        e = self._entry.get(data)
+        if e is None or self.getposition(data).size <= 0:
+            return float("nan")
+        n = len(data)
+        for k in range(e[1] + 1, n + 1):          # 只补上次之后的新 K 线
+            e[2] = max(e[2], data.close[k - n])
+        e[1] = n
+        return (1 - data.close[0] / e[2]) * 100 if e[2] > 0 else float("nan")
 
     @staticmethod
     def real_factor(data) -> float:
@@ -284,8 +302,14 @@ class BaseStrategy(bt.Strategy):
             if order.isbuy():
                 self._buy_date[order.data] = order.data.datetime.date(0)
                 self._hold_since.setdefault(order.data, order.data.datetime.date(0))
-            elif self._div:
-                self._dividend_tax(order)
+                if order.data not in self._entry:
+                    n = len(order.data)
+                    self._entry[order.data] = [n, n - 1, float("-inf")]
+            else:
+                if self.getposition(order.data).size <= 0:
+                    self._entry.pop(order.data, None)
+                if self._div:
+                    self._dividend_tax(order)
             size = abs(order.executed.size)
             self.order_records.append(dict(zip(ORDER_COLUMNS, (
                 dt, order.data._name, "buy" if order.isbuy() else "sell", size,

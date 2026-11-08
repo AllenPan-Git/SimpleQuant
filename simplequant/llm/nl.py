@@ -96,7 +96,7 @@ Each condition is: left operand, op, right operand.
 - operand kind "indicator": set ind (from the catalog), line (only for multi-line indicators, else ""), params as [{{"name","value"}}] using only that indicator's parameter names (omit a parameter to use its default); set value to 0.
 - operand kind "value": a plain number in value; set ind to "close", line "", params [].
 - The left operand must be an indicator.
-- days: how many bars in a row (including the current one) a >, <, >=, <= condition must hold; 1 = just the current bar. "N days in a row / 连续N天" → days N. Must be 1 for cross_above / cross_below and for pnl_pct.
+- days: how many bars in a row (including the current one) a >, <, >=, <= condition must hold; 1 = just the current bar. "N days in a row / 连续N天" → days N. Must be 1 for cross_above / cross_below and for the position indicators pnl_pct, dd_from_high, hold_days.
 
 Pacing (rule-level):
 - cooldown: after a sell, no new buy for this many bars ("wait N days after selling / 卖出后N天内不买"); 0 = none.
@@ -107,6 +107,8 @@ Indicator catalog (key: English / Chinese name; params with defaults):
 
 Translation conventions:
 - Stop loss of X% → sell condition pnl_pct < -X. Take profit of X% → sell condition pnl_pct > X. Both usually go in a sell block with logic "any".
+- Trailing stop / 移动止盈 / 跟踪止损 / "sell when it falls X% from the high since buying / 从最高点回落X%卖出" → sell condition dd_from_high > X.
+- "Hold at most N days / 持有N天后卖出 / 超时平仓" → sell condition hold_days >= N. A minimum holding period ("hold at least N days before selling / 至少持有N天") only works with sell logic "all": add hold_days >= N to the other sell conditions.
 - MACD golden cross → macd line dif cross_above macd line dea. KDJ golden cross → kdj k cross_above kdj d.
 - "N-day high breakout / 突破N日新高" → close > highest(period=N). "above the N-day moving average / 站上N日线" → close > sma(period=N) (use cross_above if they say "crosses").
 - "volume surge / 放量" without a number → vol_ratio > 2. Days means bars on daily data.
@@ -151,7 +153,8 @@ def to_rule(out: dict) -> dict:
     for side in ("buy", "sell"):
         for c, raw in zip(rule[side]["conditions"], (out.get(side) or {}).get("conditions") or []):
             days = _int(raw.get("days"), 1, MAX_DAYS)
-            if days > 1 and c["op"] not in CROSS_OPS and "pnl_pct" not in (c["left"].get("ind"), c["right"].get("ind")):
+            position = any(INDICATORS.get(s.get("ind"), {}).get("position") for s in (c["left"], c["right"]))
+            if days > 1 and c["op"] not in CROSS_OPS and not position:
                 c["days"] = days
     pct = out.get("position_pct", 95)
     rule["position_pct"] = float(pct) if isinstance(pct, (int, float)) and 0 < pct <= 100 else 95.0

@@ -140,6 +140,17 @@ INDICATORS = {
     # ---- 持仓 ----
     "pnl_pct": {"label": L("持仓收益率(%)", "Position P&L (%)"), "group": "position", "params": [], "position": True,
                 "desc": L("用于止损/止盈，例如 < -8", "for stop loss / take profit, e.g. < -8")},
+    "dd_from_high": {"label": L("持仓最高点回撤(%)", "Drawdown from position high (%)"), "group": "position",
+                     "params": [], "position": True,
+                     "desc": L("当前收盘价比建仓以来最高收盘价低了多少，≥ 0；用于移动止盈 / 跟踪止损，例如 > 10",
+                               "how far the close is below the highest close since entry, ≥ 0; for a trailing stop, "
+                               "e.g. > 10")},
+    "hold_days": {"label": L("持仓天数", "Days held"), "group": "position", "params": [], "position": True,
+                  "desc": L("建仓以来的 K 线根数（成交当天算第 1 天，加仓不重新计）；超时平仓如 >= 20，"
+                            "最短持有期可与其他卖出条件「全部满足」组合，如 >= 5",
+                            "bars since entry (the fill bar is day 1; adding does not reset it); exit after a time "
+                            "limit, e.g. >= 20, or combine with other sell conditions (all) for a minimum holding "
+                            "period, e.g. >= 5")},
 }
 
 

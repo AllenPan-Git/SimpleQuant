@@ -8,12 +8,14 @@ Changes in each release. `tools/release.py` copies the matching section into the
 ## 未发布
 
 ### 更新内容
+- 新增：择时规则的两个持仓条件。「持仓最高点回撤（%）」为当前收盘价比建仓以来最高收盘价低了多少，用于移动止盈 / 跟踪止损（如「> 10」）；「持仓天数」为建仓以来的 K 线根数（成交当天算第 1 天，加仓不重新计），可用于超时平仓（如「>= 20」），或与其他卖出条件「全部满足」组合为最短持有期。导出的 Python 脚本与聚宽 / 掘金 / QMT 策略逐笔一致；AI 写策略可识别「移动止盈」「持有 N 天后卖出」等说法
 - 新增：「资金与交易成本」中的「闲置现金年化（%）」，默认 0。择时、多因子选股与模拟账户中未买入证券的现金按此收益率计息（按自然日复利，每个交易日开盘前计入），相当于空仓时放在货币基金或国债逆回购里；利息计入收益、不计入投入，结果页显示累计利息。估值定投的储备仍按模板自身的收益率计息，不重复计算。导出的 Python 脚本同样计息；导出到聚宽 / 掘金 / QMT 时不计（以平台账户为准）
 - 新增：模拟盘更新进度条。显示第几个账户、当前步骤（如「下载日线 · 120 / 332」）、百分比与用时，运行日志收进折叠区；更新期间切换到其他页面不会中断也不会丢失进度，侧栏「模拟盘」旁显示百分比和一条细进度线，回到模拟盘页仍可看到进度，更新结束时在当前页面提示结果；更新期间「更新」按钮变灰，避免重复启动
 - 改进：数据下载等处的进度条统一为朱红（之前被默认样式盖成墨色）
 - 移除：经典界面（顶部流程切换与步骤条，策略、回测、参数优化各占一页），设置页的「界面」选项一并去掉。3.x 中仍在使用经典界面的用户升级后自动换到侧栏界面，首页提示一次；策略、数据与模拟账户不受影响。旧的策略、回测、参数优化页地址会转到「择时策略」工作台
 
 ### Changes
+- New: two position conditions for timing rules. "Drawdown from position high (%)" is how far the close is below the highest close since entry, for trailing stops (e.g. "> 10"); "Days held" counts bars since entry (the fill day is day 1; adding to the position does not reset it), for a time-based exit (e.g. ">= 20") or, combined with other sell conditions under "all", a minimum holding period. Exported Python scripts and JoinQuant / MyQuant / QMT strategies match trade for trade, and AI strategy writing understands phrases such as "trailing stop" and "sell after N days"
 - New: "Idle cash yield (%/yr)" under Capital & trading costs, 0 by default. In timing, multi-factor selection and paper accounts, cash not invested in securities earns this yield (compounded by calendar day and credited before each open), as if parked in a money-market fund or reverse repo. Interest counts as return, not as invested capital, and the results show the total. The value-DCA reserve keeps its own rate and is not counted twice. Exported Python scripts accrue it too; exports to JoinQuant / MyQuant / QMT do not (the platform account decides)
 - New: a progress bar for paper-account updates, showing the current account, step (e.g. "Downloading daily bars · 120 / 332"), percentage and elapsed time, with the run log in a collapsible section. Switching pages during an update no longer loses the progress: the sidebar shows a percentage and a thin progress line next to Paper trading, the paper trading page still shows the progress when you return, and the result is announced on whichever page is open when the update finishes. The update buttons are disabled while an update is running to avoid starting it twice
 - Improved: progress bars for data downloads and elsewhere are now vermilion, as intended (the default style had turned them ink-black)

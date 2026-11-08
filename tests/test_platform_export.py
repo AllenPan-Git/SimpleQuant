@@ -430,6 +430,15 @@ FEATURE_RULES = {
     "scale_gain": _with(STREAK_RULE, scale={"adds": 2, "when": "gain", "pct": 2}),
     "scale_drop": _with(STREAK_RULE, scale={"adds": 3, "when": "drop", "pct": 1.5}, cooldown=3),
     "scale_signal": _with(STREAK_RULE, scale={"adds": 1, "when": "signal"}),
+    # 待办 51：移动止盈（持仓最高点回撤）、超时平仓、最短持有期（与其他卖出条件「全部满足」）；加仓不重新计
+    "trailing": _with(STREAK_RULE, sell={"logic": "any", "conditions": [
+        {"left": {"ind": "dd_from_high"}, "op": ">", "right": {"value": 4}}]}),
+    "max_hold": _with(STREAK_RULE, sell={"logic": "any", "conditions": [
+        {"left": {"ind": "hold_days"}, "op": ">=", "right": {"value": 15}}]},
+        scale={"adds": 2, "when": "gain", "pct": 2}),
+    "min_hold": _with(STREAK_RULE, sell={"logic": "all", "conditions": [
+        {"left": make_ind("close"), "op": "<", "right": make_ind("sma", period=20)},
+        {"left": {"ind": "hold_days"}, "op": ">=", "right": {"value": 10}}]}),
 }
 
 
@@ -451,7 +460,7 @@ def test_rule_features_change_orders():
     one_day = {**STREAK_RULE, "buy": {"logic": "all", "conditions": [
         {**c, "days": 1} for c in STREAK_RULE["buy"]["conditions"]]}}
     assert len(orders(one_day)) != len(base)
-    for name in ("cooldown", "scale_gain", "scale_drop", "scale_signal"):
+    for name in ("cooldown", "scale_gain", "scale_drop", "scale_signal", "trailing", "max_hold", "min_hold"):
         got = orders(FEATURE_RULES[name])
         assert len(got) and not got[["time", "side", "size"]].equals(base[["time", "side", "size"]]), name
     adds = orders(FEATURE_RULES["scale_gain"])

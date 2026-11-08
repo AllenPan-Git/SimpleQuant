@@ -120,6 +120,10 @@ def rule_strategy_code(rule: dict, lang: str = "zh") -> str:
             return repr(float(spec["value"])), None
         if spec["ind"] == "pnl_pct":
             return "self.pnl_pct(d)", None
+        if spec["ind"] == "dd_from_high":          # 两者都在嵌入的 BaseStrategy 里
+            return "self.drawdown_from_high(d)", None
+        if spec["ind"] == "hold_days":
+            return "self.hold_days(d)", None
         name, expr = _line_expr(spec)
         if name not in names:
             names[name] = expr

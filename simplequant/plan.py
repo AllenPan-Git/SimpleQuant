@@ -34,6 +34,8 @@ SEL_DCA_VERSION = 10            # 选股设了每期追加资金：1.7.0 及以�
 DRAWDOWN_STOP_VERSION = 11      # 选股设了回撤停手：2.0.0 及以前的版本会提示「请先更新软件」
 BUFFER_FILTER_VERSION = 12      # 选股设了调仓缓冲区或最高股价 / 市值排名条件：2.1.0 及以前的版本会提示「请先更新软件」
 CASH_YIELD_VERSION = 13         # 设了闲置现金年化收益率：3.1.0 及以前的版本会提示「请先更新软件」
+HOLD_RULE_VERSION = 13          # 规则用了持仓最高点回撤 / 持仓天数：3.1.0 及以前的版本会提示「请先更新软件」
+HOLD_RULE_INDS = ("dd_from_high", "hold_days")
 SUFFIX = ".sqplan"
 DOWNLOADABLE = ("akshare", "baostock")          # 导入时可以自动下载的数据源
 RESULT_KEYS = ("total_return", "benchmark_return", "max_drawdown", "trades")
@@ -55,6 +57,13 @@ def uses_pacing(spec: dict) -> bool:
         c.get("days", 1) > 1 for side in ("buy", "sell") for c in (rule.get(side) or {}).get("conditions") or []))
 
 
+def uses_hold_rule(spec: dict) -> bool:
+    """规则是否用了持仓最高点回撤 / 持仓天数（旧版软件不认识这两个指标，导入时会报错）"""
+    rule = (spec.get("rule") or {}) if spec.get("kind") == "rule" else {}
+    return any(s.get("ind") in HOLD_RULE_INDS for side in ("buy", "sell")
+               for c in (rule.get(side) or {}).get("conditions") or [] for s in (c.get("left") or {}, c.get("right") or {}))
+
+
 def uses_dca(spec: dict, broker: BrokerConfig) -> bool:
     """旧版软件不认识追加资金（会丢掉这项按一次性投入回测）和定投模板"""
     return bool(broker.contribution) or spec.get("template") in ("dca", "value_dca")
@@ -64,6 +73,8 @@ def timing_version(spec: dict, broker: BrokerConfig) -> int:
     """择时方案的版本号：用到新功能就写更高的，旧版软件会提示「请先更新软件」而不是悄悄算出不同的结果"""
     if broker.cash_yield:
         return CASH_YIELD_VERSION
+    if uses_hold_rule(spec):
+        return HOLD_RULE_VERSION
     if uses_dca(spec, broker):
         return DCA_VERSION
     return PACING_VERSION if uses_pacing(spec) else TIMING_VERSION

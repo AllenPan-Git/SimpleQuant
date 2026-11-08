@@ -7,6 +7,8 @@
 - 现金分红模式（行情带 div_* 列，见 data/cash_dividend.py）：除息日开盘前缩减持仓、现金到账，卖出时扣红利税
 - 定投（contributions，见 runner.contribution_flows）：到账日开盘前追加现金，当天收盘起可用；
   new_cash 是当天到账的金额，策略据此决定买多少（如 order_value）
+- 闲置现金计息（cash_yield，年化小数）：每天开盘前按上一收盘的现金、隔了几个自然日复利计息（相当于放在货币基金里），
+  从 trade_start 起算；利息算收益、不算投入
 
 记录用语言无关的键；日志存成 (时间, 文本键, 参数)，由界面按当前语言翻译（见 simplequant/i18n.py）。
 下单理由 reason 同样是 (文本键, 参数) 元组。
@@ -27,6 +29,7 @@ class BaseStrategy(bt.Strategy):
         ("trade_start", None),   # 这天之前只计算指标、不下单（模拟盘/回测的预热期）
         ("dividends", None),     # 现金分红模式：{标的名: {日期: (持仓保留比例, 每股现金, 每股应税所得)}}
         ("contributions", None), # 定投：{日期: 追加金额}
+        ("cash_yield", 0.0),     # 闲置现金年化收益率（小数，0.02 = 2%；0 = 不计息）
     )
 
     def __init__(self):
@@ -45,6 +48,8 @@ class BaseStrategy(bt.Strategy):
         self._flows = dict(self.p.contributions or {})
         self.contributed = 0.0     # 累计追加的资金
         self.new_cash = 0.0        # 当天到账的追加资金（没有为 0）
+        self._cash_day = None      # 闲置现金利息算到哪一天
+        self.cash_interest = 0.0   # 闲置现金累计利息
 
     # ---------- 工具 ----------
     def log(self, key: str, data=None, **kw):
@@ -58,6 +63,7 @@ class BaseStrategy(bt.Strategy):
 
     def has_pending(self, data) -> bool:
         return data in self._pending
+
 
     @staticmethod
     def real_factor(data) -> float:
@@ -161,14 +167,41 @@ class BaseStrategy(bt.Strategy):
             self._pending[data] = order
         return order
 
-    # ---------- 定投、现金分红（开盘前） ----------
+    # ---------- 定投、现金分红、闲置现金计息（开盘前） ----------
     def prenext_open(self):
+        self._accrue_cash()
         self._contribute()
         self._pay_dividends()
 
     def next_open(self):
+        self._accrue_cash()
         self._contribute()
         self._pay_dividends()
+
+    def idle_cash(self) -> float:
+        """计息的现金；子类可扣掉另有收益率的部分（如估值定投的储备）"""
+        return self.broker.getcash()
+
+    def _accrue_cash(self):
+        """
+        开盘前给上一收盘时的现金计上次以来（自然日）的利息。和定投一样用 add_cash，这根 K 线撮合完才计入，
+        不影响今天开盘的撮合；分钟线只在每天第一根计
+        """
+        if not self.p.cash_yield:
+            return
+        day = max((d.datetime.date(0) for d in self.datas if len(d)), default=None)
+        if day is None or (self.p.trade_start is not None and day < self.p.trade_start):
+            return                 # 预热期不计息：资产曲线从 trade_start 起算，起点要等于初始资金
+        last = self._cash_day
+        if last is not None and day <= last:
+            return
+        self._cash_day = day
+        if last is None:
+            return
+        amount = max(self.idle_cash(), 0.0) * ((1 + self.p.cash_yield) ** ((day - last).days / 365) - 1)
+        if amount > 0:
+            self.broker.add_cash(amount)
+            self.cash_interest += amount
 
     def _contribute(self):
         """到账日开盘前追加现金（Backtrader 在这根 K 线撮合完才计入，收盘时策略可用）；分钟线只在当天第一根"""

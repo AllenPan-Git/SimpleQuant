@@ -134,7 +134,8 @@ def setup_bar(by_id: dict, BT: dict, strategy_part, sticky: bool = False, open_:
              + (" · " + t("bt.chip_contribution", v=f"{b['contribution']:,.0f}",
                           freq=t("bt.contrib_weekly") if b.get("contribution_freq") == "weekly"
                           else t("bt.contrib_monthly"))
-                if b.get("contribution") else "")),
+                if b.get("contribution") else "")
+             + (" · " + t("bt.chip_cash_yield", v=f"{b['cash_yield']:g}") if b.get("cash_yield") else "")),
         ]
         return items
 
@@ -533,11 +534,16 @@ def _results(BT: dict, exp_menu, to_verify):
                 ui.label(src).classes("sq-muted text-xs").mark("bt_sources")
             ui.html(lede(res)).classes("sq-lede my-5")
             metric_tiles(res.metrics)
-            if "dividend_cash" in res.metrics:
+            if "dividend_cash" in res.metrics or "cash_interest" in res.metrics:
                 with ui.row().classes("w-full gap-3 pt-4"):
-                    metric_tile(t("m.dividend_cash"), f"{res.metrics['dividend_cash']:,.0f}", help_text=t("bt.dividend_help"))
-                    metric_tile(t("m.dividend_tax"), f"{res.metrics['dividend_tax']:,.0f}",
-                                help_text=t("sp.dividend_tax_help"))
+                    if "dividend_cash" in res.metrics:
+                        metric_tile(t("m.dividend_cash"), f"{res.metrics['dividend_cash']:,.0f}",
+                                    help_text=t("bt.dividend_help"))
+                        metric_tile(t("m.dividend_tax"), f"{res.metrics['dividend_tax']:,.0f}",
+                                    help_text=t("sp.dividend_tax_help"))
+                    if "cash_interest" in res.metrics:
+                        metric_tile(t("m.cash_interest"), f"{res.metrics['cash_interest']:,.0f}",
+                                    help_text=t("bt.cash_yield_help"))
             if any(BT.get("div_notes", ({}, {}))):
                 with ui.column().classes("w-full pt-4 gap-2"):
                     dividend_notices(*BT["div_notes"])

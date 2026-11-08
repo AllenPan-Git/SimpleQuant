@@ -248,6 +248,10 @@ class ValueDca(Dca):
                 self.interest += amount
         self._accrued = day
 
+    def idle_cash(self):
+        """储备按自己的 reserve_rate 计息，闲置现金计息不再重复算它"""
+        return self.broker.getcash() - self.reserve
+
     def multiplier(self, d):
         v = self.pct[d][0]
         if v != v:

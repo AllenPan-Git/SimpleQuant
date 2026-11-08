@@ -789,6 +789,8 @@ def _chip_items(SP, kind: str, lg: str) -> list[tuple[str, str, str]]:
         money += " · " + t("bt.chip_contribution", v=f"{b['contribution']:,.0f}",
                            freq=t("bt.contrib_weekly") if b.get("contribution_freq") == "weekly"
                            else t("bt.contrib_monthly"))
+    if b.get("cash_yield"):
+        money += " · " + t("bt.chip_cash_yield", v=f"{b['cash_yield']:g}")
     return [("factors", t("sp.chip_factors"), factors or "—"), ("hold", t("sp.chip_hold"), hold),
             ("reb", t("sp.chip_reb"), reb), ("cond", t("sp.chip_cond"), cond),
             ("broker", t("bt.chip_broker"), money)]
@@ -869,6 +871,8 @@ def _selection_results(SP, ctx, top=None):
         if "dividend_cash" in res.metrics:
             metric_tile(t("m.dividend_cash"), f"{res.metrics['dividend_cash']:,.0f}", help_text=t("sp.dividend_help"))
             metric_tile(t("m.dividend_tax"), f"{res.metrics['dividend_tax']:,.0f}", help_text=t("sp.dividend_tax_help"))
+        if "cash_interest" in res.metrics:
+            metric_tile(t("m.cash_interest"), f"{res.metrics['cash_interest']:,.0f}", help_text=t("bt.cash_yield_help"))
     if res.div_missing:
         shown = "、".join(f"{res.names.get(c, c)}({c.split('.')[-1]})" for c in res.div_missing[:10])
         notice(t("sp.div_missing", n=len(res.div_missing), codes=shown + ("…" if len(res.div_missing) > 10 else "")),

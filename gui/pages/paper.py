@@ -342,6 +342,7 @@ def _account_view(PP, run_accounts, redraw):
     ui.label(t("pp.meta", start=acc.start, created=acc.created, last_run=acc.last_run or "—")
              + (" · " + t("bt.chip_cash_div") if cash_div else "")
              + (" · " + contrib if contrib else "")
+             + (" · " + t("bt.chip_cash_yield", v=f"{b['cash_yield'] * 100:g}") if b.get("cash_yield") else "")
              + ("" if st.get("started") else " · " + t("pp.not_started"))).classes("sq-muted text-xs")
     if contrib and _contribution_due(st, b.get("contribution_freq")):
         notice(t("pp.contribution_due", date=st["execute_on"], v=f"{b['contribution']:,.0f}"),

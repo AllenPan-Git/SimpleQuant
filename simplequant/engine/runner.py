@@ -32,6 +32,7 @@ class BrokerConfig:
     price_limit: bool = True       # 日线按涨跌停与停牌限制成交（见 limits.py）
     contribution: float = 0.0      # 定投：每期追加的资金（0 = 不追加）；初始资金算第一期，从第二期起追加
     contribution_freq: str = "monthly"   # monthly / weekly：每月 / 每周第一个交易日开盘前到账
+    cash_yield: float = 0.0        # 闲置现金年化收益率（小数，0.02 = 2%），相当于空仓时放在货币基金里；0 = 不计息
 
 
 FEED_COLUMNS = EXTRA_COLUMNS + MACRO_COLUMNS + [RAW_CLOSE]
@@ -97,12 +98,14 @@ def build_cerebro(prices: dict[str, pd.DataFrame], strategy_cls, strategy_params
     flows = contribution_flows(prices, broker, trade_start)
     if len(flows):
         params["contributions"] = {d.date(): float(a) for d, a in flows.items()}
+    if broker.cash_yield:
+        params["cash_yield"] = float(broker.cash_yield)
 
     dividends = {name: events_of(df) for name, df in prices.items() if has_columns(df)}
     if dividends:
         params["dividends"] = dividends
-    if dividends or len(flows) or getattr(strategy_cls, "needs_open", False):
-        # 用开盘前的回调处理除权除息、定投到账（策略自己要用开盘前回调的设 needs_open，如估值定投的储备计息）；
+    if dividends or len(flows) or broker.cash_yield or getattr(strategy_cls, "needs_open", False):
+        # 用开盘前的回调处理除权除息、定投到账、闲置现金计息（策略自己要用开盘前回调的设 needs_open，如估值定投的储备计息）；
         # broker_coo=False：委托的撮合方式与平时完全一样
         cerebro = bt.Cerebro(stdstats=False, cheat_on_open=True, broker_coo=False)
     else:
@@ -154,6 +157,8 @@ def run_backtest(prices: dict[str, pd.DataFrame], strategy_cls, strategy_params:
     trades = pd.DataFrame(strat.trade_records, columns=TRADE_COLUMNS)
     metrics = compute_metrics(equity["value"], equity["benchmark"], trades, broker.cash, broker.risk_free, flows)
     metrics["limit_blocked"] = blocked
+    if broker.cash_yield:
+        metrics["cash_interest"] = strat.cash_interest
     if strat.p.dividends:
         metrics["dividend_cash"], metrics["dividend_tax"] = strat.div_cash, strat.div_tax
     panels = {}

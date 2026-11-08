@@ -23,4 +23,5 @@ def _sp_broker(kind: str = "stock"):
     return BrokerConfig(cash=float(b["cash"]), commission=mine.get("commission", c["commission"] * 1e4) / 1e4,
                         min_commission=float(mine.get("min_commission", c["min_commission"])),
                         stamp_duty=mine.get("stamp_duty", c["stamp_duty"] * 1e4) / 1e4,
-                        slippage=b.get("slippage", 5.0) / 1e4, t_plus_1=True)
+                        slippage=b.get("slippage", 5.0) / 1e4, t_plus_1=True,
+                        cash_yield=(b.get("cash_yield") or 0) / 100)

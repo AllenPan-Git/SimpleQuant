@@ -248,6 +248,14 @@ TEXT.update({
     "bt.cash": L("初始资金（元）", "Initial capital (CNY)"),
     "bt.contribution": L("每期追加（元）", "Contribution per period (CNY)"),
     "bt.contrib_freq": L("追加频率", "Frequency"),
+    "bt.cash_yield": L("闲置现金年化（%）", "Idle cash yield (%/yr)"),
+    "bt.cash_yield_help": L("未买入证券的现金按此年化收益率计息（按自然日复利，每个交易日开盘前计入），相当于将闲置资金"
+                            "存放于货币基金（如 511880）或国债逆回购；0 表示不计息。利息计入收益，不计入投入。"
+                            "估值定投的储备资金仍按模板中设定的收益率计息，不重复计算。",
+                            "Cash not invested in securities earns this annual yield (compounded by calendar day and "
+                            "credited before each open), as if parked in a money-market fund or reverse repo; 0 earns "
+                            "nothing. Interest counts as return, not as invested capital. The value-DCA reserve keeps "
+                            "its own rate and is not counted twice."),
     "bt.contrib_monthly": L("每月", "monthly"),
     "bt.contrib_weekly": L("每周", "weekly"),
     "pp.contribution_due": L("{date} 是新一期的第一个交易日：定投账户在那天开盘前追加 {v} 元，请提前把这笔钱转入证券账户；"
@@ -462,6 +470,7 @@ TEXT.update({
                        "are not counted. Use back-adjusted data, or choose \"Cash\" dividends under Capital & trading costs"),
     "bt.chip_cash_div": L("现金分红", "cash dividends"),
     "bt.chip_contribution": L("{freq}追加 {v} 元", "+{v} {freq}"),
+    "bt.chip_cash_yield": L("现金年化 {v}%", "cash {v}%/yr"),
     "cd.skipped": L("以下标的无法使用现金分红，仍按所选数据计算（分红再投资）：{items}",
                     "These assets could not use cash dividends and are computed from the selected data (dividends reinvested): {items}"),
     "cd.patched": L("分红数据中缺失的现金分红已根据复权价推算补齐：{items}",
@@ -1184,6 +1193,7 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
                         "(more shares, no cash, no tax)"),
     "m.dividend_cash": L("收到现金分红", "Cash dividends"),
     "m.dividend_tax": L("已扣红利税", "Dividend tax"),
+    "m.cash_interest": L("闲置现金利息", "Idle cash interest"),
     "sp.dividend_tax_help": L("仅统计已卖出的股票；回测结束时仍持有的股票，红利税于卖出时扣缴",
                               "Only for positions already sold; tax on stocks still held is deducted when they are sold"),
     "sp.step_fin": L("正在下载 {n} 只股票的财务数据…", "Downloading financials for {n} stocks…"),

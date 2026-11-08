@@ -401,8 +401,9 @@ def contribution_flows(prices: dict) -> dict:
 def run(prices: dict):
     """prices: {名称: DataFrame(open, high, low, close, volume, ...)}；返回 Backtrader 策略实例"""
     flows = contribution_flows(prices)
-    # 定投到账（以及估值定投的储备计息）在开盘前处理；broker_coo=False：委托的撮合方式与平时一样
-    coo = bool(flows) or getattr(Strategy, "needs_open", False)
+    # 定投到账、闲置现金计息（以及估值定投的储备计息）在开盘前处理；broker_coo=False：委托的撮合方式与平时一样
+    cash_yield = float(BROKER.get("cash_yield") or 0.0)
+    coo = bool(flows) or bool(cash_yield) or getattr(Strategy, "needs_open", False)
     cerebro = bt.Cerebro(stdstats=False, **({"cheat_on_open": True, "broker_coo": False} if coo else {}))
     cerebro.broker.setcash(BROKER["cash"])
     cerebro.broker.addcommissioninfo(AShareCommission(commission=BROKER["commission"],
@@ -419,7 +420,8 @@ def run(prices: dict):
         cerebro.adddata(Feed(dataname=df, name=name, datetime=None, openinterest=-1, **extras), name=name)
     t0 = tuple(n for n in T0_NAMES if n in prices) if BROKER["t_plus_1"] else ()
     cerebro.addstrategy(Strategy, t_plus_1=BROKER["t_plus_1"], **({"t0_names": t0} if t0 else {}),
-                        **({"contributions": flows} if flows else {}), **STRATEGY_PARAMS)
+                        **({"contributions": flows} if flows else {}),
+                        **({"cash_yield": cash_yield} if cash_yield else {}), **STRATEGY_PARAMS)
     cerebro.addanalyzer(Equity, _name="equity")
     return cerebro.run()[0]
 

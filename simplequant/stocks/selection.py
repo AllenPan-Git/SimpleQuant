@@ -445,7 +445,9 @@ class SelectionStrategy(bt.Strategy):
               ("top_up", False),          # 定投模式开关（含刚开户尚未跨月已有设定追加金额的情况）
               ("top_n", 10),
               ("max_drawdown", 0.0),      # 回撤停手阈值（小数，如 0.15 = 15%，0 为不启用）
-              ("recovery_hit", None))     # 大盘恢复命中日历字典 {pd.Timestamp: bool}
+              ("recovery_hit", None),     # 大盘恢复命中日历字典 {pd.Timestamp: bool}
+              ("cash_yield", 0.0),        # 闲置现金年化收益率（小数；0 = 不计息）
+              ("start", None))            # 回测起点（pd.Timestamp）：之前是预热期，不计息
 
     def __init__(self):
         self.by_name = {d._name: d for d in self.datas}
@@ -471,6 +473,8 @@ class SelectionStrategy(bt.Strategy):
         self.recovery_hit = self.p.recovery_hit or {}
         self.peak_val = 0.0
         self.dd_stopped = False
+        self.cash_day = None           # 闲置现金利息算到哪一天
+        self.cash_interest = 0.0
 
     def log(self, key, **kw):
         self.logs.append((self.datas[0].datetime.datetime(0), key, kw))
@@ -571,14 +575,33 @@ class SelectionStrategy(bt.Strategy):
         today = pd.Timestamp(self.datas[0].datetime.date(0))
         due = [k for k in self.flows if k <= today]
         amount = sum(self.flows.pop(k) for k in due)
-        self.new_cash = amount
+        self.new_cash += amount
         if amount:
             self.broker.cash += amount
             self.contributed += amount
             self.log("log.contribution", cash=f"{amount:,.2f}")
 
+    def _accrue_cash(self):
+        """
+        开盘前给上一收盘时的现金计上次以来（自然日）的利息，和定投一样直接加进 broker.cash（当天开盘就能用），
+        也记进 new_cash（getvalue() 还是上一收盘的缓存值）。预热期不计息
+        """
+        today = self.datas[0].datetime.date(0)
+        if self.p.start is not None and pd.Timestamp(today) < self.p.start:
+            return
+        last, self.cash_day = self.cash_day, today
+        if last is None:
+            return
+        amount = max(self.broker.getcash(), 0.0) * ((1 + self.p.cash_yield) ** ((today - last).days / 365) - 1)
+        if amount > 0:
+            self.broker.cash += amount
+            self.new_cash += amount
+            self.cash_interest += amount
+
     def next_open(self):
         self.new_cash = 0.0            # 最后一笔到账后 flows 为空、不再调用 _contribute，这里先清零
+        if self.p.cash_yield:
+            self._accrue_cash()
         if self.flows:
             self._contribute()
         if self.div_events:
@@ -787,7 +810,8 @@ def run_selection(panel, spec: dict, broker: BrokerConfig | None = None, schedul
                         dividends=_dividend_events(panel, div_codes) if cash_div else None,
                         contributions={pd.Timestamp(d): float(a) for d, a in flows.items()} or None,
                         top_up=bool(broker.contribution > 0), top_n=top_n,
-                        max_drawdown=max_dd, recovery_hit=rec_hit)
+                        max_drawdown=max_dd, recovery_hit=rec_hit, cash_yield=float(broker.cash_yield or 0.0),
+                        start=pd.Timestamp(start) if start is not None else None)
     cerebro.addanalyzer(EquityRecorder, _name="equity")
     strat = cerebro.run()[0]
 
@@ -806,6 +830,8 @@ def run_selection(panel, spec: dict, broker: BrokerConfig | None = None, schedul
     trades = pd.DataFrame(strat.trade_records, columns=TRADE_COLUMNS)
     metrics = compute_metrics(equity["value"], equity["benchmark"], trades, broker.cash, broker.risk_free, flows)
     metrics["turnover_annual"] = _annual_turnover(orders, equity)
+    if broker.cash_yield:
+        metrics["cash_interest"] = strat.cash_interest
     if cash_div:
         metrics["dividend_cash"], metrics["dividend_tax"] = strat.div_cash, strat.div_tax
     return SelectionResult(equity=equity, orders=orders, trades=trades, metrics=metrics, logs=strat.logs,
@@ -919,7 +945,10 @@ def _selection_pending(strat, next_cash: float = 0.0) -> list[dict]:
 
 def _flat_result(panel, broker, start, schedule) -> "SelectionResult":
     idx = panel.calendar if start is None else panel.calendar[panel.calendar >= pd.Timestamp(start)]
-    equity = pd.DataFrame({"value": broker.cash, "cash": broker.cash}, index=idx)
+    cash = pd.Series(broker.cash, index=idx, dtype=float)
+    if broker.cash_yield and len(idx):     # 闲置现金计息（同 SelectionStrategy._accrue_cash，按自然日复利）
+        cash = cash * (1 + broker.cash_yield) ** ((idx - idx[0]).days / 365)
+    equity = pd.DataFrame({"value": cash, "cash": cash}, index=idx)
     bench = panel.benchmark.reindex(idx).ffill()
     equity["benchmark"] = bench / bench.iloc[0] * broker.cash if len(bench) else broker.cash
     equity["drawdown"] = 0.0

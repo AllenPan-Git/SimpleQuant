@@ -208,6 +208,7 @@ def broker_settings(key: str, default_preset: str = "etf", default_cash: int = 1
     saved.setdefault("limit", True)
     saved.setdefault("contribution", 0)
     saved.setdefault("contribution_freq", "monthly")
+    saved.setdefault("cash_yield", 0)
     presets = list(COST_PRESETS)
     with section(t("bt.costs"), "account_balance"):
         with ui.row().classes("w-full items-center gap-3"):
@@ -216,6 +217,7 @@ def broker_settings(key: str, default_preset: str = "etf", default_cash: int = 1
                              precision=0, format="%.0f").props("outlined dense").classes("w-48")
             preset = ui.select({k: p(COST_PRESETS[k]["label"]) for k in presets}, label=t("bt.cost_preset"),
                                value=saved["preset"]).props(DENSE).classes("w-48")
+            cy = ui.number(t("bt.cash_yield"), value=saved["cash_yield"], min=0, max=20, step=0.5, precision=2)                 .props("outlined dense").classes("w-44").tooltip(t("bt.cash_yield_help")).mark(f"{key}_cash_yield")
             t1 = ui.switch(t("bt.t1"), value=saved["t1"]).tooltip(t("bt.t1_help")) if show_t1 else None
             limit = ui.switch(t("bt.limit"), value=saved["limit"]).tooltip(t("bt.limit_help")).mark(f"{key}_limit") if show_t1 else None
         add = freq = None
@@ -251,7 +253,7 @@ def broker_settings(key: str, default_preset: str = "etf", default_cash: int = 1
     def remember(_=None):
         saved.update(cash=cash.value or default_cash, preset=preset.value, slippage=slip.value or 0,
                      t1=t1.value if t1 else True, dividend=div.value if div else "reinvest",
-                     limit=limit.value if limit else True)
+                     limit=limit.value if limit else True, cash_yield=cy.value or 0)
         if add:
             saved.update(contribution=add.value or 0, contribution_freq=freq.value)
         saved["custom"][preset.value] = {"commission": comm.value or 0, "min_commission": minc.value or 0,
@@ -261,7 +263,7 @@ def broker_settings(key: str, default_preset: str = "etf", default_cash: int = 1
 
     fill_costs()
     preset.on_value_change(lambda e: (fill_costs(), remember()))
-    for el in (cash, comm, minc, stamp, slip) + ((t1, limit) if t1 else ()) + ((div,) if div else ())             + ((add, freq) if add else ()):
+    for el in (cash, comm, minc, stamp, slip, cy) + ((t1, limit) if t1 else ()) + ((div,) if div else ())             + ((add, freq) if add else ()):
         el.on_value_change(remember)
 
     def make() -> BrokerConfig:
@@ -270,7 +272,8 @@ def broker_settings(key: str, default_preset: str = "etf", default_cash: int = 1
                             slippage=(slip.value or 0) / 1e4, t_plus_1=t1.value if t1 else True,
                             dividend=div.value if div else "reinvest", price_limit=limit.value if limit else True,
                             contribution=float(add.value or 0) if add else 0.0,
-                            contribution_freq=freq.value if freq else "monthly")
+                            contribution_freq=freq.value if freq else "monthly",
+                            cash_yield=(cy.value or 0) / 100)
 
     def load(broker: dict):
         """把保存策略时记下的资金与费率（asdict(BrokerConfig)）填回控件和页面记住的设置"""
@@ -281,6 +284,7 @@ def broker_settings(key: str, default_preset: str = "etf", default_cash: int = 1
         cash.value, preset.value = want["cash"], want["preset"]
         comm.value, minc.value, stamp.value = costs["commission"], costs["min_commission"], costs["stamp_duty"]
         slip.value = want["slippage"]
+        cy.value = want.get("cash_yield", 0)
         if t1:
             t1.value, limit.value = want["t1"], want["limit"]
         if div:

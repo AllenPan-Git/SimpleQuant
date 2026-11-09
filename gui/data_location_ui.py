@@ -162,7 +162,10 @@ def move_dialog(initial: str = ""):
 
     async def browse():
         import webview
-        res = await app.native.main_window.create_file_dialog(dialog_type=webview.FOLDER_DIALOG)
+        # pywebview 6 的 FOLDER_DIALOG 是「已弃用」代理对象，传给窗口进程时 pickle 失败、请求永远不返回（按钮没反应）；
+        # 用 FileDialog.FOLDER（与 NiceGUI 自己的写法一致）
+        folder = webview.FileDialog.FOLDER if hasattr(webview, "FileDialog") else webview.FOLDER_DIALOG
+        res = await app.native.main_window.create_file_dialog(dialog_type=folder)
         if res:
             path.value = res[0] if isinstance(res, (list, tuple)) else str(res)
             await check()

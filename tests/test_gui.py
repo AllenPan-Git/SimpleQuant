@@ -217,8 +217,9 @@ async def test_data_delete_asks_first(user: User, lib_dir):
     user.find("删除此数据").click()
     await user.should_see(marker="confirm-delete")
     user.find(marker="confirm-delete").click()
-    await user.should_see("暂无数据")
-    assert library.list_datasets() == []
+    # 不能只等「暂无数据」：没有选股数据时（CI）「选股数据」标签页一打开就有「该股票池暂无数据」，删除还没完成就通过了
+    assert await _wait(lambda: library.list_datasets() == [])
+    await user.should_see(t_("data.empty"))
 
 
 async def test_switch_language(user: User):

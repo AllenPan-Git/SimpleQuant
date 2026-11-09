@@ -117,7 +117,7 @@ GitHub 下载较慢时，可使用国内网盘（123 云盘，无需登录，提
 
 ### 说明
 - **自动更新**（Windows 0.1.1 起；macOS、Linux 自首个版本起）：程序启动后在后台检查 GitHub Releases 上的新版本，通常只下载有变化的文件；下载完成后提示重启，重启时替换文件并自动重新打开。需要下载完整安装包（超过 30 MB）时先询问。更新文件经签名与 SHA256 校验，替换失败时保留原版本。可在「设置」页手动检查或关闭自动检查；无法连接 GitHub 时，可在 Releases 页面手动下载新版本。Windows 0.1.0 需手动安装一次新版本。
-- **数据目录**（行情库、选股数据、模拟账户、保存的策略、AI 模型设置）：Windows 为 `%LOCALAPPDATA%\SimpleQuant`，macOS 为 `~/Library/Application Support/SimpleQuant`，Linux 为 `~/.local/share/SimpleQuant`（设置了 `XDG_DATA_HOME` 时位于其下）。升级与卸载均不会删除这些数据。报错日志位于数据目录下的 `logs/app.log`。
+- **数据目录**（行情库、选股数据、模拟账户、保存的策略、AI 模型设置）：Windows 为 `%LOCALAPPDATA%\SimpleQuant`，macOS 为 `~/Library/Application Support/SimpleQuant`，Linux 为 `~/.local/share/SimpleQuant`（设置了 `XDG_DATA_HOME` 时位于其下）。升级与卸载均不会删除这些数据。可在「设置 → 数据保存位置」移到其他磁盘（复制后重启生效，原位置的数据随后自动删除）。报错日志位于数据目录下的 `logs/app.log`。
 - **模拟盘每日自动运行**：在「模拟盘」页一键设置。Windows 使用任务计划程序，macOS 使用 launchd，Linux 使用 systemd 用户定时器（没有 systemd 时使用 crontab）。
 - **命令行**：`SimpleQuant --paper` 不打开界面、直接推进全部模拟账户（定时任务即使用此命令）；`SimpleQuant --run-script 选股.py` 运行导出的选股脚本。macOS 上的可执行文件为 `/Applications/SimpleQuant.app/Contents/MacOS/SimpleQuant`。
 - 安装版不含 LiteLLM，AI 模型请使用 Claude、OpenAI 或兼容 OpenAI 协议的服务（DeepSeek、通义千问、Kimi、智谱、Gemini、本地 Ollama 等）。

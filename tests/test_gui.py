@@ -3129,3 +3129,76 @@ async def test_paper_progress_survives_leaving_page(user: User, paper_dir, monke
     assert await _wait(lambda: any("完成：成功 2 个" in m for m in user.notify.messages)), user.notify.messages
     await settle()
     assert user.find(marker="pp_run_all").elements.pop().enabled
+
+
+@pytest.fixture
+def loc_env(tmp_path, monkeypatch):
+    """打包版的数据位置：默认目录、路标都放到临时目录"""
+    from simplequant import data_location as loc, paths
+    default = tmp_path / "local" / "SimpleQuant"
+    (default / "data_cache").mkdir(parents=True)
+    (default / "data_cache" / "a.json").write_text("{}")
+    (default / "llm.json").write_text("{}")
+    monkeypatch.setattr(loc, "user_data_dir", lambda: default)
+    monkeypatch.setattr(loc, "enabled", lambda: True)
+    monkeypatch.setattr(paths, "DATA_ROOT", default)
+    monkeypatch.setattr(paths, "POINTER", default / "location.json")
+    monkeypatch.setattr(paths, "LOCATION_MISSING", None)
+    return default
+
+
+async def test_settings_move_data(user: User, loc_env, tmp_path):
+    """设置页「更改位置」：检查 → 移动 → 复制完、写好路标，提示重启；回到设置页显示「重启后生效」"""
+    from simplequant import paths
+    await user.open("/settings")
+    await user.should_see(marker="set_loc")
+    user.find(marker="loc_change").click()
+    await user.should_see(marker="loc_dialog")
+    user.find(marker="loc_path").type(str(tmp_path / "D"))
+    user.find(marker="loc_check").click()
+    target = tmp_path / "D" / "SimpleQuant"
+    await user.should_see(str(target))
+    user.find(marker="loc_go").click()
+    assert await _wait(lambda: paths.read_pointer().get("data_root") == str(target))
+    assert (target / "data_cache" / "a.json").exists() and (target / "llm.json").exists()
+    assert (loc_env / "data_cache" / "a.json").exists()          # 重启前旧数据还在
+    await user.should_see(marker="loc_restart")
+    await user.open("/settings")
+    await user.should_see(marker="loc_pending")
+
+
+async def test_settings_move_data_errors(user: User, loc_env):
+    await user.open("/settings")
+    user.find(marker="loc_change").click()
+    user.find(marker="loc_path").type(str(loc_env / "data_cache"))
+    user.find(marker="loc_check").click()
+    await user.should_see(t_("loc.err_nested"))
+    await user.should_not_see(marker="loc_go")
+
+
+async def test_settings_location_fixed_in_source(user: User):
+    """源码运行：只显示位置，不能更改"""
+    await user.open("/settings")
+    await user.should_see(marker="set_loc")
+    await user.should_not_see(marker="loc_change")
+    await user.should_see(t_("loc.fixed"))
+
+
+async def test_home_asks_data_location_once(user: User, loc_env, monkeypatch):
+    from simplequant import data_location as loc
+    monkeypatch.setattr(loc, "on_system_drive", lambda root: True)
+    await user.open("/")
+    await user.should_see(marker="loc_ask", retries=40)
+    user.find(marker="loc_keep").click()
+    from nicegui import app
+    assert await _wait(lambda: app.storage.general.get("data_loc_asked"))
+    await user.open("/")
+    await asyncio.sleep(0.5)
+    await user.should_not_see(marker="loc_ask")
+
+
+async def test_home_location_missing(user: User, loc_env, monkeypatch, tmp_path):
+    from simplequant import paths
+    monkeypatch.setattr(paths, "LOCATION_MISSING", tmp_path / "E" / "SimpleQuant")
+    await user.open("/")
+    await user.should_see(marker="home_loc_missing")

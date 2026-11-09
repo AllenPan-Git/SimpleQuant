@@ -63,3 +63,33 @@ def open_folder(path: str | Path):
     else:
         subprocess.Popen(["open" if MACOS else "xdg-open", str(path)],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def relaunch_cmd(pid: int, argv: list[str], system: str = SYSTEM) -> list[str]:
+    """等进程 pid 退出后重新启动 argv 的命令（换数据位置后重启用）。先等旧进程完全退出，
+    新进程才不会和它同时写界面偏好、日志，也不会删旧数据时碰上还开着的文件"""
+    if system == "windows":
+        exe, args = argv[0], argv[1:]
+        quote = lambda s: "'" + s.replace("'", "''") + "'"      # noqa: E731 - PowerShell 单引号字符串
+        start = f"Start-Process -FilePath {quote(exe)}"
+        if args:   # Start-Process 把数组元素直接用空格拼起来、不加引号；先按 Windows 命令行规则拼成一个字符串
+            start += " -ArgumentList " + quote(subprocess.list2cmdline(args))
+        script = f"Wait-Process -Id {pid} -ErrorAction SilentlyContinue; {start}"
+        return ["powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script]
+    import shlex
+    return ["/bin/sh", "-c", f"while kill -0 {pid} 2>/dev/null; do sleep 0.3; done; exec {shlex.join(argv)}"]
+
+
+def relaunch_after_exit(argv: list[str]):
+    """启动等待脚本（之后调用方应立即退出程序）"""
+    env = {**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"}    # 打包版：新进程按独立程序启动，不沿用本进程的解压目录等设置
+    kw = dict(stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
+    cmd = relaunch_cmd(os.getpid(), argv)
+    if WINDOWS:
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        try:   # 脱离可能存在的作业对象，程序退出时脚本不会被一起结束
+            subprocess.Popen(cmd, creationflags=flags | getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0), **kw)
+        except OSError:
+            subprocess.Popen(cmd, creationflags=flags, **kw)
+    else:
+        subprocess.Popen(cmd, start_new_session=True, **kw)

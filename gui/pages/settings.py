@@ -5,7 +5,7 @@ from nicegui import run, ui
 from simplequant import llm
 from simplequant.llm import LLMConfig, PRESETS, PROVIDERS, JSON_MODES
 from gui.common import t, p
-from gui import update, telemetry_ui
+from gui import update, telemetry_ui, data_location_ui
 from gui.layout import frame, page_title
 from gui.widgets import folder_btn, notice
 
@@ -121,6 +121,8 @@ def page():
             folder_btn(t("set.open_folder"), llm.CONFIG_PATH.parent)
         fill()
 
+        ui.separator().classes("q-my-md")
+        data_location_ui.settings_section()
         ui.separator().classes("q-my-md")
         telemetry_ui.settings_section()
         ui.separator().classes("q-my-md")

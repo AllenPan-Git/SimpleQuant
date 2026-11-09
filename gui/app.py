@@ -65,6 +65,17 @@ def _start_update_check():
         threading.Timer(5, UPDATER.check_async).start()
 
 
+async def _cleanup_old_location():
+    """换了数据位置、在新位置启动成功后，后台删除旧位置的数据（data_location.cleanup_pending）"""
+    from nicegui import run
+    from simplequant import data_location
+    if data_location.enabled():
+        try:
+            await run.io_bound(data_location.cleanup_pending)
+        except Exception:  # noqa: BLE001 - 删不掉就下次启动再试，不影响使用
+            pass
+
+
 def _start_telemetry():
     """匿名使用统计（待办 57）：启用本机累计；同意过的话几秒后在后台发送一次。
     报错计数接 NiceGUI 的未处理异常；导出、下载计数接 ui.download.content（项目里所有下载都走它）"""
@@ -93,6 +104,7 @@ def run(native: bool = True, port: int = 0, show: bool = True, check_updates: bo
     if check_updates:
         app.on_startup(_start_update_check)
         app.on_startup(_start_telemetry)
+    app.on_startup(_cleanup_old_location)
     from gui import uitest
     uitest.install()             # 只有设置了 SIMPLEQUANT_UI_SCRIPT 才生效（打包后的自动测试）
     # 桌面窗口（pywebview）默认会静默取消所有下载；打开后点下载会弹出「另存为」对话框

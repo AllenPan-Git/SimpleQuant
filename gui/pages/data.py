@@ -9,7 +9,7 @@ import os
 import pandas as pd
 from nicegui import run, ui
 
-from simplequant.data import SOURCES, ASSET_TYPES, RESAMPLE_RULES, fetch_to_library, library
+from simplequant.data import SOURCES, ASSET_TYPES, RESAMPLE_RULES, fetch_to_library, library, has_merge_candidates, merge_library
 from simplequant.data.base import freq_label, EXTRA_COLUMNS
 from simplequant.data.ratio_adjust import is_additive
 from simplequant.data.csv_src import read_csv_any, is_snapshot
@@ -380,6 +380,9 @@ def _library_view(refresh, fold: bool = False):
     if not metas:
         ui.label(t("data.empty")).classes("sq-muted")
         return
+    if has_merge_candidates(metas):         # 有同一标的、区间重叠或相接的几份数据时才显示
+        btn = ui.button(t("lib.merge"), icon="merge", on_click=lambda: merge_split(btn, refresh)) \
+            .props("outline no-caps").classes("self-start").tooltip(t("lib.merge_tip")).mark("data_lib_merge")
     df_table(pd.DataFrame([{
         t("lib.name"): m.name, t("lib.freq"): freq_label(m.freq, lg),
         t("lib.source"): t(f"src.{m.source}") + (f"（{t('prov.' + m.extra['provider'])}）"
@@ -411,6 +414,31 @@ def _library_view(refresh, fold: bool = False):
                 ui.button(t("lib.delete"), icon="delete", on_click=lambda: confirm_delete(m, refresh))                     .props("outline no-caps color=negative")
     sel.on_value_change(show)
     show()
+
+
+async def merge_split(btn, refresh):
+    """合并数据库里已有的分段数据，结果（合并了哪些、哪些没合并及原因）在对话框里列出"""
+    btn.disable()
+    try:
+        merged, problems = await run.io_bound(merge_library)
+    finally:
+        btn.enable()
+    span = lambda m: f"{m.start} ~ {m.end}"     # noqa: E731
+    sep = "、" if lang() == "zh" else ", "
+    lines = [t("lib.merge_done", name=out.name, parts=sep.join(span(m) for m in parts), start=out.start, end=out.end)
+             for out, parts in merged]
+    for x, y, reason in problems:
+        a, b = sorted((x, y), key=lambda m: m.start)      # 早的一段写在前面
+        lines.append(t(f"lib.merge_{reason}", name=a.name, a=span(a), b=span(b)))
+    with ui.dialog() as dlg, ui.card().classes("max-w-xl"):
+        ui.label(t("lib.merge")).classes("sq-h2")
+        for line in lines or [t("lib.merge_none")]:
+            ui.label(line).classes("text-sm")
+        with ui.row().classes("w-full justify-end"):
+            ui.button(t("gui.close"), on_click=dlg.close).props("unelevated no-caps").mark("merge-ok")
+    # 对话框建在数据库区块里，刷新会把它一起清掉：关掉之后再刷新
+    dlg.on_value_change(lambda e: None if e.value else refresh())
+    dlg.open()
 
 
 async def confirm_delete(m, refresh):

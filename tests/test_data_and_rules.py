@@ -327,6 +327,41 @@ def test_download_merges_overlapping_pieces(tmp_path, monkeypatch):
     assert other.merged == [] and other.unmerged == []
 
 
+def test_merge_library_joins_existing_pieces(tmp_path, monkeypatch):
+    """合并数据库里已有的分段数据：能拼的拼，对不上的、首尾相接的列出原因；按钮只在有候选时出现"""
+    from simplequant.data import has_merge_candidates, merge_library
+    monkeypatch.setattr(library, "LIB_DIR", tmp_path)
+    for f in (library.save, library.exists, library.list_datasets, library.load, library.delete):
+        monkeypatch.setattr(f, "__defaults__", (tmp_path,))
+    full = make_prices(n=200, start="2025-01-02")
+
+    def put(s, e, sym="510300", scale=1.0):
+        df = full.loc[s:e].copy()
+        df[["open", "high", "low", "close"]] *= scale
+        m = library.DatasetMeta(id=library.make_id("akshare", sym, "1d", "hfq", s, e), name=sym, symbol=sym,
+                                source="akshare", freq="1d", adjust="hfq",
+                                extra={"asset": "etf", "adjust_method": "ratio"})
+        return library.save(df, m)
+    a = put("2025-01-02", "2025-03-31")
+    assert not has_merge_candidates(library.list_datasets())
+    put("2025-06-02", "2025-07-31")                                        # 隔两个月：不是候选
+    assert not has_merge_candidates(library.list_datasets())
+    b = put("2025-03-03", "2025-05-30")
+    assert has_merge_candidates(library.list_datasets())
+    c = put("2025-08-01", "2025-09-30", sym="510500")
+    d = put("2025-09-15", "2025-10-15", sym="510500", scale=1.1)           # 对不上
+
+    merged, problems = merge_library()
+    assert len(merged) == 1
+    out, parts = merged[0]
+    assert {m.id for m in parts} == {a.id, b.id} and (out.start, out.end) == ("2025-01-02", "2025-05-30")
+    # 合并后 05-30 与 06-02 那份只隔 3 天、没有重叠：无法核对；510500 两份重叠日对不上
+    assert sorted((x.symbol, r) for x, _, r in problems) == [("510300", "gap"), ("510500", "mismatch")]
+    assert library.resolve(a.id) == library.resolve(b.id) == out.id
+    assert not [m for m in library.list_datasets() if m.symbol == "510300" and m.id in (a.id, b.id)]
+    assert {c.id, d.id} <= {m.id for m in library.list_datasets()}
+
+
 def test_library_roundtrip(tmp_path):
     df = make_prices(n=20)
     meta = library.DatasetMeta(id=library.make_id("csv", "x", "1d", "", "a", "b"), name="X",

@@ -470,6 +470,17 @@ TEXT.update({
     "data.unmerged_gap": L("本地已有的 {ranges} 与这次的数据首尾相接但没有重叠的日子，无法核对，没有合并；下载时让区间多重叠几天即可自动合并。",
                            "The existing {ranges} adjoins this download without overlapping days, so it could not be checked "
                            "and was not merged; let the periods overlap by a few days and they will merge automatically."),
+    "lib.merge": L("合并分段数据", "Merge split data"),
+    "lib.merge_tip": L("同一标的分几次下载、区间相互重叠的数据，在重叠日价格一致时拼成一份",
+                       "Joins datasets of the same symbol downloaded in overlapping pieces when prices agree on the overlapping days"),
+    "lib.merge_done": L("{name}：{parts} → 合并为 {start} ~ {end}", "{name}: {parts} → merged into {start} ~ {end}"),
+    "lib.merge_mismatch": L("{name}：{a} 与 {b} 在重叠的日子价格对不上（复权基准或数据源不同），没有合并；需要一份完整数据请下载整个区间。",
+                            "{name}: {a} and {b} do not match on the overlapping days (different adjustment base or source) "
+                            "and were not merged; download the whole period to get one complete dataset."),
+    "lib.merge_gap": L("{name}：{a} 与 {b} 首尾相接但没有重叠的日子，无法核对，没有合并；重新下载其中一段、让区间多重叠几天即可合并。",
+                       "{name}: {a} and {b} adjoin without overlapping days, so they could not be checked and were not merged; "
+                       "re-download one of them so the periods overlap by a few days."),
+    "lib.merge_none": L("没有可以合并的数据。", "There was nothing to merge."),
     "adj.additive": L("加法", "additive"),
     "bt.unadjusted": L("{names} 为不复权数据：除权除息日价格下跳，可能产生虚假的卖出信号，且分红不计入收益。"
                        "建议改用后复权数据，或在「资金与交易成本」中选择「现金分红」。",

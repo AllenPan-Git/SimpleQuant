@@ -222,6 +222,30 @@ async def test_data_delete_asks_first(user: User, lib_dir):
     await user.should_see(t_("data.empty"))
 
 
+async def test_data_merge_split_button(user: User, lib_dir):
+    """同一标的有区间重叠的几份数据时才出现「合并分段数据」，点了拼成一份并在对话框里说明"""
+    full = make_prices(n=120, start="2025-01-02")
+
+    def put(s, e, sym="1"):
+        m = library.DatasetMeta(id=library.make_id("csv", sym, "1d", "", s, e), name=f"甲{sym}", symbol=sym, source="csv", freq="1d")
+        return library.save(full.loc[s:e], m)
+    put("2025-01-02", "2025-03-31")
+    put("2025-03-01", "2025-05-30", sym="2")                # 不同代码：不算
+    await user.open("/data")
+    await user.should_see("甲1")
+    await user.should_not_see(marker="data_lib_merge")
+    put("2025-03-01", "2025-05-30")
+    await user.open("/data")
+    user.find(marker="data_lib_merge").click()
+    await user.should_see(marker="merge-ok")
+    await user.should_see("合并为 2025-01-02 ~ 2025-05-30")
+    assert sorted((m.symbol, m.start, m.end) for m in library.list_datasets()) == [
+        ("1", "2025-01-02", "2025-05-30"), ("2", "2025-03-03", "2025-05-30")]   # 03-01 是周六
+    user.find(marker="merge-ok").click()
+    await user.should_not_see(marker="merge-ok")
+    await user.should_not_see(marker="data_lib_merge")       # 关掉对话框后刷新：按钮消失
+
+
 async def test_switch_language(user: User):
     await user.open("/")
     user.find("EN").click()

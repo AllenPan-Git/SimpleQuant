@@ -1,3 +1,5 @@
+import pandas as pd
+
 from .base import DataSource, FREQ_LABELS, normalize
 from .akshare_src import AKShareSource, ASSET_TYPES
 from .baostock_src import BaoStockSource
@@ -106,6 +108,37 @@ def merge_overlaps(meta, lib_dir=None):
                 library.replace(old_id, new_id, lib_dir)
     meta.merged, meta.unmerged = merged, unmerged
     return meta
+
+
+def _near(a, b) -> bool:
+    """两份数据的区间有重叠，或相隔不超过 SEAM_GAP_DAYS 天（只看元数据，不读文件）"""
+    gap = max(pd.Timestamp(a.start) - pd.Timestamp(b.end), pd.Timestamp(b.start) - pd.Timestamp(a.end)).days
+    return gap <= SEAM_GAP_DAYS
+
+
+def has_merge_candidates(metas) -> bool:
+    """数据库里有没有可能合并的分段数据（数据页据此决定是否显示「合并分段数据」按钮）"""
+    return any(_same_series(a, b) and _near(a, b) for i, a in enumerate(metas) for b in metas[i + 1:])
+
+
+def merge_library(lib_dir=None):
+    """
+    把数据库里已有的分段数据合并（之前下载的、或合并功能出现之前留下的）。新下载的优先作为基准（重叠处以它为准）。
+    返回 (merged, problems)：merged = [(合并后的 meta, [被合并的几份 meta])]；
+    problems = [(meta_a, meta_b, "mismatch"|"gap")]，只含合并结束后两份都还在的
+    """
+    lib_dir = lib_dir or library.LIB_DIR
+    merged, problems = [], {}
+    for m in library.list_datasets(lib_dir):           # 按下载时间从新到旧
+        if not library.exists(m.id, lib_dir):
+            continue                                     # 已被前面的合并进去
+        out = merge_overlaps(m, lib_dir)
+        if out.merged:
+            merged.append((out, [m, *out.merged]))
+        for u, reason in out.unmerged:
+            problems[frozenset((out.id, u.id))] = (out, u, reason)
+    alive = {m.id for m in library.list_datasets(lib_dir)}
+    return merged, [p for p in problems.values() if p[0].id in alive and p[1].id in alive]
 
 
 def supersede(meta, lib_dir=None):

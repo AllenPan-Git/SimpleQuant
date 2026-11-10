@@ -463,6 +463,13 @@ TEXT.update({
     "data.additive": L("暂时无法取得复权因子（BaoStock / 新浪），这份数据是东方财富的加法复权，涨跌幅会被压缩；可稍后勾选「忽略本地已有数据，重新下载」改为等比复权。",
                        "Adjustment factors (BaoStock / Sina) were unavailable, so this is Eastmoney's additive adjustment, which "
                        "compresses percentage moves; re-download later to get proportional adjustment."),
+    "data.merged": L("已与本地已有的 {ranges} 合并为一份。", "Merged with the existing {ranges} into one dataset."),
+    "data.unmerged_mismatch": L("本地已有的 {ranges} 在重叠的日子价格对不上（复权基准或数据源不同），没有合并；需要一份完整数据请下载整个区间。",
+                                "The existing {ranges} does not match on the overlapping days (different adjustment base or "
+                                "source), so it was not merged; download the whole period to get one complete dataset."),
+    "data.unmerged_gap": L("本地已有的 {ranges} 与这次的数据首尾相接但没有重叠的日子，无法核对，没有合并；下载时让区间多重叠几天即可自动合并。",
+                           "The existing {ranges} adjoins this download without overlapping days, so it could not be checked "
+                           "and was not merged; let the periods overlap by a few days and they will merge automatically."),
     "adj.additive": L("加法", "additive"),
     "bt.unadjusted": L("{names} 为不复权数据：除权除息日价格下跳，可能产生虚假的卖出信号，且分红不计入收益。"
                        "建议改用后复权数据，或在「资金与交易成本」中选择「现金分红」。",

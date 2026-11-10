@@ -198,11 +198,25 @@ def _download_tab(on_change):
                         meta = await run.io_bound(fetch_to_library, key, sym, start.value, end.value, freq=freq.value,
                                                   adjust=adj, name=name, force=force.value, **kwargs)
                         text = t("data.fetched", sym=sym, n=meta.rows, start=meta.start, end=meta.end)
+                        notes, warn = [], False
                         if is_additive(meta):          # 取不到复权因子，退回了东方财富的加法复权
-                            _status(row, "check_circle", "text-warning", text, t("data.additive"), "text-sm sq-muted")
+                            notes.append(t("data.additive"))
+                            warn = True
                         elif sina_fallback(meta):      # 东方财富连不上，改用了新浪
-                            note = t("data.fallback", prov=t(f"prov.{meta.extra['provider']}"))
-                            _status(row, "check_circle", "text-warning", text, note, "text-sm sq-muted")
+                            notes.append(t("data.fallback", prov=t(f"prov.{meta.extra['provider']}")))
+                            warn = True
+                        sep = "、" if lang() == "zh" else ", "
+                        span = lambda ms: sep.join(f"{m.start} ~ {m.end}" for m in ms)   # noqa: E731
+                        if getattr(meta, "merged", None):      # 与分段下载的旧数据拼成了一份
+                            notes.append(t("data.merged", ranges=span(meta.merged)))
+                        for reason in ("mismatch", "gap"):
+                            ms = [m for m, r in getattr(meta, "unmerged", []) if r == reason]
+                            if ms:
+                                notes.append(t(f"data.unmerged_{reason}", ranges=span(ms)))
+                                warn = True
+                        if notes:
+                            _status(row, "check_circle", "text-warning" if warn else "text-positive", text,
+                                    " ".join(notes), "text-sm sq-muted")
                         else:
                             _status(row, "check_circle", "text-positive", text)
                     except Exception as e:  # noqa: BLE001

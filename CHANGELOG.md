@@ -5,6 +5,14 @@
 
 Changes in each release. `tools/release.py` copies the matching section into the GitHub release notes.
 
+## 未发布
+
+### 更新内容
+- 改进：同一标的分段下载的行情自动合并为一份（感谢用户反馈）。数据页下载时，本地已有同一数据源、代码、周期、复权的数据，且区间与这次有重叠，重叠的日子价格一致时，拼成一份完整数据（重叠处以新下载的为准），旧的几份删除，回测页等处记住的旧数据自动改用合并后的。重叠日价格对不上时（如前复权中间发生过分红、加法与等比复权混用）不合并，并提示下载整个区间；两段首尾相接但没有重叠的日子时无法核对，提示让区间多重叠几天。之前每次下载各存一份，例如先下 2015～2020、再下 2020～2025，数据库里是两份，回测只能选其一
+
+### Changes
+- Improved: market data for the same symbol downloaded in pieces is now merged into one dataset (thanks to user feedback). When a download on the Data page overlaps existing data with the same source, symbol, frequency and adjustment, and prices agree on the overlapping days, the pieces are joined into one complete dataset (the new download wins where they overlap); the old pieces are deleted and pages that had them selected switch to the merged one. If prices disagree on the overlapping days (e.g. forward-adjusted data with a dividend in between, or additive mixed with proportional adjustment), nothing is merged and you are asked to download the whole period; pieces that adjoin without overlapping days cannot be checked, and you are asked to let the periods overlap by a few days. Previously each download was stored separately, so downloading 2015–2020 and then 2020–2025 left two datasets, and a backtest could use only one
+
 ## 3.2.0（2026-11-09）
 
 ### 更新内容

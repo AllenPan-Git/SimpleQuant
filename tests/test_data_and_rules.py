@@ -287,6 +287,46 @@ def test_download_drops_unfinished_intraday_bar(tmp_path, monkeypatch):
     assert library.load(meta.id, tmp_path).index[-1] == pd.Timestamp("2026-09-28")
 
 
+def test_download_merges_overlapping_pieces(tmp_path, monkeypatch):
+    """同一标的分段下载：区间重叠且重叠日价格一致的拼成一份；对不上的、首尾相接没重叠的不拼并说明原因；隔得远的不提"""
+    from simplequant.data import SOURCES, fetch_to_library
+    from simplequant.paper import calendar as cal_mod
+    full = make_prices(n=200, start="2025-01-02")
+    scale = {"v": 1.0}
+
+    class Fake:
+        def fetch(self, symbol, start, end, **kw):
+            out = full.loc[start:end].copy()
+            for c in ("open", "high", "low", "close"):
+                out[c] *= scale["v"]
+            out.attrs.update(provider="eastmoney+dividends", adjust_method="ratio")
+            return out
+    monkeypatch.setitem(SOURCES, "akshare", Fake())
+    monkeypatch.setattr(cal_mod, "latest_expected_day", lambda cal: full.index[-1])
+    monkeypatch.setattr(library, "LIB_DIR", tmp_path)
+    for f in (library.save, library.exists, library.list_datasets, library.load, library.delete):
+        monkeypatch.setattr(f, "__defaults__", (tmp_path,))
+    get = lambda s, e, sym="510300": fetch_to_library("akshare", sym, s, e, adjust="hfq", asset="etf")  # noqa: E731
+
+    a = get("2025-01-02", "2025-02-28")
+    c = get("2025-05-01", "2025-06-30")
+    assert a.merged == [] and c.merged == [] and c.unmerged == []          # 隔了两个月：各自一份，不提示
+    b = get("2025-02-20", "2025-05-10")                                    # 与两边都重叠：三段拼成一份
+    assert {m.id for m in b.merged} == {a.id, c.id} and (b.start, b.end) == ("2025-01-02", "2025-06-30")
+    assert {m.id for m in library.list_datasets()} == {b.id}
+    assert library.resolve(a.id) == b.id and library.resolve(c.id) == b.id
+    pd.testing.assert_frame_equal(library.load(b.id), full.loc["2025-01-02":"2025-06-30"], check_freq=False)
+
+    d = get("2025-07-01", "2025-08-29")                                    # 首尾相接、没有重叠的日子：无法核对
+    assert d.merged == [] and [(m.id, r) for m, r in d.unmerged] == [(b.id, "gap")]
+    scale["v"] = 1.1                                                       # 重叠日价格对不上（如前复权中间分过红）
+    e = get("2025-08-01", "2025-09-30")
+    assert e.merged == [] and [(m.id, r) for m, r in e.unmerged] == [(d.id, "mismatch")]
+    assert {m.id for m in library.list_datasets()} == {b.id, d.id, e.id}
+    other = get("2025-06-01", "2025-07-31", sym="510500")                  # 别的代码不受影响
+    assert other.merged == [] and other.unmerged == []
+
+
 def test_library_roundtrip(tmp_path):
     df = make_prices(n=20)
     meta = library.DatasetMeta(id=library.make_id("csv", "x", "1d", "", "a", "b"), name="X",
@@ -483,6 +523,8 @@ def test_download_replaces_older_dataset_it_covers(tmp_path, monkeypatch):
     method["v"] = "additive"                                # 取不到复权因子退回加法：不替换等比的
     newer = fetch_to_library("akshare", "510300", "2025-02-01", "2025-10-15", adjust="hfq", asset="etf")
     assert {new.id, newer.id} <= {m.id for m in library.list_datasets()}
+    assert [m.id for m in newer.merged] == [longer.id]     # 同为加法、区间重叠：与 longer 拼成一份，不与等比的 new 拼
+    assert newer.start == "2025-01-02" and library.resolve(longer.id) == newer.id
     method["v"] = "ratio"                                   # 再下载一次等比：两份都被替换，旧 id 一路指到最新
     latest = fetch_to_library("akshare", "510300", "2025-01-02", "2025-10-20", adjust="hfq", asset="etf")
     assert {m.id for m in library.list_datasets()} == {latest.id, qfq.id}

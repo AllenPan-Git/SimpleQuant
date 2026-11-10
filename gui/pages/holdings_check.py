@@ -190,11 +190,15 @@ def run_check(hd, out, get_panel, SP):
         try:
             res = await run.io_bound(work)
         except Exception as ex:  # noqa: BLE001 - 数据文件损坏等：说明原因
+            if out.is_deleted:              # 计算途中离开了页面
+                return
             wait.delete()
             with out:
                 notice(f"{type(ex).__name__}: {ex}", "error", "error")
             return
         hd["result"], hd["result_pool"] = res, universe
+        if out.is_deleted:
+            return
         out.clear()
         with out:
             _render(res, universe, SP, lambda: run_check(hd, out, get_panel, SP))
@@ -310,6 +314,8 @@ def _problems(d: D.Diagnosis, SP, rerun, sep):
 
     async def estimate():
         n = await run.io_bound(D.requests_needed, StockStore(), need, start, end)
+        if hint.is_deleted:
+            return
         hint.text = t("hd.download_help", start=start, n=n)
     background_tasks.create(estimate(), name="holdings estimate")
 
@@ -319,8 +325,12 @@ def _problems(d: D.Diagnosis, SP, rerun, sep):
         try:
             errs = await run.io_bound(D.download, StockStore(), need, start, end)
         except Exception as e:  # noqa: BLE001 - 额度用完、IP 被暂停等：说明原因，已下载的保留
+            if btn.is_deleted:              # 下载途中离开了页面
+                return
             btn.enable()
             notice(f"{type(e).__name__}: {e}", "error", "error")
+            return
+        if btn.is_deleted:
             return
         if errs:
             ui.notify(t("ov.dl_errors", e="; ".join(f"{c}: {m}" for c, m in errs.items())), type="warning")

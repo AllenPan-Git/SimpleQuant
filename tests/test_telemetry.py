@@ -1,6 +1,7 @@
 """匿名使用统计（simplequant/telemetry.py）"""
 
 import json
+import re
 
 import pytest
 
@@ -93,22 +94,55 @@ def test_records_counts_milestones_errors(tele):
 
 
 def test_error_has_no_message_or_path(tele, tmp_path):
-    """出错位置取调用栈里最深的一层本项目代码；错误消息（这里含路径）不记"""
+    """出错位置取调用栈里最深的一层本项目代码（模块.函数:行号）；错误消息（这里含路径）不记"""
     path, _ = tele
     from simplequant.data import library
     with pytest.raises(OSError) as ei:
         library.load("secret_600519", tmp_path / "no_such_dir")
     T.error(ei.value)
     errs = T.payload()["days"][0]["errors"]
-    assert errs == [{"type": "FileNotFoundError", "location": "simplequant.data.library.load", "n": 1}]
+    assert len(errs) == 1 and errs[0]["type"] == "FileNotFoundError" and errs[0]["n"] == 1
+    assert re.fullmatch(r"simplequant\.data\.library\.load:\d+", errs[0]["location"])
     assert "secret" not in path.read_text(encoding="utf-8")
 
 
-def test_error_location_outside_project_is_unknown():
+def _raised(fn):
     try:
-        int("x")
-    except ValueError as e:
-        assert T.error_location(e) == "unknown"
+        fn()
+    except Exception as e:  # noqa: BLE001
+        return e
+    raise AssertionError("没有报错")
+
+
+def _run_as(module: str, name: str, body: str, **names):
+    """造一层「模块 module 里的函数 name」的调用栈（出错位置只看模块名和函数名）"""
+    ns = {"__name__": module, **names}
+    exec(f"def {name}(*a):\n    {body}", ns)
+    return ns[name]
+
+
+def test_error_location_without_project_frames():
+    """调用栈里没有本项目代码：记最深一层第三方库（线上的 FileNotFoundError 之前只有 unknown，查不出是哪个库）；
+    全是标准库时记最深一层"""
+    import json
+    lib = _run_as("nicegui.persistence.file_persistent_dict", "backup", "open(a[0])")
+    e = _raised(lambda: lib("/no/such/dir/secret.json"))
+    assert T.error_location(e) == "nicegui.persistence.file_persistent_dict.backup:2"
+    e = _raised(lambda: json.loads("{"))
+    e.__traceback__ = e.__traceback__.tb_next.tb_next          # 去掉测试文件自己的两层，只剩标准库
+    assert T.error_location(e).startswith("json.")
+    assert T.error_location(ValueError("没有调用栈")) == "unknown"
+
+
+def test_error_location_adds_caller_of_shared_widget():
+    """错在到处都在用的界面小构件里（线上的 RuntimeError @ gui.widgets.notice，117 处在用）：加上调用它的那一层"""
+    notice = _run_as("gui.widgets", "notice", "raise RuntimeError('The client this element belongs to has been deleted.')")
+    download = _run_as("gui.pages.selection.data_tab", "download", "notice()", notice=notice)
+    loc = T.error_location(_raised(download))
+    assert loc == "gui.widgets.notice:2.from.gui.pages.selection.data_tab.download:2" and T.LOC_RE.match(loc)
+    assert T.error_location(_raised(notice)) == "gui.widgets.notice:2"           # 没有调用方
+    long = _run_as("gui.pages." + "x" * 120, "f", "notice()", notice=notice)      # 加上就超长：只留构件本身
+    assert T.error_location(_raised(long)) == "gui.widgets.notice:2"
 
 
 def test_payload_matches_server_format(tele):

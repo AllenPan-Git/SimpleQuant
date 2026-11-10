@@ -5,6 +5,18 @@
 
 Changes in each release. `tools/release.py` copies the matching section into the GitHub release notes.
 
+## 3.2.2（2026-11-10）
+
+### 更新内容
+- 修复：更改数据保存位置并「立即重启」后，这一次运行里界面偏好（语言、深浅色、侧栏展开）与首页「最近的报告」保存不下来，后台反复报错；再次启动后恢复正常。原因是重启后的程序仍向原位置保存，而原位置随后已被删除（3.2.0 引入）
+- 修复：数据中心「选股数据」「可转债」下载途中切换到其他页面，之后下载失败或有个别条目出错时后台报错（下载本身不受影响，已下载的数据都已保存）。工具页的个股概览、持仓诊断与多因子选股、因子实验室的面板载入同样处理
+- 改进：匿名使用统计里的出错位置更具体，只有模块名、函数名与代码行号，不含错误消息、文件路径和数据。出错处是多处共用的界面构件时，加上调用它的那一层；出错处不在本软件代码里时，记所在的第三方库函数（之前一律记为 unknown）
+
+### Changes
+- Fixed: after changing the data location and choosing "Restart now", interface preferences (language, light/dark, sidebar) and "Recent reports" on the home page were not saved during that run, with repeated background errors; the next launch was normal again. The restarted app kept saving to the old location, which had been deleted by then (introduced in 3.2.0)
+- Fixed: a background error when a "Stock data" or "Convertible bonds" download in the Data center failed, or finished with some items in error, after you had moved to another page (the download itself was not affected; everything downloaded was saved). Stock overview and holdings check on the Tools page, and panel loading in stock selection and the factor lab, are handled the same way
+- Improved: error locations in the anonymous usage statistics are more specific: module name, function name and source line number only, with no error messages, file paths or data. When the error is in an interface component shared by many pages, the caller is added; when it is outside this app's code, the third-party library function is recorded (previously always "unknown")
+
 ## 3.2.1（2026-11-10）
 
 ### 更新内容

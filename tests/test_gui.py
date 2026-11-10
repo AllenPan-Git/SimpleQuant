@@ -3122,6 +3122,57 @@ async def test_paper_run_all_after_leaving_page(user: User, paper_dir, monkeypat
     assert done == [1] and not errors, errors
 
 
+async def _leave_for_good(element):
+    """窗口里换页几秒后：旧页面被删掉（测试工具不会自动删），页面对象随后被回收。
+    回收之后再往旧页面的容器里建元素，NiceGUI 抛 RuntimeError（只删不回收时不报错，所以要两步都做）"""
+    import gc
+    import weakref
+    client = element.client
+    alive = weakref.ref(client)
+    client.delete()
+    del client, element
+    await asyncio.sleep(0)
+    gc.collect()
+    return alive() is None
+
+
+@pytest.mark.parametrize("tab, mark, method", [("stocks", "sp_download", "update_universe"),
+                                               ("cb", "cb_download", "update_all")])
+async def test_data_download_fails_after_leaving_page(user: User, monkeypatch, tab, mark, method):
+    """数据中心「选股数据 / 可转债」下载途中离开了页面，之后下载失败：失败提示画不出来（页面已不在），
+    不再报错（线上 3.2.0 的 RuntimeError @ gui.widgets.notice）"""
+    import sys
+    import threading
+    from nicegui import app
+    routes()
+    gate, errors = threading.Event(), []
+
+    class Store:
+        def __getattr__(self, name):
+            def call(*a, **kw):
+                if name == method:
+                    gate.wait(10)
+                    raise ConnectionError("网络接收错误")
+                raise AssertionError(name)
+            return call
+    monkeypatch.setitem(sys.modules["gui.sel_panel"].__dict__, "universe_ready", lambda u: False)
+    monkeypatch.setattr(app, "_exception_handlers", [*app._exception_handlers, errors.append])
+    state.STATE["data_tab"] = tab
+    await user.open("/data")
+    import gui.pages.selection.data_tab  # noqa: F401  页面打开后才导入
+    monkeypatch.setitem(sys.modules["gui.pages.selection.data_tab"].__dict__, "store", Store)
+    await user.open("/data")
+    btn = user.find(marker=mark).elements.pop()
+    user.find(marker=mark).click()
+    await settle()
+    await user.open("/")
+    await _leave_for_good(btn)
+    del btn
+    gate.set()
+    await asyncio.sleep(0.5)
+    assert not errors, errors
+
+
 async def test_paper_progress_survives_leaving_page(user: User, paper_dir, monkeypatch):
     """模拟盘更新的进度不跟着页面走：换到别的页面时侧栏「模拟盘」旁显示百分比，回到模拟盘页仍有进度条、
     「更新」按钮变灰；更新在哪个页面结束，就在哪个页面弹结果"""

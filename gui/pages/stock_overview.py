@@ -94,6 +94,8 @@ def render_into(box, code: str, SP):
 
     async def load():
         ov = await run.io_bound(O.build, StockStore(), code)
+        if box.is_deleted:                  # 载入途中离开了页面
+            return
         box.clear()
         with box:
             _render(ov, SP, lambda: render_into(box, code, SP))
@@ -145,6 +147,8 @@ def _missing(ov, SP, reload):
 
     async def estimate():
         n = await run.io_bound(O.requests_needed, StockStore(), ov.code, start, end)
+        if hint.is_deleted:
+            return
         hint.text = t("ov.download_help", start=start, n=n)
     background_tasks.create(estimate(), name="overview estimate")
 
@@ -154,9 +158,13 @@ def _missing(ov, SP, reload):
         try:
             errs = await run.io_bound(O.download, StockStore(), ov.code, start, end)
         except Exception as e:  # noqa: BLE001 - 额度用完、IP 被暂停等：说明原因，已下载的保留
+            if btn.is_deleted:              # 下载途中离开了页面
+                return
             btn.enable()
             with out:
                 notice(f"{type(e).__name__}: {e}", "error", "error")
+            return
+        if btn.is_deleted:
             return
         if errs:
             ui.notify(t("ov.dl_errors", e="; ".join(f"{c}: {m}" for c, m in errs.items())), type="warning")
@@ -253,9 +261,13 @@ def picks_dialog(SP, panel, rspec: dict, res, date: pd.Timestamp):
         try:
             info = await run.io_bound(pick_details, panel, rspec, date, codes, cache["data"])
         except Exception as e:  # noqa: BLE001 - 自定义因子被删除等
+            if box.is_deleted:
+                return
             wait.delete()
             with box:
                 notice(f"{type(e).__name__}: {e}", "error", "error")
+            return
+        if box.is_deleted:
             return
         wait.delete()
         weighting = rspec.get("weighting", "manual")

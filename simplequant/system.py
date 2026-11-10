@@ -80,9 +80,22 @@ def relaunch_cmd(pid: int, argv: list[str], system: str = SYSTEM) -> list[str]:
     return ["/bin/sh", "-c", f"while kill -0 {pid} 2>/dev/null; do sleep 0.3; done; exec {shlex.join(argv)}"]
 
 
+# 本进程按数据目录算出来、写进环境变量的路径：不能带给重启后的新进程（数据目录可能刚换了位置）
+RELAUNCH_DROP = ("NICEGUI_STORAGE_PATH",)
+
+
+def relaunch_env(environ=None) -> dict:
+    """重启后的新进程用的环境变量。
+    gui.app 用 setdefault 设 NICEGUI_STORAGE_PATH（界面偏好、最近的报告存在哪）；3.2.0～3.2.1 把它原样传给新进程，
+    更改数据保存位置后新进程仍往旧位置存，旧位置随后被删掉，每次保存都报 FileNotFoundError、这次运行里的偏好存不下来"""
+    env = {k: v for k, v in (os.environ if environ is None else environ).items() if k not in RELAUNCH_DROP}
+    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"    # 打包版：新进程按独立程序启动，不沿用本进程的解压目录等设置
+    return env
+
+
 def relaunch_after_exit(argv: list[str]):
     """启动等待脚本（之后调用方应立即退出程序）"""
-    env = {**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"}    # 打包版：新进程按独立程序启动，不沿用本进程的解压目录等设置
+    env = relaunch_env()
     kw = dict(stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
     cmd = relaunch_cmd(os.getpid(), argv)
     if WINDOWS:

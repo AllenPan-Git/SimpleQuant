@@ -108,6 +108,8 @@ def _data_tab(SP, ctx, reload_all, universe: str | None = None):
                 return codes, errs
             try:
                 codes, errs = await run.io_bound(work)
+                if out.is_deleted:          # 下载途中离开了页面：数据已保存，这一页不在了，不用再画
+                    return
                 ui.notify(t("sp.download_done", n=len(codes)), type="positive")
                 if errs:
                     with out:
@@ -115,6 +117,8 @@ def _data_tab(SP, ctx, reload_all, universe: str | None = None):
                                "\n".join(f"- {c}: {m}" for c, m in list(errs.items())[:10]), "warning", "warning")
                     return
             except Exception as ex:  # noqa: BLE001
+                if out.is_deleted:          # 同上：失败原因画不出来
+                    return
                 with out:
                     notice(t("data.fetch_failed", sym=universe) + f"：{type(ex).__name__}: {ex}", "error", "error")
                 return
@@ -204,6 +208,8 @@ def _cb_data_tab(SP, ctx, reload_all):
                 prog.set(i / n if n else 0, f"{steps[step]} · {i}/{n} · {time.time() - t0:.0f}s")
             try:
                 errs = await run.io_bound(st.update_all, s, e, w, progress)
+                if out.is_deleted:          # 下载途中离开了页面：数据已保存，这一页不在了，不用再画
+                    return
                 ui.notify(t("cb.download_done"), type="positive")
                 if errs:
                     with out:
@@ -211,6 +217,8 @@ def _cb_data_tab(SP, ctx, reload_all):
                                "\n".join(f"- {c}: {m}" for c, m in list(errs.items())[:10]), "warning", "warning")
                     return
             except Exception as ex:  # noqa: BLE001
+                if out.is_deleted:          # 同上：失败原因画不出来
+                    return
                 with out:
                     notice(t("data.fetch_failed", sym=p(UNIVERSES["cb"]["label"])) + f"：{type(ex).__name__}: {ex}",
                            "error", "error")

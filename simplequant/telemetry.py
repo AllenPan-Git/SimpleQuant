@@ -15,6 +15,7 @@ import datetime as dt
 import json
 import os
 import re
+import sys
 import threading
 import traceback
 import uuid
@@ -36,8 +37,10 @@ FEEDBACK_CHARS = 2000
 KEY_RE = re.compile(r"^[a-z0-9_:/.\-]{1,64}$")
 NAME_RE = re.compile(r"^[a-z0-9_]{1,32}$")
 ERR_TYPE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]{0,63}$")
-LOC_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]{0,127}$")
+LOC_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.:]{0,127}$")      # 模块.函数:行号
+IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]{0,119}$")
 OUR_PACKAGES = ("simplequant", "gui", "ui")
+SHARED_MODULES = ("gui.widgets", "gui.components", "gui.common")    # 界面小构件：出错位置再加一层调用方
 
 _lock = threading.Lock()
 _state: dict | None = None      # None = 未启用
@@ -165,13 +168,34 @@ def _clean_ident(s: str, pattern: re.Pattern) -> str | None:
 
 
 def error_location(exc: BaseException) -> str:
-    """出错位置：调用栈里最深的一层本项目代码（模块.函数）；不含文件路径和行号"""
-    loc = "unknown"
-    for frame, _ in traceback.walk_tb(exc.__traceback__):
-        mod = frame.f_globals.get("__name__", "")
-        if mod.split(".")[0] in OUR_PACKAGES:
-            loc = f"{mod}.{frame.f_code.co_name}"
-    return _clean_ident(loc, LOC_RE) or "unknown"
+    """出错位置：调用栈里最深的一层本项目代码，写成「模块.函数:行号」；不含文件路径和错误消息。
+    代码是公开的，行号配上版本号就能对到具体哪一行（同一个函数里成功 / 失败两条路径也分得开）。
+
+    只有这一层时有两种情况定位不了（3.2.0 的线上报错），各补一点：
+    - 最深一层是到处都在用的界面小构件（SHARED_MODULES，如 gui.widgets.notice）：后面加上调用它的那一层，
+      写成「gui.widgets.notice:58.from.gui.pages.selection.data_tab.download:121」
+    - 调用栈里没有本项目代码（错在库的后台任务里）：记最深一层第三方库（如 nicegui.….backup:45），
+      全是标准库时记最深一层；之前一律是 unknown"""
+    ours, libs, last = [], [], None
+    for frame, line in traceback.walk_tb(exc.__traceback__):
+        mod = frame.f_globals.get("__name__", "") or ""
+        ident = _clean_ident(f"{mod}.{frame.f_code.co_name}", IDENT_RE)
+        if not ident:
+            continue
+        last = f"{ident}:{int(line or 0)}"
+        top = mod.split(".")[0]
+        if top in OUR_PACKAGES:
+            ours.append((mod, last))
+        elif top not in sys.stdlib_module_names:
+            libs.append(last)
+    if ours:
+        mod, loc = ours[-1]
+        callers = [x for m, x in ours[:-1] if m not in SHARED_MODULES]
+        if mod in SHARED_MODULES and callers and LOC_RE.match(f"{loc}.from.{callers[-1]}"):   # 太长时只留构件本身
+            loc = f"{loc}.from.{callers[-1]}"
+    else:
+        loc = libs[-1] if libs else last
+    return loc if loc and LOC_RE.match(loc) else "unknown"
 
 
 def error(exc: BaseException):

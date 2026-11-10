@@ -132,6 +132,14 @@ def test_copy_refuses_while_paper_running(env, tmp_path):
             runner._unlock(f)
 
 
+def test_relaunch_env_drops_storage_path():
+    """重启后的新进程不沿用本进程的界面存储目录：否则换了数据位置后仍往旧位置存，旧位置一删就报 FileNotFoundError"""
+    from simplequant.system import relaunch_env
+    env = relaunch_env({"NICEGUI_STORAGE_PATH": r"C:\old\data_cache\gui_storage", "PATH": "x"})
+    assert env == {"PATH": "x", "PYINSTALLER_RESET_ENVIRONMENT": "1"}
+    assert "PYINSTALLER_RESET_ENVIRONMENT" in relaunch_env()
+
+
 def test_relaunch_cmd():
     from simplequant.system import relaunch_cmd
     win = relaunch_cmd(42, [r"C:\Users\O'Brien\SimpleQuant.exe", "--x", "a b"], system="windows")[-1]

@@ -115,9 +115,12 @@ def panel_loader(SP, ctx, builders, on_empty=None):
             return
         key = (SP["universe"], ctx.panel_start, ctx.end)
         ctx.loading = key
+        gone = lambda: any(box.is_deleted for box, _ in pairs)      # 载入途中离开了页面：面板已缓存，不用再画
         try:
             panel = await run.io_bound(get_panel, *key)
         except Exception as e:  # noqa: BLE001
+            if gone():
+                return
             for box, _ in pairs:
                 box.clear()
                 with box:
@@ -127,6 +130,8 @@ def panel_loader(SP, ctx, builders, on_empty=None):
             return
         ctx.panel = panel
         state.STATE["sp_panel_key"] = key
+        if gone():
+            return
         for box, build in pairs:
             box.clear()
             with box:

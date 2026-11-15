@@ -258,6 +258,73 @@ def test_store_update_flow(tmp_path):
     assert len(st.load("113100")) == len(days)
 
 
+# ---------------- 指数：中证官网缺最近几天时用备用来源补 ----------------
+def _idx(days, close=400.0):
+    return pd.DataFrame({"open": close - 1, "close": close}, index=pd.DatetimeIndex(days, name="date"))
+
+
+def test_index_backup_fills_recent_days_only_when_overlap_agrees(monkeypatch):
+    from simplequant.bonds import store as S
+    days = pd.bdate_range("2024-03-01", "2024-03-15")
+    monkeypatch.setattr(S, "expected_index_day", lambda end, now=None: days[-1])
+    calls = []
+
+    def backup(close):
+        def fn(start, end):
+            calls.append((start, end))
+            return _idx(days, close).loc[start:end]
+        return fn
+
+    def broken(start, end):
+        raise ConnectionError("down")
+
+    main = lambda s, e: _idx(days[:-2])                                           # noqa: E731 - 缺最后两天
+    # 主来源已到最新一天：不访问备用来源
+    out = S.fetch_index("2024-03-01", "2024-03-15", primary=lambda s, e: _idx(days), backups=[("b", backup(400.0))])
+    assert out.index[-1] == days[-1] and calls == []
+    # 缺两天、重合日一致：补上，且只从主来源最后一天往前若干天取到应有的那天
+    out = S.fetch_index("2024-03-01", "2024-03-15", primary=main, backups=[("b", backup(400.0))])
+    assert list(out.index) == list(days) and calls == [("2024-02-27", "2024-03-15")]
+    # 重合日对不上：不补；第一个备用来源连不上时用下一个
+    out = S.fetch_index("2024-03-01", "2024-03-15", primary=main, backups=[("b", backup(410.0))])
+    assert out.index[-1] == days[-3]
+    out = S.fetch_index("2024-03-01", "2024-03-15", primary=main, backups=[("x", broken), ("b", backup(400.0))])
+    assert out.index[-1] == days[-1]
+    # 主来源连不上：整段用备用来源；都连不上才报错
+    out = S.fetch_index("2024-03-01", "2024-03-15", primary=broken, backups=[("b", backup(400.0))])
+    assert list(out.index) == list(days)
+    with pytest.raises(ConnectionError):
+        S.fetch_index("2024-03-01", "2024-03-15", primary=broken, backups=[("x", broken)])
+    # 备用来源里晚于「此刻应有的那天」的行（盘中未收盘的当天）不取
+    monkeypatch.setattr(S, "expected_index_day", lambda end, now=None: days[-2])
+    out = S.fetch_index("2024-03-01", "2024-03-15", primary=main, backups=[("b", backup(400.0))])
+    assert out.index[-1] == days[-2]
+
+
+def test_expected_index_day_waits_for_evening(monkeypatch):
+    import datetime as dt
+    from simplequant.bonds import store as S
+    from simplequant.paper import calendar as C
+    monkeypatch.setattr(C, "load_calendar", lambda *a, **k: pd.bdate_range("2024-01-01", "2024-12-31"))
+    assert S.expected_index_day("2024-12-31", dt.datetime(2024, 3, 15, 14, 0)) == pd.Timestamp("2024-03-14")
+    assert S.expected_index_day("2024-12-31", dt.datetime(2024, 3, 15, 19, 0)) == pd.Timestamp("2024-03-15")
+    assert S.expected_index_day("2024-12-31", dt.datetime(2024, 3, 17, 19, 0)) == pd.Timestamp("2024-03-15")   # 周日
+    assert S.expected_index_day("2024-03-08", dt.datetime(2024, 3, 15, 19, 0)) == pd.Timestamp("2024-03-08")
+
+
+def test_update_index_keeps_older_rows_when_source_starts_later(tmp_path):
+    days = pd.bdate_range("2024-01-01", "2024-03-29")
+    parts = [_idx(days[:40]), _idx(days[30:], 405.0)]
+    st = CBStore(tmp_path / "cb", fetchers={"index": lambda s, e: parts.pop(0)})
+    st.root.mkdir(parents=True, exist_ok=True)
+    first = st.update_index("2024-01-01", "2024-03-29")
+    out = st.update_index("2024-01-01", "2024-03-29")          # 节假日会被交易日历去掉，所以不直接和 days 比
+    assert out.index.is_monotonic_increasing and out.index.is_unique
+    assert out.index[0] == first.index[0] and out.index[-1] == days[-1]
+    assert (out.loc[:days[29], "close"] == 400.0).all() and (out.loc[days[30]:, "close"] == 405.0).all()
+    assert len(st.load_index()) == len(out)
+
+
 # ---------------- 模拟盘：逐日运行与一次性回测一致 ----------------
 def test_cb_paper_daily_progression_equals_full_backtest(store, tmp_path, monkeypatch):
     from simplequant.paper import account as account_mod, create_account, run_account, load_account

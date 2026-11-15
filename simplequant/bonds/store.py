@@ -5,7 +5,7 @@
     list.parquet          全部可转债（含已退市，东方财富）：代码、简称、正股、上市日期、发行规模、发行时评级
     info.parquet          条款（每只一行，东方财富）：起息日、期限、退市日、付息日、各年票面利率、赎回公告
     daily/<代码>.parquet   日线：不复权开高低收、成交量（张，新浪）+ 纯债价值、转股价值、转股价、剩余规模（东方财富）
-    index.parquet         中证转债指数 000832（基准 + 交易日历，中证指数公司）
+    index.parquet         中证转债指数 000832（基准 + 交易日历，中证指数公司；缺最近几天时由东方财富 / 腾讯补）
     manifest.json         每只转债最近一次更新到的日期
 
 接口实测（2026-10-01）：
@@ -199,14 +199,89 @@ def fetch_info(code: str) -> dict:
     return process_info(df.iloc[0].to_dict())
 
 
-def fetch_index(start: str, end: str) -> pd.DataFrame:
+def _index_frame(dates, opens, closes) -> pd.DataFrame:
+    df = pd.DataFrame({"date": pd.to_datetime(dates), "open": pd.to_numeric(opens, errors="coerce"),
+                       "close": pd.to_numeric(closes, errors="coerce")})
+    df = df.dropna().drop_duplicates("date", keep="last").set_index("date").sort_index()
+    return df[df.index.dayofweek < 5]
+
+
+def fetch_index_csindex(start: str, end: str) -> pd.DataFrame:
     import akshare as ak
     raw = with_retry(lambda: ak.stock_zh_index_hist_csindex(symbol=INDEX_CODE, start_date=start.replace("-", ""),
                                                             end_date=end.replace("-", "")), retries=4, wait=2.0)
-    df = pd.DataFrame({"date": pd.to_datetime(raw["日期"]), "open": pd.to_numeric(raw["开盘"], errors="coerce"),
-                       "close": pd.to_numeric(raw["收盘"], errors="coerce")})
-    df = df.dropna().drop_duplicates("date", keep="last").set_index("date").sort_index()
-    return df[df.index.dayofweek < 5]
+    return _index_frame(raw["日期"], raw["开盘"], raw["收盘"])
+
+
+def fetch_index_em(start: str, end: str) -> pd.DataFrame:
+    import akshare as ak
+    raw = with_retry(lambda: ak.stock_zh_index_daily_em(symbol="sh" + INDEX_CODE, start_date=start.replace("-", ""),
+                                                        end_date=end.replace("-", "")), retries=2, wait=1.0)
+    return _index_frame(raw["date"], raw["open"], raw["close"])
+
+
+def fetch_index_tx(start: str, end: str) -> pd.DataFrame:
+    import akshare as ak
+    raw = with_retry(lambda: ak.stock_zh_index_daily_tx(symbol="sh" + INDEX_CODE), retries=2, wait=1.0)
+    return _index_frame(raw["date"], raw["open"], raw["close"]).loc[start:end]
+
+
+# 中证官网的历史行情偶尔晚几天入库（2026-11-12、11-13 两天全部指数都没有，实时行情正常），
+# 而日历取自这份指数：它缺的日子，转债日线再全也用不上。缺最近几天时依次用这些来源补
+INDEX_BACKUPS = (("eastmoney", fetch_index_em), ("tencent", fetch_index_tx))
+INDEX_TOL = 0.02                 # 重合日上备用来源与中证官网允许的差（指数保留两位小数）
+INDEX_OVERLAP_DAYS = 15          # 备用来源从主来源最后一天往前多取这么多天，用来核对
+
+
+def extend_index(main: pd.DataFrame | None, backup: pd.DataFrame) -> pd.DataFrame:
+    """
+    用备用来源补上主来源还没有的最近几天。两边最近 5 个重合日的开盘、收盘都一致才补
+    （对不上说明口径不同，不混用）；主来源完全取不到时直接用备用来源
+    """
+    if main is None or not len(main):
+        return backup
+    new = backup[backup.index > main.index[-1]]
+    both = main.index.intersection(backup.index)[-5:]
+    if not len(new) or not len(both):
+        return main
+    diff = (main.loc[both, ["open", "close"]] - backup.loc[both, ["open", "close"]]).abs()
+    return main if (diff > INDEX_TOL).any().any() else pd.concat([main, new])
+
+
+def expected_index_day(end: str, now: dt.datetime | None = None) -> pd.Timestamp:
+    """此刻指数应该已经有的最新一天（不晚于 end）。取不到交易日历时按「18 点后算当天、否则算前一天」的工作日近似"""
+    now = now or dt.datetime.now()
+    try:
+        from ..paper.calendar import latest_expected_day, load_calendar
+        day = latest_expected_day(load_calendar(refresh_if_stale=False), now)
+    except Exception:  # noqa: BLE001
+        day = pd.Timestamp(now.date()) - pd.Timedelta(days=0 if now.hour >= 18 else 1)
+        while day.dayofweek >= 5:
+            day -= pd.Timedelta(days=1)
+    return min(day, pd.Timestamp(end))
+
+
+def fetch_index(start: str, end: str, primary=None, backups=None, now: dt.datetime | None = None) -> pd.DataFrame:
+    """中证转债指数：中证官网为主；它缺最近几天（或连不上）时用备用来源补，只补到此刻应该已有的那天为止"""
+    try:
+        main, err = (primary or fetch_index_csindex)(start, end), None
+    except Exception as e:  # noqa: BLE001
+        main, err = None, e
+    have = main is not None and len(main) > 0
+    last = expected_index_day(end, now)
+    if have and main.index[-1] >= last:
+        return main
+    since = (main.index[-1] - pd.Timedelta(days=INDEX_OVERLAP_DAYS)).strftime("%Y-%m-%d") if have else start
+    for _name, fn in (INDEX_BACKUPS if backups is None else backups):
+        try:
+            out = extend_index(main if have else None, fn(since, last.strftime("%Y-%m-%d")).loc[:last])
+        except Exception:  # noqa: BLE001 - 备用来源取不到就试下一个
+            continue
+        if len(out) and (not have or len(out) > len(main)):
+            return out
+    if not have and err is not None:
+        raise err
+    return main
 
 
 # ---------------- 存储 ----------------
@@ -358,6 +433,9 @@ class CBStore:
             df = df[~inside | df.index.isin(cal)]          # 中证官网偶尔有节假日的重复行
         except Exception:  # noqa: BLE001 - 取不到日历时只去掉周末
             pass
+        if len(df) and self.has_index():                    # 这次取到的起点比已有的晚（只靠备用来源时）：保留已有的前段
+            old = self.load_index()
+            df = pd.concat([old[old.index < df.index[0]], df])
         df.to_parquet(self.root / "index.parquet")
         return df
 

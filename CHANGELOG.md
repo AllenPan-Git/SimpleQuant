@@ -5,6 +5,14 @@
 
 Changes in each release. `tools/release.py` copies the matching section into the GitHub release notes.
 
+## 3.2.3（2026-11-15）
+
+### 更新内容
+- 改进：中证指数官网的历史行情未及时更新时，可转债数据不再跟着停住。可转债的交易日历与基准取自中证转债指数，官网缺最近几天时（如 2026-11-12、11-13），即使各只转债的行情已下载，回测与模拟账户也只到指数的最后一天，模拟盘提示「当天数据尚未发布」。现在指数缺最近几天或官网无法连接时，依次改用东方财富、腾讯的同一指数补齐；补之前核对两边最近几个重合交易日的开盘与收盘，不一致则不补。当天 18 点前不取当天的数据
+
+### Changes
+- Improved: convertible-bond data no longer stalls when the CSI website is late publishing index history. The trading calendar and benchmark for convertible bonds come from the CSI Convertible Bond Index, so when the website lacked the latest days (e.g. 12 and 13 Nov 2026), backtests and paper accounts stopped at the index's last day even though the bonds' own bars had been downloaded, and paper trading reported "data not published yet". When the index lacks recent days or the website cannot be reached, the same index is now taken from Eastmoney, then Tencent; open and close on the most recent overlapping days are compared first, and nothing is added if they disagree. Today's bar is not taken before 18:00
+
 ## 3.2.2（2026-11-10）
 
 ### 更新内容

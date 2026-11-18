@@ -11,7 +11,8 @@ import pandas as pd
 from nicegui import background_tasks, run, ui
 
 from simplequant.data import names as sec_names
-from simplequant.data import SOURCES, ASSET_TYPES, RESAMPLE_RULES, fetch_to_library, library, has_merge_candidates, merge_library
+from simplequant.data import (SOURCES, ASSET_TYPES, RESAMPLE_RULES, fetch_to_library, library, has_merge_candidates,
+                              merge_library, can_update, update_dataset, update_library)
 from simplequant.data.base import freq_label, EXTRA_COLUMNS
 from simplequant.data.ratio_adjust import is_additive
 from simplequant.data.csv_src import read_csv_any, is_snapshot
@@ -401,9 +402,14 @@ def _library_view(refresh, fold: bool = False):
     if not metas:
         ui.label(t("data.empty")).classes("sq-muted")
         return
-    if has_merge_candidates(metas):         # 有同一标的、区间重叠或相接的几份数据时才显示
-        btn = ui.button(t("lib.merge"), icon="merge", on_click=lambda: merge_split(btn, refresh)) \
-            .props("outline no-caps").classes("self-start").tooltip(t("lib.merge_tip")).mark("data_lib_merge")
+    with ui.row().classes("items-center gap-2"):
+        if any(can_update(m) for m in metas):
+            ubtn = ui.button(t("lib.update_all"), icon="update", on_click=lambda: update_latest(ubtn, prog, refresh)) \
+                .props("outline no-caps").tooltip(t("lib.update_tip")).mark("data_lib_update")
+        if has_merge_candidates(metas):     # 有同一标的、区间重叠或相接的几份数据时才显示
+            btn = ui.button(t("lib.merge"), icon="merge", on_click=lambda: merge_split(btn, refresh)) \
+                .props("outline no-caps").tooltip(t("lib.merge_tip")).mark("data_lib_merge")
+    prog = Progress()
     df_table(pd.DataFrame([{
         t("lib.name"): m.name, t("lib.freq"): freq_label(m.freq, lg),
         t("lib.source"): t(f"src.{m.source}") + (f"（{t('prov.' + m.extra['provider'])}）"
@@ -432,9 +438,57 @@ def _library_view(refresh, fold: bool = False):
                 ui.button(t("lib.download_csv"), icon="download", on_click=lambda: ui.download.content(
                     df.rename_axis("date").reset_index().to_csv(index=False).encode("utf-8-sig"),
                     f"{m.symbol}.csv", "text/csv")).props("outline no-caps")
+                if can_update(m):
+                    one = ui.button(t("lib.update_one"), icon="update",
+                                    on_click=lambda: update_latest(one, prog, refresh, m)) \
+                        .props("outline no-caps").tooltip(t("lib.update_tip")).mark("data_lib_update_one")
                 ui.button(t("lib.delete"), icon="delete", on_click=lambda: confirm_delete(m, refresh))                     .props("outline no-caps color=negative")
     sel.on_value_change(show)
     show()
+
+
+async def update_latest(btn, prog, refresh, meta=None):
+    """本地数据库更新到最新：meta 为空时更新全部在线下载的数据，结果在对话框里逐份列出"""
+    if JOB.running:                     # 模拟盘也在用 BaoStock / 东方财富，错开
+        ui.notify(t("lib.update_busy"), type="warning")
+        return
+    btn.disable()
+    prog.start(t("lib.updating"))
+
+    def one():
+        try:
+            return [(meta, *update_dataset(meta))]
+        except Exception as e:  # noqa: BLE001
+            return [(meta, "failed", str(e))]
+    try:
+        if meta is None:
+            res = await run.io_bound(update_library, progress=lambda i, n, m: prog.set(i / n, f"{i + 1}/{n}  {m.name}"))
+        else:
+            res = await run.io_bound(one)
+    finally:
+        if not btn.is_deleted:
+            btn.enable()
+            prog.stop()
+    if btn.is_deleted:                  # 已离开页面：数据已存好，不再画
+        return
+    lines = []
+    for m, status, new in res:
+        if status == "updated":
+            lines.append(t("lib.update_done", name=m.name, a=f"{m.start} ~ {m.end}", b=f"{new.start} ~ {new.end}"))
+        elif status == "latest":
+            lines.append(t("lib.update_latest", name=m.name, end=m.end))
+        elif status == "mismatch":
+            lines.append(t("lib.update_mismatch", name=m.name, end=m.end))
+        else:
+            lines.append(t("lib.update_failed", name=m.name, e=new))
+    with ui.dialog() as dlg, ui.card().classes("max-w-xl"):
+        ui.label(t("lib.update_one" if meta else "lib.update_all")).classes("sq-h2")
+        for line in lines:
+            ui.label(line).classes("text-sm").style("white-space: pre-line")
+        with ui.row().classes("w-full justify-end"):
+            ui.button(t("gui.close"), on_click=dlg.close).props("unelevated no-caps").mark("update-ok")
+    dlg.on_value_change(lambda e: None if e.value else refresh())
+    dlg.open()
 
 
 async def merge_split(btn, refresh):

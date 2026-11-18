@@ -481,6 +481,26 @@ TEXT.update({
                        "{name}: {a} and {b} adjoin without overlapping days, so they could not be checked and were not merged; "
                        "re-download one of them so the periods overlap by a few days."),
     "lib.merge_none": L("没有可以合并的数据。", "There was nothing to merge."),
+    "lib.update_all": L("全部更新到最新", "Update all to latest"),
+    "set.lib_sync": L("模拟盘更新后，同时将本地数据库更新至最新", "After updating paper trading, also update the local database"),
+    "set.lib_sync_help": L("适用于每日定时任务与手动更新。在线下载的数据将补齐至最近一个收盘日；数据较多时更新耗时相应增加，可在此关闭。",
+                           "Applies to the daily scheduled task and manual updates. Online datasets are extended to the latest "
+                           "close; with many datasets this takes longer, and it can be turned off here."),
+    "lib.update_one": L("更新到最新", "Update to latest"),
+    "lib.update_tip": L("按各份数据原有的来源与复权方式，将在线下载的数据补齐至最近一个收盘日；CSV 导入与通达信本地数据不在更新范围内",
+                        "Extends each online dataset from its last day to the latest close, using its own source and "
+                        "adjustment; CSV and local TDX data are skipped"),
+    "lib.updating": L("正在更新…", "Updating…"),
+    "lib.update_busy": L("模拟盘正在更新，请待其完成后再更新本地数据库。",
+                         "Paper trading is updating; update the local database after it finishes."),
+    "lib.update_done": L("{name}：{a} → {b}", "{name}: {a} → {b}"),
+    "lib.update_latest": L("{name}：数据已为最新（截至 {end}）", "{name}: already up to date ({end})"),
+    "lib.update_mismatch": L("{name}：{end} 的新旧价格不一致（通常因前复权期间发生分红，或复权方式已变更），未予更新。"
+                             "如需最新数据，请在「在线下载」中勾选「忽略本地已有数据，重新下载」，并下载完整区间。",
+                             "{name}: prices on {end} do not match the new download (usually a dividend under forward "
+                             "adjustment, or a changed adjustment method), so it was not updated; to get the latest data, "
+                             "tick “Ignore local data and download again” and download the whole period."),
+    "lib.update_failed": L("{name}：更新失败（{e}）", "{name}: update failed: {e}"),
     "adj.additive": L("加法", "additive"),
     "bt.unadjusted": L("{names} 为不复权数据：除权除息日价格下跳，可能产生虚假的卖出信号，且分红不计入收益。"
                        "建议改用后复权数据，或在「资金与交易成本」中选择「现金分红」。",
@@ -1678,6 +1698,7 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
     "pp.prog_log": L("运行日志", "Run log"),
     "pp.prog_error": L("更新出错：{err}", "Update failed: {err}"),
     "pp.step_prices": L("下载行情", "Downloading prices"),
+    "pp.step_library": L("更新本地数据库", "Updating the local database"),
     "pp.step_universe": L("获取历史成分股", "Fetching historical constituents"),
     "pp.step_index": L("获取指数", "Fetching index"),
     "pp.step_stocks": L("下载日线", "Downloading daily bars"),

@@ -3,6 +3,9 @@
 核心：逐日推进（每次只给到当天为止的数据）的结果，必须与一次性回测完全一致
 """
 
+import json
+from types import SimpleNamespace
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -627,3 +630,35 @@ def test_run_all_progress(monkeypatch):
                    progress=lambda d, total, name, key, i, n: seen.append((round(d, 2), total, name, key)))
     assert seen == [(0, 2, "甲", "prices"), (.45, 2, "甲", "prices"), (.9, 2, "甲", "run"),
                     (1, 2, "丙", "prices"), (1.45, 2, "丙", "prices"), (1.9, 2, "丙", "run")]
+
+
+def test_run_all_updates_local_library(monkeypatch, tmp_path, _no_library_sync):
+    """模拟盘更新（下载了数据）之后顺便更新本地数据库；只运行策略、或等过另一处时不做。开关存在 paper/options.json，默认开"""
+    from simplequant.paper import runner, library_sync
+    from simplequant.paper import account as acc_mod
+    import simplequant.data as data_mod
+    monkeypatch.setattr(acc_mod, "PAPER_ROOT", tmp_path)
+    _fake_run(monkeypatch, runner)
+    monkeypatch.setattr(runner, "refresh_single_data", lambda acc, progress=None: {})
+    calls, seen = [], []
+    monkeypatch.setattr(library_sync, "sync", lambda log, progress=None: calls.append(progress) or None)
+    runner.run_all([_acc("甲")], store=object(), refresh=False, log=lambda m: None)
+    assert calls == []
+    runner.run_all([_acc("甲")], store=object(), log=lambda m: None,
+                   progress=lambda d, total, name, key, i, n: seen.append((d, total, key, i, n)))
+    assert len(calls) == 1
+    calls[0](3, 5)
+    assert seen[-1] == (1, 1, "library", 3, 5)
+
+    # 真实的 sync：开关、日志
+    monkeypatch.setattr(library_sync, "sync", _no_library_sync)
+    m = SimpleNamespace(name="510300 沪深300ETF", end="2026-11-17")
+    monkeypatch.setattr(data_mod, "update_library", lambda progress=None: [
+        (m, "updated", m), (m, "latest", m), (m, "mismatch", m), (m, "failed", "timeout")])
+    logs = []
+    assert library_sync.enabled() and len(library_sync.sync(logs.append)) == 4
+    assert "1 updated, 1 already up to date, 1 not matching, 1 failed" in logs[1]
+    assert any("2026-11-17 的新旧价格不一致" in x for x in logs) and any("timeout" in x for x in logs)
+    library_sync.set_enabled(False)
+    assert not library_sync.enabled() and library_sync.sync(logs.append) is None
+    assert json.loads((tmp_path / "options.json").read_text(encoding="utf-8")) == {"update_library": False}

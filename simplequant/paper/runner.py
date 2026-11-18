@@ -22,7 +22,7 @@ from .. import strategies, telemetry
 from ..data import SOURCES
 from ..engine import run_backtest, BrokerConfig
 from ..engine.base_strategy import ORDER_COLUMNS
-from . import account as _account
+from . import account as _account, library_sync
 from .account import PaperAccount, NAV_COLUMNS, new_id, load_account
 from .calendar import load_calendar, next_trading_day, next_trading_days, latest_expected_day
 
@@ -382,7 +382,11 @@ def run_all(accounts: list[PaperAccount], store=None, refresh: bool = True, log=
         with run_lock(log, on_wait) as waited:
             if waited:        # 另一处刚更新完：数据已是最新，这次只需几秒；账户以文件里的为准
                 accounts = [a for a in map(_reload, accounts) if a is not None]
-            return _run_all(accounts, store, refresh, log, progress)
+            results = _run_all(accounts, store, refresh, log, progress)
+            if refresh and not waited:      # 顺便更新本地数据库（设置页可关）；等过另一处时它已经更新过
+                n = sum(a.status == "active" for a in accounts)
+                library_sync.sync(log, (lambda i, k: progress(n, n, "", "library", i, k)) if progress else None)
+            return results
     except RunLockTimeout:
         log(f"another update is still running after {LOCK_WAIT_LIMIT // 3600} hours; skipped / "
             f"另一处的更新超过 {LOCK_WAIT_LIMIT // 3600} 小时仍未结束，本次跳过")

@@ -29,6 +29,15 @@ def prices():
 
 
 @pytest.fixture(autouse=True)
+def _no_library_sync(monkeypatch):
+    """模拟盘更新后的「顺便更新本地数据库」会联网、读真实数据目录：测试里默认不做（要测它的测试自己换回来）"""
+    from simplequant.paper import library_sync
+    real = library_sync.sync
+    monkeypatch.setattr(library_sync, "sync", lambda *a, **k: None)
+    return real
+
+
+@pytest.fixture(autouse=True)
 def _reset_data_sites():
     """数据接口的「暂停访问」状态与新浪缓存是进程级的，每个测试前后清空"""
     from simplequant.data import net, sina

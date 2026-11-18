@@ -362,6 +362,53 @@ def test_merge_library_joins_existing_pieces(tmp_path, monkeypatch):
     assert {c.id, d.id} <= {m.id for m in library.list_datasets()}
 
 
+def test_update_library_appends_to_latest(tmp_path, monkeypatch):
+    """更新到最新：从最后一天补到今天，旧 id 指向新数据；已到最新的不联网；最后一天对不上的不改；本地数据跳过"""
+    from simplequant.data import SOURCES, update_library, update_dataset, can_update
+    from simplequant.paper import calendar as cal_mod
+    monkeypatch.setattr(library, "LIB_DIR", tmp_path)
+    for f in (library.save, library.exists, library.list_datasets, library.load, library.delete):
+        monkeypatch.setattr(f, "__defaults__", (tmp_path,))
+    full = make_prices(n=200, start="2025-01-02")
+    last = {"day": full.index[-1]}
+    scale, calls = {"510500": 1.1}, []
+
+    class Fake:
+        def fetch(self, symbol, start, end, **kw):
+            calls.append((symbol, start, kw.get("ratio")))
+            out = full.loc[start:end].copy()
+            out[["open", "high", "low", "close"]] *= scale.get(symbol, 1.0)
+            out.attrs.update(provider="eastmoney+dividends", adjust_method="ratio")
+            return out
+    monkeypatch.setitem(SOURCES, "akshare", Fake())
+    monkeypatch.setattr(cal_mod, "load_calendar", lambda *a, **k: full.index)
+    monkeypatch.setattr(cal_mod, "latest_expected_day", lambda cal: last["day"])
+
+    def put(sym, e, source="akshare"):
+        s = full.index[0].strftime("%Y-%m-%d")
+        m = library.DatasetMeta(id=library.make_id(source, sym, "1d", "hfq", s, e), name=sym, symbol=sym,
+                                source=source, freq="1d", adjust="hfq",
+                                extra={"asset": "etf", "adjust_method": "ratio"})
+        return library.save(full.loc[s:e], m)
+    a = put("510300", "2025-06-30")
+    b = put("510500", "2025-06-30")                                        # 补来的数据价格对不上
+    c = put("159915", "2025-06-30", source="csv")                          # 本地导入：不参与
+    assert not can_update(c)
+
+    res = {m.symbol: (st, new) for m, st, new in update_library(today="2026-01-01")}
+    assert set(res) == {"510300", "510500"} and calls[0][1:] == ("2025-06-30", True)
+    st, new = res["510300"]
+    assert st == "updated" and new.end == full.index[-1].strftime("%Y-%m-%d") and library.resolve(a.id) == new.id
+    pd.testing.assert_frame_equal(library.load(new.id), full, check_freq=False)
+    assert res["510500"][0] == "mismatch" and library.exists(b.id)        # 原数据不动，也不多出一小段
+    assert {m.symbol for m in library.list_datasets()} == {"510300", "510500", "159915"}
+
+    calls.clear()
+    assert update_dataset(new)[0] == "latest" and calls == []              # 已有最近一个收盘日：不联网
+    last["day"] = full.index[-1] + pd.Timedelta(days=1)                    # 该有新数据了，但数据源还没给
+    assert update_dataset(new)[0] == "latest" and len(calls) == 1
+
+
 def test_library_roundtrip(tmp_path):
     df = make_prices(n=20)
     meta = library.DatasetMeta(id=library.make_id("csv", "x", "1d", "", "a", "b"), name="X",

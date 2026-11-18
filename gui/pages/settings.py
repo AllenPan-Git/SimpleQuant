@@ -4,6 +4,7 @@ from nicegui import run, ui
 
 from simplequant import llm
 from simplequant.llm import LLMConfig, PRESETS, PROVIDERS, JSON_MODES
+from simplequant.paper import library_sync
 from gui.common import t, p
 from gui import update, telemetry_ui, data_location_ui
 from gui.layout import frame, page_title
@@ -123,6 +124,10 @@ def page():
 
         ui.separator().classes("q-my-md")
         data_location_ui.settings_section()
+        with ui.column().classes("gap-1 w-full mt-2"):
+            ui.switch(t("set.lib_sync"), value=library_sync.enabled(),
+                      on_change=lambda e: library_sync.set_enabled(bool(e.value))).mark("set_lib_sync")
+            ui.label(t("set.lib_sync_help")).classes("sq-muted text-sm")
         ui.separator().classes("q-my-md")
         telemetry_ui.settings_section()
         ui.separator().classes("q-my-md")

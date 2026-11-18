@@ -141,6 +141,74 @@ def merge_library(lib_dir=None):
     return merged, [p for p in problems.values() if p[0].id in alive and p[1].id in alive]
 
 
+FETCH_ATTRS = ("provider", "valuation", "adjust_method")     # 下载后才知道的元数据，不是下载参数
+
+
+def can_update(meta) -> bool:
+    """在线下载的数据才能「更新到最新」；CSV、通达信本地数据没有可以补的来源"""
+    return meta.source in ONLINE_DAILY
+
+
+def update_dataset(meta, lib_dir=None, today: str | None = None):
+    """
+    把一份数据从最后一天补到今天：按它自己的来源、代码、周期、复权、品种取最后一天起的数据，
+    最后一天两边价格一致才接上（存成新 id，旧 id 指向它），再与同一标的的其它分段合并。
+    返回 (状态, meta)：状态为 "updated"、"latest"（没有新数据）、"mismatch"（最后一天价格对不上，
+    多是前复权期间有过分红、或复权方式变了，没有改动；需要请重新下载整个区间）
+    """
+    import datetime as dt
+    lib_dir = lib_dir or library.LIB_DIR
+    if not can_update(meta):
+        raise ValueError(f"{meta.name}: local data cannot be updated online / 本地导入的数据无法在线更新")
+    from ..paper.calendar import load_calendar, latest_expected_day   # 延迟导入，避免循环依赖
+    if meta.freq == "1d" and pd.Timestamp(meta.end) >= latest_expected_day(load_calendar()):
+        return "latest", meta                       # 已有最近一个收盘日，不用联网
+    kwargs = {k: v for k, v in (meta.extra or {}).items() if k not in FETCH_ATTRS}
+    if meta.source == "akshare" and meta.adjust and kwargs.get("asset") in ("etf", "stock"):
+        kwargs["ratio"] = not is_additive(meta)     # 沿用原来的复权算法，否则两段接不上
+    tail = SOURCES[meta.source].fetch(meta.symbol, meta.end, today or str(dt.date.today()),
+                                      freq=meta.freq, adjust=meta.adjust, **kwargs)
+    if meta.freq == "1d":
+        tail = complete_bars_only(tail)
+    old = library.load(meta.id, lib_dir)
+    if not (tail.index > old.index[-1]).any():
+        return "latest", meta
+    extra = {**meta.extra, **{k: tail.attrs[k] for k in FETCH_ATTRS if tail.attrs.get(k)}}
+    probe = library.DatasetMeta(id="", name="", symbol=meta.symbol, source=meta.source, freq=meta.freq,
+                                adjust=meta.adjust, extra=extra)
+    if is_additive(probe) != is_additive(meta) or not _seam_matches(tail, old):
+        return "mismatch", meta
+    df = tail.combine_first(old)[list(dict.fromkeys([*old.columns, *tail.columns]))]
+    new_id = library.make_id(meta.source, meta.symbol, meta.freq, meta.adjust, meta.start,
+                             df.index[-1].strftime("%Y-%m-%d"))
+    new = library.save(df, library.DatasetMeta(id=new_id, name=meta.name, symbol=meta.symbol, source=meta.source,
+                                               freq=meta.freq, adjust=meta.adjust, extra=extra), lib_dir)
+    if new_id != meta.id:
+        library.replace(meta.id, new_id, lib_dir)
+    return "updated", merge_overlaps(new, lib_dir)
+
+
+def update_library(lib_dir=None, progress=None, today: str | None = None):
+    """
+    数据库里所有在线下载的数据都更新到最新。返回 [(更新前的 meta, 状态, 更新后的 meta 或报错文字)]，
+    状态另有 "failed"（下载失败，原数据不变）。被前面的更新合并进去的不再单独更新
+    """
+    lib_dir = lib_dir or library.LIB_DIR
+    todo = [m for m in library.list_datasets(lib_dir) if can_update(m)]
+    out = []
+    for i, m in enumerate(todo):
+        if progress:
+            progress(i, len(todo), m)
+        if not library.exists(m.id, lib_dir):
+            continue
+        try:
+            status, new = update_dataset(m, lib_dir, today)
+        except Exception as e:  # noqa: BLE001 - 一份失败不影响其它
+            status, new = "failed", str(e)
+        out.append((m, status, new))
+    return out
+
+
 def supersede(meta, lib_dir=None):
     """
     同一数据源、代码、周期、复权的旧数据，区间完全在新数据之内的删掉（重新下载、更新到最新时不留重复的旧数据，

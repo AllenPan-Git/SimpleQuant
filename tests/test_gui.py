@@ -268,6 +268,35 @@ async def test_data_merge_split_button(user: User, lib_dir):
     user.find(marker="merge-ok").click()
     await user.should_not_see(marker="merge-ok")
     await user.should_not_see(marker="data_lib_merge")       # 关掉对话框后刷新：按钮消失
+    await user.should_not_see(marker="data_lib_update")      # 只有 CSV 数据：没有可在线更新的
+
+
+async def test_data_update_to_latest(user: User, lib_dir, monkeypatch):
+    """「全部更新到最新」：在线下载的数据补到最近一个收盘日，对话框里写出前后区间"""
+    from simplequant.data import SOURCES
+    from simplequant.paper import calendar as cal_mod
+    full = make_prices(n=120, start="2025-01-02")
+
+    class Fake(type(SOURCES["akshare"])):        # 数据页要显示来源名称、说明
+        def fetch(self, symbol, start, end, **kw):
+            out = full.loc[start:end].copy()
+            out.attrs.update(provider="eastmoney+dividends", adjust_method="ratio")
+            return out
+    monkeypatch.setitem(SOURCES, "akshare", Fake())
+    monkeypatch.setattr(cal_mod, "load_calendar", lambda *a, **k: full.index)
+    monkeypatch.setattr(cal_mod, "latest_expected_day", lambda cal: full.index[-1])
+    m = library.DatasetMeta(id=library.make_id("akshare", "510300", "1d", "hfq", "2025-01-02", "2025-03-31"),
+                            name="510300 沪深300ETF", symbol="510300", source="akshare", freq="1d", adjust="hfq",
+                            extra={"asset": "etf", "adjust_method": "ratio"})
+    library.save(full.loc["2025-01-02":"2025-03-31"], m)
+    end = full.index[-1].strftime("%Y-%m-%d")
+    await user.open("/data")
+    user.find(marker="data_lib_update").click()
+    await user.should_see(marker="update-ok")
+    await user.should_see(f"510300 沪深300ETF：2025-01-02 ~ 2025-03-31 → 2025-01-02 ~ {end}")
+    assert [(x.symbol, x.end) for x in library.list_datasets()] == [("510300", end)]
+    user.find(marker="update-ok").click()
+    await user.should_not_see(marker="update-ok")
 
 
 async def test_switch_language(user: User):
@@ -2114,6 +2143,18 @@ async def test_settings_preset_and_save(user: User, monkeypatch, tmp_path):
     await user.should_not_see(str(llm.CONFIG_PATH))          # 本机路径只在「打开所在文件夹」的悬停提示里
     cfg = real_load(tmp_path / "llm.json")
     assert cfg.provider == "openai" and cfg.model == "deepseek-chat" and cfg.api_key == "sk-test"
+
+
+async def test_settings_library_sync_switch(user: User, monkeypatch, tmp_path):
+    """设置页「模拟盘更新后，同时将本地数据库更新至最新」：默认开，关掉后存进 paper/options.json"""
+    from simplequant.paper import account as acc_mod, library_sync
+    monkeypatch.setattr(acc_mod, "PAPER_ROOT", tmp_path)
+    await user.open("/settings")
+    sw = user.find(marker="set_lib_sync").elements.pop()
+    assert sw.value is True
+    sw.value = False
+    await settle()
+    assert not library_sync.enabled()
 
 
 async def test_settings_keeps_saved_key(user: User, monkeypatch, tmp_path):

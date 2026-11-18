@@ -8,9 +8,11 @@ Changes in each release. `tools/release.py` copies the matching section into the
 ## 未发布
 
 ### 更新内容
+- 新功能：本地数据库新增「全部更新到最新」，预览区亦可单独更新所选数据。在线下载的数据将按其原有的来源、复权方式与品种，自最后一个交易日补齐至最近一个收盘日，并保存为同一份数据；回测页此前选定的数据将自动改用更新后的版本。若最后一个交易日的新旧价格不一致（通常因前复权期间发生分红），该数据不予更新，并提示重新下载完整区间。CSV 导入与通达信本地数据不在更新范围内；模拟盘更新期间暂不可用。此外，模拟盘每日定时更新及手动更新完成后，将同时把本地数据库更新至最新，结果记入模拟盘运行日志；如不需要，可在设置页关闭。本功能源自 B 站观众的建议
 - 改进：本地数据库里手动输入代码下载的数据，名称不再只有代码，自动补上中文简称（如「601318 中国平安」）；之前下载的也会补上。简称来自 BaoStock 的证券列表（股票、ETF、指数、可转债），第一次打开数据页时在后台下载，约 40 秒，之后存在本地。同一代码既是指数又是股票时（如 000001），按下载时选的品种区分。来自 B 站观众的建议
 
 ### Changes
+- New: "Update all to latest" in the local database, plus a per-dataset update in the preview. Each online dataset is extended from its last day to the latest close using its own source, adjustment and asset type, and kept as one dataset; the backtest page switches from the old one automatically. If prices on the last day do not match (usually a dividend under forward adjustment), it is left unchanged with a note to re-download the whole period. CSV and local TDX data are skipped; unavailable while paper trading is updating. Paper trading's daily scheduled update and manual updates now also bring the local database up to date afterwards, with results in the paper-trading log; this can be turned off in Settings. Suggested by a Bilibili viewer
 - Improved: data downloaded by typing a code into the local database now gets its Chinese short name (e.g. "601318 中国平安") instead of the bare code; earlier downloads are named too. Names come from BaoStock's securities list (stocks, ETFs, indices, convertible bonds), downloaded in the background the first time you open the Data page (about 40 seconds) and then kept locally. Where one code is both an index and a stock (e.g. 000001), the asset type chosen at download decides
 
 ## 3.2.3（2026-11-15）

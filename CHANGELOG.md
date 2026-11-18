@@ -5,6 +5,14 @@
 
 Changes in each release. `tools/release.py` copies the matching section into the GitHub release notes.
 
+## 未发布
+
+### 更新内容
+- 改进：本地数据库里手动输入代码下载的数据，名称不再只有代码，自动补上中文简称（如「601318 中国平安」）；之前下载的也会补上。简称来自 BaoStock 的证券列表（股票、ETF、指数、可转债），第一次打开数据页时在后台下载，约 40 秒，之后存在本地。同一代码既是指数又是股票时（如 000001），按下载时选的品种区分。来自 B 站观众的建议
+
+### Changes
+- Improved: data downloaded by typing a code into the local database now gets its Chinese short name (e.g. "601318 中国平安") instead of the bare code; earlier downloads are named too. Names come from BaoStock's securities list (stocks, ETFs, indices, convertible bonds), downloaded in the background the first time you open the Data page (about 40 seconds) and then kept locally. Where one code is both an index and a stock (e.g. 000001), the asset type chosen at download decides
+
 ## 3.2.3（2026-11-15）
 
 ### 更新内容

@@ -54,6 +54,11 @@ def save(df: pd.DataFrame, meta: DatasetMeta, lib_dir: Path = LIB_DIR) -> Datase
     return meta
 
 
+def save_meta(meta: DatasetMeta, lib_dir: Path = LIB_DIR) -> None:
+    """只改元数据（如补上名称），行情文件不动"""
+    (lib_dir / f"{meta.id}.json").write_text(json.dumps(asdict(meta), ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def load(dataset_id: str, lib_dir: Path = LIB_DIR) -> pd.DataFrame:
     return pd.read_parquet(lib_dir / f"{dataset_id}.parquet")
 

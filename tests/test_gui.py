@@ -12,7 +12,7 @@ from nicegui import ui
 from nicegui.testing import User
 
 from simplequant import strategies
-from simplequant.data import library
+from simplequant.data import library, names
 from gui import state
 from gui.layout import PAGES
 from conftest import make_prices
@@ -71,7 +71,12 @@ def lib_dir(tmp_path, monkeypatch):
     for fn in (library.save, library.load, library.exists, library.list_datasets, library.delete):
         monkeypatch.setattr(fn, "__defaults__", (d,))
     monkeypatch.setattr(library, "LIB_DIR", d)             # 替换旧数据（replace / resolve）调用时才读目录
+    monkeypatch.setattr(names, "fetch", lambda: names_table())     # 数据页后台补简称：不连 BaoStock
     return d
+
+
+def names_table():
+    return pd.DataFrame({"code": ["sh.601318"], "name": ["中国平安"], "type": ["1"]})
 
 
 def test_every_gui_text_key_exists():
@@ -204,6 +209,25 @@ async def test_data_download_uses_selected_options(user: User, lib_dir, monkeypa
     assert [c[1] for c in calls] == ["510300", "159915"]          # 常用 + 手填，去重保序
     assert calls[0][0] == "akshare" and calls[0][4]["adjust"] == "hfq" and calls[0][4]["asset"]
     assert len(library.list_datasets()) == 2
+
+
+async def test_data_download_fills_security_name(user: User, lib_dir, monkeypatch):
+    """手填的代码（不在热门列表里）下载后名称只有代码，后台用证券列表补上简称"""
+    def fake_fetch(src, sym, start, end, **kw):
+        return library.save(make_prices(n=20), library.DatasetMeta(id=f"x_{sym}", name=kw["name"], symbol=sym,
+                                                                   source=src, freq="1d"))
+    patch_page(monkeypatch, "/data", "fetch_to_library", fake_fetch)
+    await user.open("/data")
+    user.find("其他代码（6 位，以逗号分隔）").type("601318")
+    user.find("下载至本地数据库").click()
+    await user.should_see("601318：20 根 K 线")
+    got = {}
+    for _ in range(50):
+        got = {m.symbol: m.name for m in library.list_datasets()}
+        if got.get("601318") != "601318":
+            break
+        await asyncio.sleep(0.1)
+    assert got == {"510300": "510300 沪深300ETF", "601318": "601318 中国平安"}
 
 
 async def test_data_delete_asks_first(user: User, lib_dir):

@@ -1,14 +1,16 @@
 """数据中心（界面重构计划 4.4.1）：行情（本地数据库 / 在线下载 / 导入 CSV）/ 选股数据 / 可转债 / 利率四个标签，
 选股数据与可转债用选股包的下载构件（selection/data_tab.py）。"""
 
+import asyncio
 import contextlib
 import datetime as dt
 import io
 import os
 
 import pandas as pd
-from nicegui import run, ui
+from nicegui import background_tasks, run, ui
 
+from simplequant.data import names as sec_names
 from simplequant.data import SOURCES, ASSET_TYPES, RESAMPLE_RULES, fetch_to_library, library, has_merge_candidates, merge_library
 from simplequant.data.base import freq_label, EXTRA_COLUMNS
 from simplequant.data.ratio_adjust import is_additive
@@ -17,12 +19,15 @@ from simplequant.data.tdx_local_src import DEFAULT_TDX_DIR
 from simplequant.i18n import TEXT
 from simplequant.rules import INDICATORS
 from gui import state
+from gui.paper_job import JOB
 from gui.common import t, p, lang
 from gui.layout import frame, page_title
 from gui.widgets import df_table, plot, Progress, hint
 from ui.charts import preview_chart
 from ui.shared import POPULAR, ADJUST, parse_symbols, import_csv, dataset_label, sina_fallback
 
+
+_NAMES_LOCK = asyncio.Lock()
 
 CENTER_TABS = (("market", "data.tab_market", "candlestick_chart"), ("stocks", "data.tab_stocks", "filter_list"),
                ("cb", "data.tab_cb", "receipt_long"), ("rates", "data.tab_rates", "percent"))
@@ -65,11 +70,27 @@ def _market_blocks():
         with lib_box:
             _library_view(refresh_lib, fold=True)
 
+    async def fill_names():
+        """名称只有代码的数据在后台补上简称（第一次要拉 BaoStock 证券列表，约 40 秒），补到了就刷新列表"""
+        if not any(sec_names.needs_name(m) for m in library.list_datasets()):
+            return
+        async with _NAMES_LOCK:             # 打开页面时和下载完成后各补一次，不同时拉列表
+            try:
+                n = await run.io_bound(sec_names.fill_library, online=not JOB.running)
+            except Exception:  # noqa: BLE001 - 网络问题：名称先留代码，下次打开再补
+                return
+        if n and not lib_box.is_deleted:
+            refresh_lib()
+
+    def changed():
+        refresh_lib()
+        background_tasks.create(fill_names(), name="fill security names")
+
     _block_head(t("data.tab_download"))
-    _download_tab(on_change=refresh_lib)
+    _download_tab(on_change=changed)
     with ui.expansion(t("data.tab_csv"), icon="upload_file").classes("w-full mt-4").mark("data_csv"):
         _csv_tab(on_change=refresh_lib)
-    refresh_lib()
+    changed()
 
 
 def _block_head(title: str, mark: str | None = None, first: bool = False):

@@ -117,7 +117,7 @@ async def test_home(user: User, lib_dir, monkeypatch):
     await user.open("/")
     await user.should_see("开始新的工作")
     await user.should_see("本地尚无数据")
-    await user.should_see("先获取数据")             # 第一次使用：介绍 + 获取数据
+    await user.should_see(marker="home_sample")      # 第一次使用：介绍 + 用示例数据完成第一次回测
     await user.should_see("尚未创建模拟账户")
     user.find(marker="start:code").click()
     await user.should_see(marker="mode")
@@ -1695,11 +1695,14 @@ def test_masthead_date():
 
 async def test_home_ui_switched_note(user: User, lib_dir):
     """经典界面移除后：已有数据的老用户（没选过界面、或选的是经典）首页提示一次，点「知道了」后不再出现；
-    3.x 里明确选过新版的、新装还没有数据的都不提示"""
+    3.x 里明确选过新版的、新装的（之后有了数据也）不提示"""
     from nicegui import app
     await user.open("/")
     await user.should_not_see(marker="home_ui_switched")         # 新装：没有数据，也没有报告
     _save_prices()
+    await user.open("/")
+    await user.should_not_see(marker="home_ui_switched")         # 新装后下了数据（如首页的示例回测）：仍不提示
+    app.storage.general.pop("ui_switch_seen")                    # 老用户：升级上来时已有数据
     await user.open("/")
     await user.should_see(marker="home_ui_switched")
     user.find(marker="home_ui_switched_ok").click()
@@ -3040,6 +3043,43 @@ async def test_new_ui_timing_downloads_sample(user: User, lib_dir, monkeypatch):
     md._JOBS.clear()
 
 
+async def test_home_sample_backtest(user: User, lib_dir, monkeypatch):
+    """首页没有数据：只有一个主按钮，点了原地下载 510300 示例日线，下完套双均线模板、自动回测并显示报告"""
+    from simplequant import data as data_mod
+    md = importlib.import_module("gui.missing_data")
+    md._JOBS.clear()
+    calls = []
+
+    def fake_fetch(src, sym, start, end, **kw):
+        calls.append((src, sym))
+        return _save_prices()
+    monkeypatch.setattr(data_mod, "fetch_to_library", fake_fetch)
+    await user.open("/")
+    await user.should_see(marker="home_sample_other")
+    user.find(marker="home_sample").click()
+    assert await _wait(lambda: state.STATE.get("bt", {}).get("result") is not None, n=600), "下载完没有自动回测"
+    assert calls == [("akshare", "510300")]
+    assert state.STATE["bt_ids"] == ["x_510300"]
+    assert state.strategy()["tpl_key"] == "sma_cross"
+    md._JOBS.clear()
+
+
+async def test_home_sample_download_failed(user: User, lib_dir, monkeypatch):
+    """示例下载失败：留在首页显示原因，按钮可以再点"""
+    from simplequant import data as data_mod
+    md = importlib.import_module("gui.missing_data")
+    md._JOBS.clear()
+
+    def fake_fetch(*a, **kw):
+        raise ConnectionError("offline")
+    monkeypatch.setattr(data_mod, "fetch_to_library", fake_fetch)
+    await user.open("/")
+    user.find(marker="home_sample").click()
+    await user.should_see("offline", retries=100)
+    await user.should_see(marker="home_sample")
+    md._JOBS.clear()
+
+
 async def test_new_ui_timing_updates_rates(user: User, lib_dir, monkeypatch):
     """择时工作台：规则用到利率但本地没有利率数据时，设置区下面就地更新利率，更新完提示消失"""
     from gui.common import t
@@ -3325,15 +3365,19 @@ async def test_settings_location_fixed_in_source(user: User):
     await user.should_see(t_("loc.fixed"))
 
 
-async def test_home_asks_data_location_once(user: User, loc_env, monkeypatch):
+async def test_data_page_asks_data_location_once(user: User, loc_env, monkeypatch):
+    """数据位置在打开数据页时问一次；首页不问（待办 63：第一次打开软件不先弹窗）"""
     from simplequant import data_location as loc
     monkeypatch.setattr(loc, "on_system_drive", lambda root: True)
     await user.open("/")
+    await asyncio.sleep(0.5)
+    await user.should_not_see(marker="loc_ask")
+    await user.open("/data")
     await user.should_see(marker="loc_ask", retries=40)
     user.find(marker="loc_keep").click()
     from nicegui import app
     assert await _wait(lambda: app.storage.general.get("data_loc_asked"))
-    await user.open("/")
+    await user.open("/data")
     await asyncio.sleep(0.5)
     await user.should_not_see(marker="loc_ask")
 

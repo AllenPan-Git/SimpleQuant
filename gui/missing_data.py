@@ -158,21 +158,24 @@ def _codes(st, universe: str) -> list[str]:
 
 # ---------------- 择时：行情、利率 ----------------
 SAMPLE = ("510300", "akshare", "etf")      # 本地没有行情时的示例：沪深300ETF 日线（后复权）
+SAMPLE_KEY = "market:sample"               # _JOBS 的键：工作台的提示条和首页的「用示例数据完成第一次回测」共用
 
 
-def market_bar(on_done=None):
-    """本地还没有任何行情数据：就地下载 510300 日线（2015 年起，后复权），或去数据中心下载其他标的"""
+def sample_work(progress):
+    """下载示例日线（2015 年起，后复权）；返回 None（download_bar 把返回值当作出错的条目）"""
     import datetime as dt
     from simplequant.data import fetch_to_library
     from ui.shared import POPULAR
     sym, src, asset = SAMPLE
+    progress(0.2, t("data.fetching", sym=sym))
+    fetch_to_library(src, sym, "2015-01-01", str(dt.date.today()), freq="1d", adjust="hfq",
+                     name=f"{sym} {p(POPULAR[sym])}", asset=asset)
+    return None
 
-    def work(progress):
-        progress(0.2, t("data.fetching", sym=sym))
-        fetch_to_library(src, sym, "2015-01-01", str(dt.date.today()), freq="1d", adjust="hfq",
-                         name=f"{sym} {p(POPULAR[sym])}", asset=asset)
-        return None
-    download_bar("market:sample", t("md.market"), t("md.market_go", sym=sym), work, on_done, mark="md:market")
+
+def market_bar(on_done=None):
+    """本地还没有任何行情数据：就地下载 510300 日线，或去数据中心下载其他标的"""
+    download_bar(SAMPLE_KEY, t("md.market"), t("md.market_go", sym=SAMPLE[0]), sample_work, on_done, mark="md:market")
     ui.button(t("nav.go_data"), on_click=lambda: ui.navigate.to("/data")) \
         .props("flat no-caps dense color=primary icon-right=arrow_forward").classes("self-start")
 

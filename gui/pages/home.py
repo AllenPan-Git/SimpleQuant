@@ -5,15 +5,15 @@ from html import escape
 
 from nicegui import app, run, ui
 
-from simplequant import migrate
+from simplequant import migrate, telemetry
 from simplequant.data import library
 from simplequant.paper import list_accounts, load_calendar, health, schedule
 from simplequant.strategies import list_strategies
-from gui import history, state, routes, telemetry_ui, data_location_ui
+from gui import history, state, routes, telemetry_ui, data_location_ui, missing_data
 from gui.common import t, lang
 from gui.components import accounts_table, strategy_progress
 from gui.layout import frame
-from gui.widgets import notice
+from gui.widgets import notice, Progress
 from ui.shared import pct, num, account_rows, progress_steps, saved_name, paper_count, spec_key, timing_verify
 
 
@@ -27,10 +27,11 @@ def page():
             telemetry_ui.consent_note()
         metas = library.list_datasets()
         recent = history.recent()
-        if data_location_ui.should_ask():
-            ui.timer(0.3, lambda: data_location_ui.ask_dialog(existing=bool(metas or recent or list_accounts())), once=True)
-        if (recent or metas) and switched_to_new():
-            _ui_switched_note()
+        if switched_to_new():
+            if recent or metas:
+                _ui_switched_note()
+            else:                     # 新用户没见过经典界面：记为已看过，免得下载示例数据后再提示（待办 63）
+                app.storage.general["ui_switch_seen"] = True
         accounts, rows = _paper_rows()
 
         hour = dt.datetime.now().hour
@@ -152,15 +153,78 @@ def _hero(has_data: bool):
         ui.html("<br>".join(escape(x) for x in t("home.hero_title").split("|"))) \
             .classes("sq-serif").style("font-size: 44px; line-height: 1.3")
         ui.label(t("home.hero_body")).classes("max-w-[34em]").style("color: var(--sq-text2)")
+        if not has_data:
+            _sample_start()
+            return
         with ui.row().classes("gap-3 pt-2"):
-            if has_data:
-                ui.button(t("home.start_first"), on_click=lambda: _start("template", "/timing")) \
-                    .props("unelevated no-caps color=primary").classes("px-5 py-2")
-            else:
-                ui.button(t("home.get_data_first"), on_click=lambda: ui.navigate.to("/data")) \
-                    .props("unelevated no-caps color=primary").classes("px-5 py-2")
+            ui.button(t("home.start_first"), on_click=lambda: _start("template", "/timing")) \
+                .props("unelevated no-caps color=primary").classes("px-5 py-2")
             ui.button(t("nav.go_data"), on_click=lambda: ui.navigate.to("/data")) \
                 .props("outline no-caps").classes("px-5 py-2")
+
+
+SAMPLE_SPEC = {"name": "", "kind": "template", "template": "sma_cross", "params": {}}
+
+
+def _sample_start():
+    """本地还没有数据（待办 63）：一个主按钮——原地下载示例日线（与工作台的提示条共用 missing_data 的下载任务，
+    离开首页再回来接着显示进度），下完套双均线模板、去择时工作台自动回测、看报告"""
+    with ui.column().classes("gap-2 pt-2 w-full").mark("home_sample_box"):
+        btn = ui.button(t("home.sample_go"), icon="play_arrow", on_click=lambda: go()) \
+            .props("unelevated no-caps color=primary").classes("px-5 py-2 self-start").mark("home_sample")
+        ui.label(t("home.sample_note")).classes("sq-muted text-xs")
+        prog = Progress()
+        err = ui.column().classes("w-full")
+        ui.label(t("home.sample_other") + " →").classes("sq-red text-sm cursor-pointer self-start") \
+            .on("click", lambda: ui.navigate.to("/data")).mark("home_sample_other")
+    seen = {"running": False}
+
+    def watch():
+        if btn.is_deleted:
+            return
+        job = missing_data._JOBS.get(missing_data.SAMPLE_KEY) or {}
+        if job.get("running"):
+            if not seen["running"]:
+                seen["running"] = True
+                prog.start()
+            prog.set(*job["prog"])
+            btn.disable()
+            return
+        btn.set_enabled(not missing_data.busy())          # 另一项下载（BaoStock 只能单连接）在进行时不能同时下
+        if not seen["running"]:
+            return
+        seen["running"] = False                           # 这一页看着它结束的
+        prog.stop()
+        res = job.get("result") or ("error", "")
+        if res[0] == "ok":
+            _sample_backtest()
+        else:
+            with err:
+                notice(t("md.failed", e=res[1]), "error", "error")
+    ui.timer(0.3, watch)
+
+    def go():
+        err.clear()
+        telemetry.count("btn:home_sample")
+        if not missing_data.start(missing_data.SAMPLE_KEY, missing_data.sample_work):
+            ui.notify(t("md.busy"), type="warning")
+            return
+        watch()
+    watch()
+
+
+def _sample_backtest():
+    """示例数据下好了：选中它、全部日期，双均线模板放进工作台，自动回测后显示报告"""
+    metas = library.list_datasets()
+    if not metas:
+        return
+    m = next((m for m in metas if m.symbol == missing_data.SAMPLE[0]), metas[0])
+    S = state.STATE
+    S["bt_ids"] = [m.id]
+    S.pop("bt_range", None)
+    S.pop("bt", None)
+    S["bt_autorun"] = True
+    ui.navigate.to(routes.timing("backtest", spec=dict(SAMPLE_SPEC)))
 
 
 def _continue_buttons(e: dict, sel: bool):

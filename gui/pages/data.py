@@ -19,7 +19,7 @@ from simplequant.data.csv_src import read_csv_any, is_snapshot
 from simplequant.data.tdx_local_src import DEFAULT_TDX_DIR
 from simplequant.i18n import TEXT
 from simplequant.rules import INDICATORS
-from gui import state
+from gui import state, data_location_ui
 from gui.paper_job import JOB
 from gui.common import t, p, lang
 from gui.layout import frame, page_title
@@ -37,6 +37,7 @@ CENTER_TABS = (("market", "data.tab_market", "candlestick_chart"), ("stocks", "d
 def page():
     with frame("/data"):
         page_title("/data")
+        data_location_ui.maybe_ask()
         _center()
 
 

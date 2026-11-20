@@ -1,4 +1,4 @@
-"""数据保存位置的界面：设置页一节、首页询问一次、位置打不开时的提示、移动对话框。
+"""数据保存位置的界面：设置页一节、数据页询问一次、位置打不开时的提示、移动对话框。
 逻辑在 simplequant/data_location.py。完整路径只放在悬停提示里（与 folder_btn 相同），录屏、截图时不露出本机用户名"""
 
 import sys
@@ -11,7 +11,7 @@ from simplequant.system import WINDOWS, relaunch_after_exit
 from gui.common import t
 from gui.widgets import Progress, folder_btn, notice
 
-ASKED = "data_loc_asked"     # app.storage.general：首页问过了
+ASKED = "data_loc_asked"     # app.storage.general：问过了（3.4.0 及以前在首页问）
 
 
 def size_text(n: int) -> str:
@@ -56,9 +56,23 @@ def missing_note():
 
 
 def should_ask() -> bool:
-    """首页问一次：Windows 打包版、数据在系统盘、没问过；新装和升级上来的老用户都问"""
+    """问一次：Windows 打包版、数据在系统盘、没问过；新装和升级上来的老用户都问"""
     return (loc.enabled() and not app.storage.general.get(ASKED) and pending_target() is None
             and paths.LOCATION_MISSING is None and loc.on_system_drive(paths.DATA_ROOT))
+
+
+def maybe_ask():
+    """打开数据页时问一次（待办 63：新装用户第一次打开软件不再先被问问题；首页的示例数据很小，放在默认位置）"""
+    if not should_ask():
+        return
+    from simplequant.data import library
+    from simplequant.paper import list_accounts
+    from gui import history
+    try:
+        existing = bool(library.list_datasets() or history.recent() or list_accounts())
+    except Exception:  # noqa: BLE001 - 读不出来时按有数据问（会多显示一句占用空间）
+        existing = True
+    ui.timer(0.3, lambda: ask_dialog(existing=existing), once=True)
 
 
 async def ask_dialog(existing: bool):

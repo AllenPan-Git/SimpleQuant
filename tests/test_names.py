@@ -88,3 +88,29 @@ def test_nothing_to_fill_does_not_touch_network(tmp_path):
         raise AssertionError("should not fetch")
 
     assert names.fill_library(lib, tmp_path / "s.parquet", fetcher) == 0
+
+
+def test_fill_library_does_not_resurrect_replaced_data(tmp_path):
+    """3.3.0 线上报错：补名称联网的几十秒里，新下载把旧数据替换 / 合并掉了，
+    补完又把旧数据的元数据写回去 → 列表里有、行情文件没有，回测时 FileNotFoundError"""
+    lib, cache = tmp_path / "lib", tmp_path / "names" / "s.parquet"
+    old = _add(lib, "600519")
+    new = _add(lib, "600519", source="baostock")
+
+    def fetcher():                      # 已列出要补的数据、正在联网时，旧数据被替换
+        library.replace(old.id, new.id, lib)
+        return TABLE
+
+    names.fill_library(lib, cache, fetcher)
+    assert not (lib / f"{old.id}.json").exists()
+    assert list(_names(lib)) == [new.id]
+    assert _names(lib)[new.id] == "600519 贵州茅台"
+
+
+def test_list_datasets_skips_metadata_without_prices(tmp_path):
+    """已经留下的没有行情文件的元数据（3.3.0 用户机器上）：列表里不再出现，升级后自己恢复"""
+    lib = tmp_path / "lib"
+    ghost = _add(lib, "600519")
+    _add(lib, "000001", asset="index")
+    (lib / f"{ghost.id}.parquet").unlink()
+    assert list(_names(lib)) == ["akshare_000001_index"]

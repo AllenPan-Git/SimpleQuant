@@ -77,7 +77,8 @@ async def _cleanup_old_location():
 
 
 def _start_telemetry():
-    """匿名使用统计（待办 57）：启用本机累计；同意过的话几秒后在后台发送一次。
+    """匿名使用统计（待办 57）：启用本机累计；同意过的话后台发送（启动几秒后一次，之后数字有变化最多每 10 分钟一次，
+    第一次做某件事时立刻发，关闭软件时再发一次，待办 62）。
     报错计数接 NiceGUI 的未处理异常；导出、下载计数接 ui.download.content（项目里所有下载都走它）"""
     from simplequant import telemetry
     from simplequant.paper import list_accounts
@@ -94,8 +95,8 @@ def _start_telemetry():
         telemetry.milestone("export")
         return content(data, filename, media_type)
     ui.download.content = counted
-    if telemetry.due():
-        telemetry.send_async()
+    telemetry.start()
+    app.on_shutdown(lambda: telemetry.flush())       # 不能直接传 flush：只有一个参数的回调 NiceGUI 会把 app 传进去
 
 
 def run(native: bool = True, port: int = 0, show: bool = True, check_updates: bool = True):

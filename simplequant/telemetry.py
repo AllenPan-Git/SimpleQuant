@@ -1,7 +1,8 @@
 """
 匿名使用统计 + 反馈（待办 57）。接收端：SimpleQuant-site/worker（https://api.simplequant.org）
 
-- 本机按天累计到 data_cache/telemetry.json；用户同意后，启动时最多每天发一次（联网失败留到下次）
+- 本机按天累计到 data_cache/telemetry.json；用户同意后：软件开着时数字有变化最多每 10 分钟发一次，
+  第一次做某件事（里程碑）时立刻发，关闭软件时再发一次；联网失败留到下次（待办 62）
 - 只收：随机安装编号、版本、系统、界面语言、界面版本（3.2 起只有新版）；里程碑（距安装天数）；按天的计数；报错类型与位置
 - 一律不收：策略内容、股票代码、资金、回测结果、文件路径、API key。计数键、报错位置在这里和服务器各校验一次
 - 没调用 activate() 时（界面测试、截图、--paper、打包版自动测试）所有记录都是空操作，也不会联网
@@ -28,6 +29,8 @@ from simplequant.system import SYSTEM
 ENDPOINT = os.environ.get("SIMPLEQUANT_TELEMETRY_URL", "https://api.simplequant.org")
 PATH = CACHE_DIR / "telemetry.json"
 TIMEOUT = 10
+SEND_EVERY = 600      # 软件开着时最多每 10 分钟发一次
+FLUSH_TIMEOUT = 3     # 关闭软件时发送最多等几秒，不让关窗口卡住
 MAX_DAYS = 30          # 与服务器 LIMITS 一致
 MAX_KEYS = 200
 MAX_ERRORS = 50
@@ -43,6 +46,10 @@ OUR_PACKAGES = ("simplequant", "gui", "ui")
 SHARED_MODULES = ("gui.widgets", "gui.components", "gui.common")    # 界面小构件：出错位置再加一层调用方
 
 _lock = threading.Lock()
+_send_lock = threading.Lock()   # 同一时间只发一份（定时、里程碑、关闭时可能撞上）
+_wake = threading.Event()       # 里程碑：叫醒后台线程立刻发
+_loop: threading.Thread | None = None
+_seq = 0                        # 数字每变一次加一：发送途中又变了，发完仍算有没发的
 _state: dict | None = None      # None = 未启用
 _ui_info = {"lang": "zh", "ui": "new"}
 
@@ -76,6 +83,7 @@ def deactivate():
     """测试用"""
     global _state
     _state = None
+    _wake.set()                 # 后台线程醒来看到 _state 为空就退出
 
 
 def active() -> bool:
@@ -130,6 +138,13 @@ def _recording() -> bool:
     return _state is not None and _state.get("consent") is not False
 
 
+def _changed():
+    """数字变了（调用方已拿着 _lock）：记下有没发的，存盘后关软件、断网也不丢"""
+    global _seq
+    _seq += 1
+    _state["pending"] = True
+
+
 def _day() -> dict:
     return _state["days"].setdefault(_today(), {"counts": {}, "errors": {}})
 
@@ -143,6 +158,7 @@ def count(key: str, n: int = 1):
         if key not in c and len(c) >= MAX_KEYS:
             return
         c[key] = c.get(key, 0) + n
+        _changed()
         _save()
 
 
@@ -153,7 +169,9 @@ def milestone(name: str):
     with _lock:
         installed = dt.date.fromisoformat(_state["installed"])
         _state["milestones"][name] = max(0, (dt.date.fromisoformat(_today()) - installed).days)
+        _changed()
         _save()
+    _wake.set()                 # 第一次做到的事立刻发（后台线程在跑时；每个里程碑只有一次）
 
 
 def ai(kind: str):
@@ -209,6 +227,7 @@ def error(exc: BaseException):
         if key not in e and len(e) >= MAX_ERRORS:
             return
         e[key] = e.get(key, 0) + 1
+        _changed()
         _save()
 
 
@@ -231,34 +250,72 @@ def payload() -> dict | None:
 
 
 def due() -> bool:
-    return bool(_state) and _state.get("consent") is True and _state.get("last_sent") != _today()
+    """同意了，且上次发送后数字有变化（或今天还没发过）"""
+    return bool(_state) and _state.get("consent") is True and         (bool(_state.get("pending")) or _state.get("last_sent") != _today())
 
 
-def send(post=None) -> bool:
-    """同意了且今天还没发过时发送一次；成功后删掉今天以前的日子（已按完整数字发出）。失败什么都不改，下次再发"""
-    if not due():
+def send(post=None, timeout: float = TIMEOUT) -> bool:
+    """有没发的就发送一次；成功后删掉今天以前的日子（已按完整数字发出）。失败什么都不改，下次再发。
+    另一处正在发送时直接返回（它发完、数字又变了的话，下一轮再发）"""
+    if not due() or not _send_lock.acquire(blocking=False):
         return False
-    body = payload()
-    if post is None:
-        import requests
-        post = requests.post
     try:
-        r = post(f"{ENDPOINT}/v1/ping", json=body, timeout=TIMEOUT,
-                 headers={"User-Agent": f"SimpleQuant/{__version__}"})
-        ok = r.status_code == 204
-    except Exception:  # noqa: BLE001  网络问题一律静默
-        return False
-    if ok:
-        today = _today()
         with _lock:
-            _state["last_sent"] = today
-            _state["days"] = {d: v for d, v in _state["days"].items() if d >= today}
-            _save()
-    return ok
+            seq, body = _seq, payload()
+        if post is None:
+            import requests
+            post = requests.post
+        try:
+            r = post(f"{ENDPOINT}/v1/ping", json=body, timeout=timeout,
+                     headers={"User-Agent": f"SimpleQuant/{__version__}"})
+            ok = r.status_code == 204
+        except Exception:  # noqa: BLE001  网络问题一律静默
+            return False
+        if ok:
+            today = _today()
+            with _lock:
+                _state["last_sent"] = today
+                _state["days"] = {d: v for d, v in _state["days"].items() if d >= today}
+                _state["pending"] = _seq != seq         # 发送途中又有新数字：留给下一轮
+                _save()
+        return ok
+    finally:
+        _send_lock.release()
+
+
+def start(first_delay: float = 5, every: float = SEND_EVERY):
+    """软件开着时的后台发送：启动几秒后先发一次，之后每 every 秒看一次、有变化才发；
+    里程碑叫醒（_wake）时立刻发。后台线程随程序退出，关闭时由 flush() 补最后一次"""
+    global _loop
+    if not _state or (_loop is not None and _loop.is_alive()):
+        return
+    _wake.clear()
+
+    def loop():
+        wait = first_delay
+        while _state is not None:
+            _wake.wait(wait)
+            _wake.clear()
+            wait = every
+            try:
+                send()
+            except Exception:  # noqa: BLE001  统计出任何问题都不能影响使用
+                pass
+
+    _loop = threading.Thread(target=loop, name="telemetry", daemon=True)
+    _loop.start()
+
+
+def flush(post=None) -> bool:
+    """关闭软件时：有没发的就发一次，最多等 FLUSH_TIMEOUT 秒"""
+    try:
+        return send(post, timeout=FLUSH_TIMEOUT)
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def send_async(delay: float = 5):
-    """启动后几秒在后台发送，不拖慢打开界面"""
+    """几秒后在后台发送一次（首页、设置页刚同意时）"""
     t = threading.Timer(delay, send)
     t.daemon = True
     t.start()

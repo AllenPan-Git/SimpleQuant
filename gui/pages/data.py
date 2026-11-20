@@ -244,8 +244,9 @@ def _download_tab(on_change):
                     except Exception as e:  # noqa: BLE001
                         _status(row, "error", "text-negative", t("data.fetch_failed", sym=sym), str(e))
             finally:
-                btn.enable()
-                on_change()
+                if not btn.is_deleted:          # 下载途中离开了页面：数据已存好，不再画（3.2.3 线上报错 refresh_lib）
+                    btn.enable()
+                    on_change()
 
         btn = ui.button(t("data.download"), icon="download", on_click=download).props("unelevated no-caps")
 
@@ -278,14 +279,23 @@ def _rates_card():
             b.disable()
             prog.start()
             try:
-                await run.io_bound(st.update, FIRST_YEAR, None, lambda i, n: prog.set(i / n, f"{i}/{n}"))
-                ui.notify(t("rates.done"), type="positive")
+                await run.io_bound(st.update, FIRST_YEAR, None, progress)
+                error = None
             except Exception as e:  # noqa: BLE001
-                ui.notify(f"{type(e).__name__}: {e}", type="negative", multi_line=True)
-            finally:
-                prog.stop()
-                b.enable()
+                error = e
+            if b.is_deleted:                    # 更新途中离开了页面：不再提示、不再画（3.2.3 线上报错 update）
+                return
+            prog.stop()
+            b.enable()
+            if error is None:
+                ui.notify(t("rates.done"), type="positive")
+            else:
+                ui.notify(f"{type(error).__name__}: {error}", type="negative", multi_line=True)
             show()
+
+        def progress(i, n):
+            if not b.is_deleted:                # 离开页面后继续下载，只是不再画进度
+                prog.set(i / n, f"{i}/{n}")
         b = ui.button(t("rates.update"), icon="download", on_click=update).props("outline no-caps") \
             .classes("self-start").mark("rates_update")
 

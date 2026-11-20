@@ -172,20 +172,23 @@ def test_decline_clears_and_stops(tele):
     assert not T.send(FakePost())
 
 
-def test_send_once_a_day_and_resend_full_totals(tele):
+def test_send_only_after_changes_and_resend_full_totals(tele):
     path, day = tele
     T.set_consent(True)
     T.count("btn:backtest")
     post = FakePost()
     assert T.send(post)
     assert post.calls[0][0].endswith("/v1/ping")
-    assert not T.send(post) and len(post.calls) == 1       # 同一天只发一次
-    T.count("btn:backtest")                                 # 发送后当天还在用
+    assert not T.send(post) and len(post.calls) == 1       # 没有新数字：不发
+    T.count("btn:backtest")                                 # 发送后当天还在用：数字变了就再发（待办 62）
+    assert T.send(post) and post.calls[1][1]["days"][0]["counts"] == {"btn:backtest": 2}
+    assert not T.send(post)
+    T.count("btn:backtest")
     day("2026-11-07")
     T.count("page:/")
     assert T.send(post)
-    days = {d["day"]: d["counts"] for d in post.calls[1][1]["days"]}
-    assert days == {"2026-11-06": {"btn:backtest": 2}, "2026-11-07": {"page:/": 1}}   # 前一天按完整数字重发
+    days = {d["day"]: d["counts"] for d in post.calls[-1][1]["days"]}
+    assert days == {"2026-11-06": {"btn:backtest": 3}, "2026-11-07": {"page:/": 1}}   # 前一天按完整数字重发
     assert list(saved(path)["days"]) == ["2026-11-07"]      # 发完的日子删掉，只留今天
 
 
@@ -232,3 +235,80 @@ def test_feedback_without_consent_or_activation(tmp_path, monkeypatch):
     T.deactivate()
     post = FakePost()
     assert T.send_feedback("建议", post) == "ok" and len(post.calls) == 1
+
+
+def test_changes_while_sending_are_sent_next_time(tele):
+    """发送途中又有新数字（后台线程在发，界面还在记）：这次成功后仍算有没发的"""
+    path, _ = tele
+    T.set_consent(True)
+    T.count("btn:backtest")
+
+    def post(url, json=None, timeout=None, headers=None):
+        T.count("page:/timing")
+        return Resp(204)
+    assert T.send(post)
+    assert T.due() and saved(path)["pending"] is True
+    last = FakePost()
+    assert T.send(last) and last.calls[0][1]["days"][0]["counts"] == {"btn:backtest": 1, "page:/timing": 1}
+    assert not T.due()
+
+
+def test_pending_survives_restart(tele, tmp_path):
+    """记下了还没发就关掉（或断网）：下次启动照样发"""
+    path, _ = tele
+    T.set_consent(True)
+    assert T.send(FakePost())
+    T.count("btn:backtest")
+    T.deactivate()
+    assert T.activate(path=path) and T.due()
+
+
+def test_flush_on_close_uses_short_timeout(tele):
+    T.set_consent(True)
+    T.count("btn:backtest")
+    seen = []
+
+    def post(url, json=None, timeout=None, headers=None):
+        seen.append(timeout)
+        return Resp(204)
+    assert T.flush(post) and seen == [T.FLUSH_TIMEOUT]
+    assert not T.flush(post)                                # 没有新数字：不发
+    assert not T.flush(lambda *a, **k: 1 / 0)               # 出错也不能影响关闭
+
+
+def test_only_one_send_at_a_time(tele):
+    T.set_consent(True)
+    T.count("btn:backtest")
+    post = FakePost()
+    with T._send_lock:                                      # 另一处正在发
+        assert not T.send(post)
+    assert post.calls == [] and T.due()
+
+
+def test_background_loop_sends_changes_and_milestones_right_away(tele, monkeypatch):
+    """后台线程：启动后先发一次；平时等满间隔才发，第一次做到某件事（里程碑）时立刻发"""
+    import threading
+    import requests
+    posted = threading.Event()
+    calls = []
+
+    def post(url, json=None, timeout=None, headers=None):
+        calls.append(json)
+        posted.set()
+        return Resp(204)
+    monkeypatch.setattr(requests, "post", post)
+    T.set_consent(True)
+    T.count("page:/")
+    T.start(first_delay=0, every=3600)
+    assert posted.wait(5) and len(calls) == 1
+    posted.clear()
+    T.count("btn:backtest")                                 # 普通计数：等下一轮（一小时）
+    assert not posted.wait(0.3)
+    T.milestone("backtest")                                 # 里程碑：立刻发
+    assert posted.wait(5)
+    assert calls[-1]["milestones"]["backtest"] == 0
+    assert calls[-1]["days"][0]["counts"] == {"page:/": 1, "btn:backtest": 1}
+    loop = T._loop
+    T.deactivate()                                          # 线程随之退出
+    loop.join(5)
+    assert not loop.is_alive()

@@ -285,7 +285,7 @@ Since 3.1, the first time SimpleQuant opens, the home page asks whether to send 
 
 - **Sent**: a randomly generated install ID (not linked to any personal information), version, system, interface language and interface version; the number of days after installation at which data download, backtest, validation, paper trading etc. were first used; daily counts of page views and main buttons; the type and program location of errors (not the message)
 - **Never sent**: strategies, stock codes, capital, backtest results, file paths, API keys. The IP address is used only for server-side rate limiting and is not stored
-- **Frequency**: at most once a day; if the network is unavailable, it waits until next time without affecting anything
+- **Frequency**: while the app is running, at most once every 10 minutes when the statistics change; right away the first time data download, backtest, validation, paper trading etc. is completed; and once more when the app closes (waiting at most 3 seconds). If the network is unavailable, it waits until next time without affecting anything
 - **Feedback**: the feedback box in Settings submits anonymously with the version and system; it is not linked to the install ID and collects no contact details
 - The receiving end is `api.simplequant.org` on Cloudflare. When running from source, set the environment variable `SIMPLEQUANT_TELEMETRY=0` to disable statistics entirely
 

@@ -2233,10 +2233,10 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
                           "The classic interface has been removed; only the sidebar interface remains. Each timing or selection strategy has its settings, backtest and validation on one page, factor research is in the Factor lab, and all data is on the Data page. Strategies, data and paper accounts are unaffected."),
     "home.ui_switched_ok": L("知道了", "Got it"),
     # 匿名使用统计与反馈（待办 57；首页询问一次，设置页可改）
-    "tele.ask": L("为改进 SimpleQuant，希望收集匿名使用统计：版本、系统、各功能的使用次数与报错类型，每天最多发送一次。"
+    "tele.ask": L("为改进 SimpleQuant，希望收集匿名使用统计：版本、系统、各功能的使用次数与报错类型，在软件运行期间发送，通常最多每 10 分钟一次。"
                   "不收集策略内容、股票代码、资金、回测结果、文件路径与 API Key。可随时在「设置」中关闭。",
                   "To improve SimpleQuant, we would like to collect anonymous usage statistics: version, system, how often each "
-                  "feature is used and the types of errors, sent at most once a day. Strategies, stock codes, capital, backtest "
+                  "feature is used and the types of errors, sent while the app is running, usually at most once every 10 minutes. Strategies, stock codes, capital, backtest "
                   "results, file paths and API keys are never collected. This can be turned off at any time in Settings."),
     "tele.agree": L("同意发送匿名使用统计", "Send anonymous usage statistics"),
     "tele.preview": L("查看会发送什么", "See what is sent"),
@@ -2248,8 +2248,11 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
     "tele.preview_off": L("当前未开启使用统计，不会发送任何内容。", "Usage statistics are off; nothing is sent."),
     "tele.close": L("关闭", "Close"),
     "set.tele": L("使用统计与反馈", "Usage statistics & feedback"),
-    "set.tele_help": L("开启后每天最多发送一次匿名统计，内容可点「查看会发送什么」核对；关闭时清除本机尚未发送的统计。",
-                       "When on, anonymous statistics are sent at most once a day; use \"See what is sent\" to check them. "
+    "set.tele_help": L("开启后，统计数字有变化时最多每 10 分钟发送一次，首次完成下载数据、回测等步骤时立即发送，关闭软件时再发送一次；"
+                       "内容可点「查看会发送什么」核对。关闭此项时清除本机尚未发送的统计。",
+                       "When on, anonymous statistics are sent at most once every 10 minutes when they change, right away the first "
+                       "time a step such as data download or a backtest is completed, and once more when the app closes; "
+                       "use \"See what is sent\" to check them. "
                        "Turning it off deletes statistics not yet sent."),
     "set.fb": L("反馈意见", "Feedback"),
     "set.fb_ph": L("问题、建议或遇到的困难（最多 2000 字）。匿名提交，附带版本与系统，不含联系方式。",

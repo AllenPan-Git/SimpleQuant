@@ -55,7 +55,11 @@ def save(df: pd.DataFrame, meta: DatasetMeta, lib_dir: Path = LIB_DIR) -> Datase
 
 
 def save_meta(meta: DatasetMeta, lib_dir: Path = LIB_DIR) -> None:
-    """只改元数据（如补上名称），行情文件不动"""
+    """只改元数据（如补上名称），行情文件不动。
+    行情文件已不在（补名称要联网等几十秒，这期间被新下载替换 / 合并删掉了）就不写，
+    否则会写出一份没有行情文件的元数据，列表里有、一读就 FileNotFoundError（3.3.0 线上报错）"""
+    if not exists(meta.id, lib_dir):
+        return
     (lib_dir / f"{meta.id}.json").write_text(json.dumps(asdict(meta), ensure_ascii=False, indent=2), encoding="utf-8")
 
 
@@ -68,15 +72,18 @@ def exists(dataset_id: str, lib_dir: Path = LIB_DIR) -> bool:
 
 
 def list_datasets(lib_dir: Path = LIB_DIR) -> list[DatasetMeta]:
+    """没有行情文件的元数据跳过（3.3.0 补名称留下的；保存时先写行情再写元数据，正常不会有）"""
     if not lib_dir.exists():
         return []
     metas = []
     for p in sorted(lib_dir.glob("*.json")):
         if p.name == ALIASES:
             continue
+        if not p.with_suffix(".parquet").exists():
+            continue
         try:
             metas.append(DatasetMeta(**json.loads(p.read_text(encoding="utf-8"))))
-        except (json.JSONDecodeError, TypeError):
+        except (OSError, json.JSONDecodeError, TypeError):     # OSError：列出后、读取前被另一处删掉了
             continue
     return sorted(metas, key=lambda m: m.created, reverse=True)
 

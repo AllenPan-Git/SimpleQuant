@@ -5,6 +5,18 @@
 
 Changes in each release. `tools/release.py` copies the matching section into the GitHub release notes.
 
+## 3.4.0（2026-11-20）
+
+### 更新内容
+- 改进：匿名使用统计改为在软件运行期间及时发送：统计数字有变化时最多每 10 分钟发送一次，首次完成下载数据、回测等步骤时立即发送，关闭软件时再发送一次（最多等待 3 秒）。此前每天最多发送一次，当天其后的使用情况须待下次打开软件方可发送。发送内容不变，仍可在「设置 → 使用统计与反馈」中查看或关闭
+- 修复：3.3.0 打开数据页后，后台补中文简称期间（首次约 40 秒）若下载或更新了同一标的，被替换的旧数据可能仍留在本地数据库列表中，选用时回测报错「找不到文件」。现已修复；已出现的此类残留条目升级后将不再显示，无需手动处理
+- 修复：下载行情或更新利率数据期间离开数据页，任务完成后后台报错的问题。数据本身此前已正常保存，不受影响
+
+### Changes
+- Improved: anonymous usage statistics are now sent while the app is running: at most once every 10 minutes when they change, right away the first time a step such as data download or a backtest is completed, and once more when the app closes (waiting at most 3 seconds). Previously they were sent at most once a day, so the rest of a day's usage waited until the app was next opened. The content is unchanged and can still be viewed or turned off under Settings → Usage statistics & feedback
+- Fixed: in 3.3.0, downloading or updating a symbol while the Data page was still filling in short names in the background (about 40 seconds the first time) could leave the replaced dataset in the local database list, and backtests using it failed with "file not found". Fixed; any such leftover entries disappear after upgrading
+- Fixed: leaving the Data page while a download or interest-rate update was running caused a background error when it finished. The data itself was already saved correctly
+
 ## 3.3.0（2026-11-18）
 
 ### 更新内容

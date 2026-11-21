@@ -5,17 +5,21 @@
 
 Changes in each release. `tools/release.py` copies the matching section into the GitHub release notes.
 
-## 未发布
+## 3.5.0（2026-11-21）
 
 ### 更新内容
 - 改进：首次使用时，首页提供「用示例数据完成第一次回测」：下载沪深300ETF（510300）2015 年以来的日线，用双均线交叉策略回测后直接打开报告，无需先去数据页。下载其他标的可点下方链接前往「数据」页
 - 改进：「选择数据保存位置」的询问由首次打开软件时改为首次打开「数据」页时，第一次打开软件不再先弹出对话框。数据保存位置仍可随时在「设置 → 数据保存位置」更改
 - 修复：新安装的用户下载数据后，首页误显示面向老用户的「经典界面已移除」提示
+- 修复：选股数据先按较晚的起始日下载、之后把起始日往前改时，已下载过的股票只补到最新，更早的那段一直缺失（例如先从 2021 年下载全 A，再改从 2019 年下载，2019～2020 年大部分股票没有数据）。日线、财务、分红、排雷数据均受影响。升级后在「数据 → 选股数据」把「开始日期」设为想要的日期，再点一次「下载 / 更新数据」即可补齐，无需删除已有数据
+- 修复：下载过分红数据后导出的选股数据包，在另一台电脑导入时提示「数据包中有不认识的文件」
 
 ### Changes
 - Improved: on first use, the home page offers "Run a first backtest on sample data": it downloads daily bars of the CSI 300 ETF (510300) since 2015, backtests an SMA crossover strategy and opens the report, with no need to visit the Data page first. A link below leads to the Data page for other instruments
 - Improved: the "Choose where to keep data" prompt now appears the first time the Data page is opened instead of when the app first starts, so a first launch no longer opens with a dialog. The location can still be changed at any time under Settings → Data location
 - Fixed: new installs saw the "classic interface removed" notice, meant for existing users, on the home page after downloading data
+- Fixed: after downloading selection data from a later start date and then moving the start date earlier, stocks already downloaded were only updated to the latest day and the earlier period stayed missing (e.g. downloading all A-shares from 2021 and then from 2019 left most stocks without 2019–2020 data). Daily bars, financials, dividends and risk-screen data were all affected. After upgrading, set "Start date" under Data → Selection data and click "Download / update data" again to fill the gap; existing data does not need to be deleted
+- Fixed: a selection data pack exported after downloading dividend data could not be imported on another computer ("unexpected file in data pack")
 
 ## 3.4.0（2026-11-20）
 

@@ -7,6 +7,7 @@
     universe/<name>.parquet  指数历史成分股快照（按月查询），用于避免幸存者偏差
     basics.parquet           股票名称、上市/退市日期
     manifest.json            每只股票最近一次检查更新的日期
+    starts.json              每只股票各类数据请求过的最早起始（起始日往前改时用来避免反复补前段）
 
 价格：只下载不复权数据 + 后复权因子，后复权价 = 不复权价 × 当日适用的 backAdjustFactor
 （已实测与 BaoStock 直接给出的后复权价一致）。收益用后复权价，"一手"的资金用不复权价。
@@ -215,6 +216,18 @@ def listed_snapshots(basics: pd.DataFrame, dates) -> pd.DataFrame:
     return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame(columns=["date", "code", "name"])
 
 
+HEAD_SLACK_DAILY = pd.Timedelta(days=15)      # 起始日落在长假里时，第一根 K 线最多晚这么多天
+HEAD_SLACK_REPORT = pd.Timedelta(days=183)    # 新股的第一份财报一般在上市前后半年内
+HEAD_SLACK_DIV = pd.Timedelta(days=366)       # 年度分红：起始年（或上市）之后一年内一般会有一次除权
+
+
+def _missing_head(first, start, ipo, slack) -> bool:
+    """本地最早的数据比起始日晚出 slack 以上，并且不是因为上市晚（上市日未知时当作缺）"""
+    if pd.isna(first) or first <= start + slack:
+        return False
+    return ipo is None or first > ipo + slack
+
+
 def tr_code(index_code: str) -> str | None:
     """价格指数代码 → 对应的全收益指数代码"""
     return next((u["tr"] for u in UNIVERSES.values() if u["index"] == index_code and "tr" in u), None)
@@ -245,21 +258,48 @@ class StockStore:
     def _save_manifest(self, m: dict):
         (self.root / "manifest.json").write_text(json.dumps(m, indent=0), encoding="utf-8")
 
+    # ---------- 已请求过的最早起始（往前扩展起始日时判断要不要补前段） ----------
+    def _starts(self) -> dict:
+        """{类别: {代码: 起始}}，类别为 daily（日期字符串）/ fin / risk / div（年份）。
+        只用来避免反复补同一段：本地数据比要求的起始晚、又查不到上市日期时，补过一次就记下来"""
+        p = self.root / "starts.json"
+        return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+
+    def _record_starts(self, kind: str, starts: dict):
+        allx = self._starts()
+        have = allx.setdefault(kind, {})
+        for code, s in starts.items():
+            have[code] = min(s, have[code]) if code in have else s
+        (self.root / "starts.json").write_text(json.dumps(allx, indent=0), encoding="utf-8")
+
+    def _ipo_dates(self) -> dict:
+        """代码 → 上市日期；没下载过 basics 时为空（只靠 starts.json 防重复）"""
+        p = self.root / "basics.parquet"
+        if not p.exists():
+            return {}
+        b = pd.read_parquet(p, columns=["code", "ipo_date"]).dropna()
+        return dict(zip(b["code"], pd.to_datetime(b["ipo_date"])))
+
     def plan(self, codes: list[str], start: str, end: str) -> dict[str, tuple[str, str]]:
-        """需要下载的 {代码: (起, 止)}：新股票下全量；已有的只补尾部；今天已检查过的跳过"""
-        manifest, jobs = self._manifest(), {}
+        """
+        需要下载的 {代码: (起, 止)}：新股票下全量；已有的只补尾部；今天已检查过的跳过。
+        起始日往前改了（本地最早一天明显晚于起始日，又不是因为上市晚）时整段重下，否则前段永远补不上
+        """
+        manifest, jobs, ipo = self._manifest(), {}, self._ipo_dates()
+        tried = self._starts().get("daily", {})
         for code in codes:
             if not self.has(code):
+                jobs[code] = (start, end)
+                continue
+            first = self.load(code).index[0]
+            if _missing_head(first, pd.Timestamp(start), ipo.get(code), HEAD_SLACK_DAILY) \
+                    and start < tried.get(code, "9999"):
                 jobs[code] = (start, end)
                 continue
             checked = manifest.get(code, "")
             if checked >= end:
                 continue
-            first = self.load(code).index[0].strftime("%Y-%m-%d")
-            if first > start and checked < start:          # 需要更早的数据：整段重下
-                jobs[code] = (start, end)
-            else:
-                jobs[code] = (max(checked, first), end)
+            jobs[code] = (max(checked, first.strftime("%Y-%m-%d")), end)
         return jobs
 
     def _run_jobs(self, jobs: dict, fetch, on_ok, workers: int, progress=None, checkpoint=None) -> dict[str, str]:
@@ -311,7 +351,7 @@ class StockStore:
         jobs = self.plan(codes, start, end)
         if not jobs:
             return {}
-        manifest = self._manifest()
+        manifest, tried = self._manifest(), {}
 
         def on_ok(code, df):
             if df is not None and len(df):
@@ -322,8 +362,15 @@ class StockStore:
             # 记录数据实际到达的日期（不是查询截止日）：收盘前运行过一次时，收盘后再运行仍会补取当天数据
             if self.has(code):
                 manifest[code] = max(manifest.get(code, ""), self.load(code).index[-1].strftime("%Y-%m-%d"))
+            if jobs[code][0] == start:
+                tried[code] = start
 
-        return self._run_jobs(jobs, self.fetcher, on_ok, workers, progress, lambda: self._save_manifest(manifest))
+        def save():
+            self._save_manifest(manifest)
+            if tried:
+                self._record_starts("daily", tried)
+
+        return self._run_jobs(jobs, self.fetcher, on_ok, workers, progress, save)
 
     # ---------- 财务数据 ----------
     def _fin_path(self, code: str) -> Path:
@@ -337,22 +384,35 @@ class StockStore:
 
     def plan_fundamentals(self, codes: list[str], start_year: int, today: dt.date | None = None) -> dict:
         """新股票下全部季度；已有的重下最近两个季度（有公司延迟披露）及之后的季度；今天已检查过的跳过"""
-        return self._plan_quarterly(codes, start_year, self.has_fin, self.load_fin, self._fin_manifest(), today)
+        return self._plan_quarterly(codes, start_year, self.has_fin, self.load_fin, self._fin_manifest(), today,
+                                    "fin")
 
-    @staticmethod
-    def _plan_quarterly(codes, start_year, has, load, manifest, today=None) -> dict:
+    def _plan_quarterly(self, codes, start_year, has, load, manifest, today=None, kind="fin") -> dict:
+        """新股票下全部季度；已有的重下最近两个季度（有公司延迟披露）及之后的季度；今天已检查过的跳过。
+        起始年往前改了（最早一期财报明显晚于起始年，又不是因为上市晚）时，再补上更早的那些季度"""
         from .fundamentals import quarters
         today = today or dt.date.today()
         qs = quarters(start_year, today)
+        ipo, tried = self._ipo_dates(), self._starts().get(kind, {})
+        first_q_end = pd.Timestamp(start_year, 3, 31)
         jobs = {}
         for code in codes:
             if not has(code):
                 jobs[code] = (qs,)
-            elif manifest.get(code) != today.isoformat():
-                have = load(code)
+                continue
+            have = load(code)
+            head = []
+            if len(have) and start_year < tried.get(code, 9999):
+                first = have["stat_date"].min()
+                if _missing_head(first, first_q_end, ipo.get(code), HEAD_SLACK_REPORT):
+                    head = [(y, q) for y, q in qs if pd.Timestamp(y, q * 3, 1) + pd.offsets.MonthEnd(0) < first]
+            tail = []
+            if manifest.get(code) != today.isoformat():
                 last = have["stat_date"].max() if len(have) else pd.Timestamp(f"{start_year}-01-01")
                 cut = (last - pd.DateOffset(months=3))
-                jobs[code] = ([(y, q) for y, q in qs if pd.Timestamp(y, q * 3, 1) >= cut.replace(day=1)] or qs[-2:],)
+                tail = [(y, q) for y, q in qs if pd.Timestamp(y, q * 3, 1) >= cut.replace(day=1)] or qs[-2:]
+            if head or tail:
+                jobs[code] = (sorted(set(head) | set(tail)),)
         return jobs
 
     def _fin_manifest(self) -> dict:
@@ -366,7 +426,7 @@ class StockStore:
         jobs = self.plan_fundamentals(codes, start_year)
         if not jobs:
             return {}
-        manifest, today_s = self._fin_manifest(), dt.date.today().isoformat()
+        manifest, today_s, tried = self._fin_manifest(), dt.date.today().isoformat(), {}
 
         def on_ok(code, df):
             if self.has_fin(code) and df is not None:
@@ -375,9 +435,13 @@ class StockStore:
             if df is not None:
                 df.reset_index(drop=True).to_parquet(self._fin_path(code), compression="zstd")
             manifest[code] = today_s
+            if jobs[code][0][0] == (start_year, 1):
+                tried[code] = start_year
 
         def save():
             (self.root / "fin_manifest.json").write_text(json.dumps(manifest, indent=0), encoding="utf-8")
+            if tried:
+                self._record_starts("fin", tried)
 
         return self._run_jobs(jobs, fetch or fetch_profit, on_ok, workers, progress, save)
 
@@ -396,7 +460,8 @@ class StockStore:
         return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
 
     def plan_risk(self, codes: list[str], start_year: int, today: dt.date | None = None) -> dict:
-        return self._plan_quarterly(codes, start_year, self.has_risk, self.load_risk, self._risk_manifest(), today)
+        return self._plan_quarterly(codes, start_year, self.has_risk, self.load_risk, self._risk_manifest(), today,
+                                    "risk")
 
     def risk_requests(self, codes: list[str], start_year: int) -> int:
         """还要多少次请求（界面据此估计要下载几天）"""
@@ -410,7 +475,7 @@ class StockStore:
         jobs = self.plan_risk(codes, start_year)
         if not jobs:
             return {}
-        manifest, today_s = self._risk_manifest(), dt.date.today().isoformat()
+        manifest, today_s, tried = self._risk_manifest(), dt.date.today().isoformat(), {}
 
         def on_ok(code, df):
             if self.has_risk(code) and df is not None:
@@ -419,9 +484,13 @@ class StockStore:
             if df is not None:
                 df.reset_index(drop=True).to_parquet(self._risk_path(code), compression="zstd")
             manifest[code] = today_s
+            if jobs[code][0][0] == (start_year, 1):
+                tried[code] = start_year
 
         def save():
             (self.root / "risk_manifest.json").write_text(json.dumps(manifest, indent=0), encoding="utf-8")
+            if tried:
+                self._record_starts("risk", tried)
 
         return self._run_jobs(jobs, fetch or fetch_risk, on_ok, workers, progress, save)
 
@@ -449,10 +518,19 @@ class StockStore:
         today = today or dt.date.today()
         ys = years(start_year, today)
         manifest, jobs = self._div_manifest(), {}
+        ipo, tried = self._ipo_dates(), self._starts().get("div", {})
         for code in codes:
             if not self.has_div(code):
                 jobs[code] = (ys,)
-            elif (last := manifest.get(code)) != today.isoformat():
+                continue
+            if start_year < tried.get(code, 9999):
+                # 起始年往前改了：最早一次除权明显晚于起始年（又不是上市晚）时全部年份重下。没分过红的看不出来，不补
+                ex = self.load_div(code)["ex_date"]
+                if len(ex) and _missing_head(ex.min(), pd.Timestamp(start_year, 12, 31), ipo.get(code),
+                                             HEAD_SLACK_DIV):
+                    jobs[code] = (ys,)
+                    continue
+            if (last := manifest.get(code)) != today.isoformat():
                 since = int(last[:4]) if last else today.year - 1
                 if today.month <= 2:
                     since = min(since, today.year - 1)
@@ -493,7 +571,7 @@ class StockStore:
         jobs = self.plan_dividends(codes, start_year)
         if not jobs:
             return {}
-        manifest, today_s = self._div_manifest(), dt.date.today().isoformat()
+        manifest, today_s, tried = self._div_manifest(), dt.date.today().isoformat(), {}
 
         def on_ok(code, df):
             if df is None:
@@ -504,9 +582,13 @@ class StockStore:
                 df = pd.concat([old[old["ex_date"].dt.year < first_year], df]).sort_values("ex_date")
             df.reset_index(drop=True).to_parquet(self._div_path(code), compression="zstd")
             manifest[code] = today_s
+            if min(jobs[code][0]) == start_year:
+                tried[code] = start_year
 
         def save():
             (self.root / "div_manifest.json").write_text(json.dumps(manifest, indent=0), encoding="utf-8")
+            if tried:
+                self._record_starts("div", tried)
 
         return self._run_jobs(jobs, fetch or fetch_dividends, on_ok, workers, progress, save)
 
@@ -547,7 +629,7 @@ class StockStore:
         import zipfile
         allowed_dirs = {"daily", "index", "universe", "fin", "div", "risk"}
         allowed_files = {"basics.parquet", "manifest.json", "industry.parquet", "fin_manifest.json",
-                         "div_manifest.json", "risk_manifest.json"}
+                         "div_manifest.json", "risk_manifest.json", "starts.json", "rights.parquet"}
         extra_manifests = ("fin_manifest.json", "div_manifest.json", "risk_manifest.json")
         with zipfile.ZipFile(fileobj) as z:
             names = [n for n in z.namelist() if not n.endswith("/")]
@@ -561,10 +643,12 @@ class StockStore:
             incoming = json.loads(z.read("manifest.json")) if "manifest.json" in names else {}
             incoming_extra = {m: json.loads(z.read(m)) for m in extra_manifests if m in names}
             for n in names:
-                if n not in ("manifest.json", *extra_manifests):   # 进度记录需要合并，不能直接覆盖
+                if n not in ("manifest.json", "starts.json", *extra_manifests):   # 进度记录需要合并，不能直接覆盖
                     target = self.root / n
                     target.parent.mkdir(parents=True, exist_ok=True)
                     target.write_bytes(z.read(n))
+        # 导入的文件覆盖了本地的，两边的 starts.json 都不再可靠：删掉，下次按数据本身判断要不要补前段
+        (self.root / "starts.json").unlink(missing_ok=True)
         merged = self._manifest()
         for code, d in incoming.items():
             merged[code] = max(d, merged.get(code, ""))

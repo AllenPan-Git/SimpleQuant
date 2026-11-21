@@ -389,11 +389,16 @@ def test_data_pack_roundtrip_and_rejects_bad_paths(tmp_path):
     import zipfile
     src = StockStore(tmp_path / "a", fetcher=fake_fetcher, login=lambda: None, worker_init=lambda: None)
     src.update(["sh.600000", "sz.000001"], "2024-01-01", "2024-02-29", workers=1)
+    pd.DataFrame({"code": ["sh.600000"], "record_date": pd.to_datetime(["2024-01-05"])}) \
+        .to_parquet(src.root / "rights.parquet")             # 下过分红就会有配股表，导出包里也带着
     pack = src.export_zip()
+    assert "starts.json" in zipfile.ZipFile(io.BytesIO(pack)).namelist()
 
     dst = StockStore(tmp_path / "b", fetcher=fake_fetcher, login=lambda: None, worker_init=lambda: None)
     dst._save_manifest({"sh.600000": "2024-03-31"})           # 本地已有更新的进度
     assert dst.import_zip(io.BytesIO(pack)) == 2
+    assert dst.load_rights() == {"sh.600000": [pd.Timestamp("2024-01-05")]}
+    assert not (dst.root / "starts.json").exists()             # 已请求范围的记录不跟着导入
     pd.testing.assert_frame_equal(dst.load("sz.000001"), src.load("sz.000001"))
     assert dst._manifest() == {"sh.600000": "2024-03-31", "sz.000001": "2024-02-29"}
     assert dst.plan(["sz.000001"], "2024-01-01", "2024-02-29") == {}   # 导入后无需重新下载
@@ -435,6 +440,78 @@ def test_store_incremental_update_and_panel(tmp_path):
     assert p.bench_total_return and p.benchmark.tolist() == tr["close"].tolist()
     tr.iloc[:-1].to_parquet(tmp_path / "index" / "H00300.parquet")        # 少最后一天（官网当天没连上）
     assert not build_panel(st, "hs300", "2024-01-01", "2024-03-29").bench_total_return
+
+
+def _basics(tmp_path, ipo: dict):
+    pd.DataFrame({"code": list(ipo), "name": list(ipo), "ipo_date": pd.to_datetime(list(ipo.values())),
+                  "out_date": pd.NaT}).to_parquet(tmp_path / "basics.parquet")
+
+
+def test_earlier_start_backfills_head_but_not_for_late_listings(tmp_path):
+    """起始日往前改：已有股票要补上前段（11-21 用户反馈全 A 2019、2020 缺数据）；上市晚的不白白重下"""
+    calls = []
+
+    def fetch(code, start, end):
+        calls.append((code, start))
+        first = {"sh.600002": "2022-03-01"}.get(code, start)              # 600002 2022 年才上市
+        return fake_fetcher(code, max(start, first), end)
+
+    st = StockStore(tmp_path, fetcher=fetch, login=lambda: None, worker_init=lambda: None)
+    codes = ["sh.600000", "sh.600002"]
+    st.update(codes, "2021-01-01", "2024-03-29", workers=1)
+    _basics(tmp_path, {"sh.600000": "2000-01-01", "sh.600002": "2022-03-01"})
+    calls.clear()
+    st.update(codes, "2019-01-01", "2024-04-30", workers=1)
+    assert calls == [("sh.600000", "2019-01-01"), ("sh.600002", "2024-03-29")]
+    df = st.load("sh.600000")
+    assert df.index[0] == pd.Timestamp("2019-01-01") and len(df.loc["2019":"2020"]) > 500 and df.index.is_unique
+    assert st.plan(codes, "2019-01-01", "2024-04-30") == {}
+
+
+def test_earlier_start_without_basics_tries_head_only_once(tmp_path):
+    """查不到上市日期时：上市晚的也会补一次，记进 starts.json 后不再反复请求"""
+    def fetch(code, start, end):
+        return fake_fetcher(code, max(start, "2022-03-01"), end)
+
+    st = StockStore(tmp_path, fetcher=fetch, login=lambda: None, worker_init=lambda: None)
+    st.update(["sh.600002"], "2021-01-01", "2024-03-29", workers=1)
+    assert st.plan(["sh.600002"], "2019-01-01", "2024-03-29") == {"sh.600002": ("2019-01-01", "2024-03-29")}
+    st.update(["sh.600002"], "2019-01-01", "2024-03-29", workers=1)
+    assert st.plan(["sh.600002"], "2019-01-01", "2024-03-29") == {}
+    assert st.plan(["sh.600002"], "2018-01-01", "2024-03-29") == {"sh.600002": ("2018-01-01", "2024-03-29")}
+    assert st.plan(["sh.600002"], "2022-01-01", "2024-03-29") == {}          # 起始日落在长假 / 上市前几天：不算缺
+
+
+def test_earlier_start_backfills_fundamentals_and_dividends(tmp_path):
+    from simplequant.stocks.fundamentals import process_profit
+    fin_calls, div_calls = [], []
+
+    def fin(code, qs):
+        fin_calls.append((code, qs[0], len(qs)))
+        ends = [pd.Timestamp(y, q * 3, 1) + pd.offsets.MonthEnd(0) for y, q in qs]
+        raw = pd.DataFrame([[e.strftime("%Y-%m-%d"), (e + pd.Timedelta(days=25)).strftime("%Y-%m-%d"),
+                             "0.1", "0.5", "0.2", "10", "", "1", "10"] for e in ends],
+                           columns=["statDate", "pubDate", "roeAvg", "gpMargin", "npMargin", "netProfit",
+                                    "MBRevenue", "epsTTM", "totalShare"]).astype(str)
+        return code, process_profit(raw), ""
+
+    def div(code, years):
+        div_calls.append((code, min(years)))
+        ex = pd.to_datetime([f"{y}-06-15" for y in years if y < 2026])
+        return code, pd.DataFrame({"ex_date": ex, "cash": 0.1, "bonus": 0.0, "reserve": 0.0}), ""
+
+    st = StockStore(tmp_path, login=lambda: None, worker_init=lambda: None)
+    _basics(tmp_path, {"sh.600000": "2000-01-01"})
+    st.update_fundamentals(["sh.600000"], 2020, workers=1, fetch=fin)
+    st.update_dividends(["sh.600000"], 2020, workers=1, fetch=div)
+    fin_calls.clear(), div_calls.clear()
+    st.update_fundamentals(["sh.600000"], 2018, workers=1, fetch=fin)       # 今天已查过，也要补前段
+    st.update_dividends(["sh.600000"], 2018, workers=1, fetch=div)
+    assert fin_calls == [("sh.600000", (2018, 1), 8)]
+    assert div_calls == [("sh.600000", 2018)]
+    assert st.load_fin("sh.600000")["stat_date"].min() == pd.Timestamp("2018-03-31")
+    assert st.load_div("sh.600000")["ex_date"].min() == pd.Timestamp("2018-06-15")
+    assert st.plan_fundamentals(["sh.600000"], 2018) == {} and st.plan_dividends(["sh.600000"], 2018) == {}
 
 
 def test_update_index_also_fetches_total_return(tmp_path, monkeypatch):

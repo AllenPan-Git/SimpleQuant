@@ -5,6 +5,16 @@
 
 Changes in each release. `tools/release.py` copies the matching section into the GitHub release notes.
 
+## 3.5.1（2026-11-23）
+
+### 更新内容
+- 修复：在「因子实验室 → 因子研究」分析过自定义因子后，若在「自定义因子」中删除该因子，页面重绘报错的问题；已删除因子在旧回测结果中引用时亦会正常显示名称而不再报错
+- 修复：在「设置」页测试大模型连接期间点击「保存」或离开设置页时，测试返回后后台报错的问题
+
+### Changes
+- Fixed: deleting a custom factor after analyzing it in Factor Lab → Factor Research raised an error when the page refreshed; deleted factors still referenced in previous backtest results now display a fallback label instead of raising an error
+- Fixed: clicking Save or leaving the Settings page while an LLM connection test was still running caused a background error when the test returned
+
 ## 3.5.0（2026-11-21）
 
 ### 更新内容

@@ -108,15 +108,20 @@ def page():
             except Exception as e:  # noqa: BLE001 - 缺少依赖等
                 text, kind = f"{type(e).__name__}: {e}", "error"
             finally:
-                test_btn.enable()
-            spin.delete()
+                if not test_btn.is_deleted:
+                    test_btn.enable()
+            if msg.is_deleted:               # 测试期间离开了设置页
+                return
+            if not spin.is_deleted:          # 测试期间点了保存，msg.clear() 已经把它删掉
+                spin.delete()
             with msg:
                 notice(text, "check_circle" if kind == "info" else "error", kind)
 
         with ui.row().classes("gap-3"):
             save_btn = ui.button(t("set.save"), icon="save", on_click=save).props("unelevated no-caps") \
                 .mark("llm_save")
-            test_btn = ui.button(t("set.test"), icon="network_check", on_click=test).props("outline no-caps")
+            test_btn = ui.button(t("set.test"), icon="network_check", on_click=test).props("outline no-caps") \
+                .mark("llm_test")
         with ui.row().classes("items-center gap-2"):
             ui.label(t("set.storage")).classes("sq-muted text-xs")
             folder_btn(t("set.open_folder"), llm.CONFIG_PATH.parent)

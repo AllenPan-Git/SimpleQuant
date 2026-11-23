@@ -1378,12 +1378,16 @@ async def test_selection_custom_factor(user: User):
     user.find(marker="cf_trial").click()
     await user.should_see("第 2 行")
 
+    import types                       # 刚分析过这个因子（线上 3.5.0：删除后重画因子研究 KeyError）
+    SP["report"] = (key, 20, types.SimpleNamespace(summary=None))
+
     user.find(marker=f"cf_del:{key}").click()
     await user.should_see(marker="confirm-delete")
     user.find(marker="confirm-delete").click()
     assert await _wait(lambda: key not in FACTORS)
     await settle()
     assert all(f["key"] in FACTORS for f in SP["factors"]) and SP["res"]["fkey"] == "ep"
+    assert SP["report"] is None
 
 
 
@@ -2146,6 +2150,25 @@ async def test_settings_preset_and_save(user: User, monkeypatch, tmp_path):
     await user.should_not_see(str(llm.CONFIG_PATH))          # 本机路径只在「打开所在文件夹」的悬停提示里
     cfg = real_load(tmp_path / "llm.json")
     assert cfg.provider == "openai" and cfg.model == "deepseek-chat" and cfg.api_key == "sk-test"
+
+
+async def test_settings_test_then_save(user: User, monkeypatch, tmp_path):
+    """连接测试还没返回就点了保存（线上 3.5.0：转圈已被 msg.clear() 删掉，再删报 RuntimeError）"""
+    import threading
+    import simplequant.llm as llm
+    real_save = llm.save_config
+    monkeypatch.setattr(llm, "load_config", lambda: None)
+    monkeypatch.setattr(llm, "save_config", lambda cfg: real_save(cfg, tmp_path / "llm.json"))
+    gate = threading.Event()
+    monkeypatch.setattr(llm, "ping", lambda provider: gate.wait(10) and "pong")
+    await user.open("/settings")
+    user.find(marker="llm_api_key").elements.pop().set_value("sk-test")
+    user.find(marker="llm_test").click()
+    await user.should_see("正在")
+    user.find(marker="llm_save").click()
+    await user.should_see("已保存。")
+    gate.set()
+    await user.should_see("连接成功，模型回复：pong")
 
 
 async def test_settings_library_sync_switch(user: User, monkeypatch, tmp_path):

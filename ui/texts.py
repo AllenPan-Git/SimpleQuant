@@ -1154,6 +1154,7 @@ np.log(x)  x.where(x > 0)  x.clip(lower, upper)
     "sp.pack_imported": L("已导入 {n} 只股票的数据", "Imported data for {n} stocks"),
     "sp.loading_panel": L("正在整理数据…", "Preparing data…"),
     "sp.factor": L("因子", "Factor"),
+    "sp.factor_deleted": L("已删除的因子（{key}）", "Deleted factor ({key})"),
     "sp.horizon": L("持有期（交易日）", "Holding period (days)"),
     "sp.horizon_help": L("因子值计算完成后，于下一交易日开盘买入并持有该天数的收益", "Return from the next open over this many trading days"),
     "sp.horizon_n": L("持有 {h} 天", "{h}-day holding"),

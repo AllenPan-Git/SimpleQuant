@@ -114,10 +114,16 @@ def prune_factors(SP):
     SP["factors"] = [f for f in SP["factors"] if f["key"] in factors_for(kind)] or kind_defaults(kind)["factors"]
     if SP["res"]["fkey"] not in factors_for(kind):
         SP["res"]["fkey"] = factors_for(kind)[0]
+    if SP.get("report") and SP["report"][0] not in FACTORS:      # 刚分析过的因子被删了，研究结果一起清掉
+        SP["report"] = None
 
 
 def factor_label(k: str) -> str:
-    return f"{p(GROUPS[FACTORS[k]['group']])} · {p(FACTORS[k]['label'])}"
+    """「分组 · 名称」；因子已被删除（旧的回测结果里还引用着）时显示键名，不报错"""
+    f = FACTORS.get(k)
+    if f is None:
+        return t("sp.factor_deleted", key=k)
+    return f"{p(GROUPS[f['group']])} · {p(f['label'])}"
 
 
 def reb_label(r) -> str:

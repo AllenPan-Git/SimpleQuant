@@ -25,7 +25,7 @@ def _mining(SP, ctx):
     panel = ctx.panel
     M = SP.setdefault("mine", {"cfg": asdict(MN.MineConfig()), "miner": None, "saved": {}, "running": False})
     M.setdefault("log", [])
-    cfg = llm.load_config()
+    cfg = llm.load_config() or llm.LLMConfig()
     ready = bool(cfg and cfg.ready)
 
     with ui.card().classes("w-full gap-3"):

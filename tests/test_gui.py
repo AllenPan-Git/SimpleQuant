@@ -552,7 +552,17 @@ async def test_strategy_ai_condition_kinds_and_changes(user: User, fake_llm, lib
 
 async def test_strategy_ai_without_config(user: User, lib_dir, monkeypatch):
     import simplequant.llm as llm
+    # 未保存 llm.json 时默认使用免配置托管接口，直接可用
     monkeypatch.setattr(llm, "load_config", lambda: None)
+    await user.open("/timing")
+    user.find(marker="mode").elements.pop().set_value("ai")
+    await settle()
+    await user.should_not_see("前往模型设置")
+    user.find("描述买卖规则").type("均线金叉买入")
+    assert user.find(marker="generate").elements.pop().enabled
+
+    # 配置不完整（如自有接口未填模型名）时提示前往设置并禁用生成
+    monkeypatch.setattr(llm, "load_config", lambda: llm.LLMConfig(preset="openai", provider="openai", model=""))
     await user.open("/timing")
     user.find(marker="mode").elements.pop().set_value("ai")
     await settle()
@@ -2140,8 +2150,11 @@ async def test_settings_preset_and_save(user: User, monkeypatch, tmp_path):
     monkeypatch.setattr(llm, "load_config", lambda: None)
     monkeypatch.setattr(llm, "save_config", lambda cfg: real_save(cfg, tmp_path / "llm.json"))
     await user.open("/settings")
-    assert user.find(marker="llm_model").elements.pop().value == "claude-opus-5-5"
+    assert user.find(marker="llm_preset").elements.pop().value == "hosted"
+    await user.should_not_see(marker="llm_model")
+    await user.should_see(marker="llm_quota")
     user.find(marker="llm_preset").elements.pop().set_value("deepseek")
+    await user.should_see(marker="llm_model")
     assert user.find(marker="llm_base_url").elements.pop().value == "https://api.deepseek.com"
     assert user.find(marker="llm_json_mode").elements.pop().value == "json_object"
     user.find(marker="llm_api_key").elements.pop().set_value("sk-test")
@@ -2152,12 +2165,57 @@ async def test_settings_preset_and_save(user: User, monkeypatch, tmp_path):
     assert cfg.provider == "openai" and cfg.model == "deepseek-chat" and cfg.api_key == "sk-test"
 
 
+async def test_settings_hosted_quota(user: User, monkeypatch, tmp_path):
+    """托管模式：查询余量按权限展示；测试连接 0 消耗；来回切换预设自动记住各自的 key"""
+    import simplequant.llm as llm
+    from simplequant.llm.config import load_config as real_load, save_config as real_save
+    path = tmp_path / "llm.json"
+    monkeypatch.setattr(llm, "load_config", lambda: real_load(path))
+    monkeypatch.setattr(llm, "save_config", lambda cfg: real_save(cfg, path))
+    calls = []
+
+    def fake_quota(key, timeout=10.0, lang="zh"):
+        calls.append(key)
+        if key == "sq-AIONLY":
+            return {"mode": "voucher", "ai_total": 100, "ai_left": 88, "pack_total": 0, "pack_left": 0}
+        if key:
+            return {"mode": "voucher", "ai_total": 100, "ai_left": 88, "pack_total": 3, "pack_left": 2}
+        return {"mode": "trial", "ai_total": 5, "ai_left": 4, "pack_total": 0, "pack_left": 0}
+
+    monkeypatch.setattr(llm, "query_quota", fake_quota)
+    monkeypatch.setattr(llm, "ping", lambda *a, **kw: (_ for _ in ()).throw(AssertionError("hosted test must not call ping")))
+    await user.open("/settings")
+    # 托管模式下点「测试连接」走免费余量查询，不消耗 AI 次数
+    user.find(marker="llm_test").click()
+    await user.should_see("本次测试未消耗额度")
+    await user.should_see("剩余 AI 次数 4 / 5 次")
+    assert calls == [""]
+    # 纯 AI 码只显示 AI 次数，不提数据包
+    user.find(marker="llm_api_key").elements.pop().set_value("sq-AIONLY")
+    user.find(marker="llm_quota").click()
+    await user.should_see("剩余 AI 次数 88 / 100 次")
+    await user.should_not_see("剩余云端数据包下载")
+    # 切到 DeepSeek 填自有 key，再切回 hosted 与 DeepSeek 时各自自动带出，无需重输
+    user.find(marker="llm_preset").elements.pop().set_value("deepseek")
+    assert user.find(marker="llm_api_key").elements.pop().value == ""
+    user.find(marker="llm_api_key").elements.pop().set_value("sk-deepseek-key")
+    user.find(marker="llm_preset").elements.pop().set_value("hosted")
+    assert user.find(marker="llm_api_key").elements.pop().value == "sq-AIONLY"
+    user.find(marker="llm_preset").elements.pop().set_value("deepseek")
+    assert user.find(marker="llm_api_key").elements.pop().value == "sk-deepseek-key"
+    user.find(marker="llm_save").click()
+    await user.should_see("已保存。")
+    saved = real_load(path)
+    assert saved.preset_keys["hosted"] == "sq-AIONLY"
+    assert saved.preset_keys["deepseek"] == "sk-deepseek-key"
+
+
 async def test_settings_test_then_save(user: User, monkeypatch, tmp_path):
     """连接测试还没返回就点了保存（线上 3.5.0：转圈已被 msg.clear() 删掉，再删报 RuntimeError）"""
     import threading
     import simplequant.llm as llm
     real_save = llm.save_config
-    monkeypatch.setattr(llm, "load_config", lambda: None)
+    monkeypatch.setattr(llm, "load_config", lambda: llm.LLMConfig.from_preset("deepseek"))
     monkeypatch.setattr(llm, "save_config", lambda cfg: real_save(cfg, tmp_path / "llm.json"))
     gate = threading.Event()
     monkeypatch.setattr(llm, "ping", lambda provider: gate.wait(10) and "pong")
@@ -3410,3 +3468,50 @@ async def test_home_location_missing(user: User, loc_env, monkeypatch, tmp_path)
     monkeypatch.setattr(paths, "LOCATION_MISSING", tmp_path / "E" / "SimpleQuant")
     await user.open("/")
     await user.should_see(marker="home_loc_missing")
+
+
+async def test_data_cloud_pack_download_and_import(user: User, monkeypatch, tmp_path):
+    """数据页 → 选股数据 → 云端数据包：预填托管额度码、下载 zip 并调用 import_zip 入库，失败时显示提示"""
+    import pandas as pd
+    import simplequant.llm as llm
+    from simplequant.stocks.store import StockStore
+    from gui import sel_panel
+
+    # 准备一个合法的选股数据包 zip
+    src = StockStore(tmp_path / "src_stocks")
+    (src.root / "daily").mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({"close": [10.0]}).to_parquet(src.root / "daily" / "sh.600000.parquet")
+    (src.root / "manifest.json").write_text('{"sh.600000": "2026-11-20"}', encoding="utf-8")
+    pack_bytes = src.export_zip()
+
+    dst = StockStore(tmp_path / "dst_stocks")
+    monkeypatch.setattr(sel_panel, "store", lambda: dst)
+    monkeypatch.setattr(llm, "load_config", lambda: llm.LLMConfig.from_preset("hosted", api_key="sq-PREFILL1"))
+
+    seen = []
+
+    def fake_dl(code, pack, dest, on_progress=None, timeout=120.0, lang="zh"):
+        seen.append((code, pack))
+        if code == "sq-BADCODE":
+            raise llm.HostedError("额度码无效，请核对后重试。", status=401, code="invalid_voucher")
+        if on_progress:
+            on_progress(len(pack_bytes), len(pack_bytes))
+        dest.write_bytes(pack_bytes)
+        return dest, 2
+
+    monkeypatch.setattr(llm, "download_cloud_pack", fake_dl)
+
+    await user.open("/data?tab=stocks")
+    await settle()
+    # 独立的数据包下载码输入（不强绑定设置页 AI 码），且无数据时默认展开
+    assert user.find(marker="cloud_pack_code_stocks").elements.pop().value == ""
+    user.find(marker="cloud_pack_code_stocks").elements.pop().set_value("sq-PACK1111")
+    user.find(marker="cloud_pack_btn_stocks").click()
+    await user.should_see("已导入云端数据包，共 1 只标的（该额度码剩余数据包下载次数：2）", retries=20)
+    assert seen == [("sq-PACK1111", "stocks")]
+    assert (dst.root / "daily" / "sh.600000.parquet").exists()
+
+    # 无效额度码显示错误提示
+    user.find(marker="cloud_pack_code_stocks").elements.pop().set_value("sq-BADCODE")
+    user.find(marker="cloud_pack_btn_stocks").click()
+    await user.should_see("额度码无效，请核对后重试。", retries=20)

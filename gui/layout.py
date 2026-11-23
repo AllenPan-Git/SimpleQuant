@@ -46,11 +46,11 @@ def frame(route: str):
     telemetry.count(f"page:{route}")
     if route == "/factors":
         telemetry.milestone("factor_lab")
-    theme.apply(dark())
+    dm = theme.apply(dark())
     paper_job.watch(paper_job.notify_done)      # 模拟盘更新在哪个页面结束，就在哪个页面弹结果
     # 侧栏界面的样式写在 body.sq-new 下（两套界面并存时留下的类名）；sq-side-open：窄窗口下侧栏保持展开
     ui.query("body").classes("sq-new" + (" sq-side-open" if side_open() else ""))
-    _sidebar(route)
+    _sidebar(route, dm)
 
     with ui.column().classes("sq-main w-full max-w-[1200px] mx-auto px-8 pt-8 pb-24 gap-5"):
         update.banner(route)     # 新版本提示、上次更新的结果
@@ -71,14 +71,23 @@ def _lang_switch():
                 .on("click", lambda lg=lg: on_lang(lg))
 
 
-def _theme_button():
-    """跟随系统 → 浅色 → 深色"""
-    cur = next(i for i, (v, _) in enumerate(_THEMES) if v == dark())
+def _theme_button(dm):
+    """跟随系统 → 浅色 → 深色（原地切换 + CSS 平滑过渡，不整页刷新）"""
+    state = {"idx": next(i for i, (v, _) in enumerate(_THEMES) if v == dark())}
 
     def cycle_theme():
-        set_dark(_THEMES[(cur + 1) % len(_THEMES)][0])
-        ui.navigate.reload()
-    ui.button(icon=_THEMES[cur][1], on_click=cycle_theme).props("flat round dense size=sm") \
+        state["idx"] = (state["idx"] + 1) % len(_THEMES)
+        val, icon = _THEMES[state["idx"]]
+        set_dark(val)
+        ui.run_javascript(
+            "document.documentElement.classList.add('sq-theme-anim');"
+            "clearTimeout(window._sqThemeT);"
+            "window._sqThemeT=setTimeout(()=>document.documentElement.classList.remove('sq-theme-anim'),520);"
+        )
+        dm.set_value(val)
+        btn.props(f"icon={icon}")
+
+    btn = ui.button(icon=_THEMES[state["idx"]][1], on_click=cycle_theme).props("flat round dense size=sm") \
         .classes("sq-muted").tooltip(t("gui.theme"))
 
 
@@ -92,17 +101,30 @@ def side_open() -> bool:
     return bool(app.storage.general.get("side_open"))
 
 
+_PENDING_CACHE: tuple[str, float, float, int] | None = None
+
+
 def _paper_pending() -> int:
-    """侧栏「模拟盘」旁的数字：全部模拟账户的待执行交易合计；读不出时为 0（不显示）"""
+    """侧栏「模拟盘」旁的数字：全部模拟账户的待执行交易合计；按目录与短 TTL 缓存，避免每次切页扫盘"""
+    global _PENDING_CACHE
     try:
-        from simplequant.paper import list_accounts
+        import time
+        from simplequant.paper import account as acc_mod, list_accounts
         from ui.shared import pending_trades
-        return pending_trades(list_accounts())
+        root = acc_mod.PAPER_ROOT
+        now = time.monotonic()
+        mtime = root.stat().st_mtime if root.exists() else -1.0
+        if (_PENDING_CACHE and _PENDING_CACHE[0] == str(root)
+                and _PENDING_CACHE[1] == mtime and now - _PENDING_CACHE[2] < 3.0):
+            return _PENDING_CACHE[3]
+        n = pending_trades(list_accounts())
+        _PENDING_CACHE = (str(root), mtime, now, n)
+        return n
     except Exception:  # noqa: BLE001 - 侧栏只是提示，读坏了不影响页面
         return 0
 
 
-def _sidebar(route: str):
+def _sidebar(route: str, dm):
     """左侧栏。窗口窄于 theme.SIDE_MINI_BELOW 时折成图标列、悬停显示名称（纯 CSS，见 theme.py 的说明）；
     窄窗口下点底部的箭头可以展开回原宽度，记在 app.storage.general["side_open"]"""
     pending = _paper_pending()
@@ -125,7 +147,7 @@ def _sidebar(route: str):
                 _side_item(r, t(key), icon, on=key == cur, n=pending if r == "/paper" else 0)
         with ui.element("div").classes("sq-side-foot"):
             _lang_switch()
-            _theme_button()
+            _theme_button(dm)
             _side_toggle()
 
 

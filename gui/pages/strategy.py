@@ -528,7 +528,7 @@ def _ai_condition_notes(rule: dict, S):
 
 
 def _ai_editor(S, ctx):
-    cfg = llm.load_config()
+    cfg = llm.load_config() or llm.LLMConfig()
     ready = bool(cfg and cfg.ready)
     with ui.card().classes("w-full gap-3"):
         if not ready:

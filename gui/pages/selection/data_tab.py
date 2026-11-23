@@ -1,18 +1,21 @@
 """选股页「数据」标签页（股票 / 可转债）"""
 
 import datetime as dt
+import tempfile
 import time
+from pathlib import Path
 
 import pandas as pd
 from nicegui import run, ui
 
+from simplequant import llm
 from simplequant.stocks import UNIVERSES, today
 from simplequant.stocks import universe as U
 from simplequant.stocks.store import DAILY_LIMIT
-from gui.common import t, p
+from gui.common import t, p, lang
 from gui.components import metric_tile
-from gui.widgets import hint, notice, download_btn, Progress
-from gui.sel_panel import store
+from gui.widgets import hint, notice, Progress
+from gui import sel_panel
 
 
 # ================= 数据 =================
@@ -22,14 +25,19 @@ def _data_tab(SP, ctx, reload_all, universe: str | None = None):
     if U.kind(universe) == "cb":
         _cb_data_tab(SP, ctx, reload_all)
         return
-    st = store()
+    st = sel_panel.store()
     if ctx.lo is not None:
         uni = st.load_universe(universe)
-        codes = sorted(uni["code"].unique())
-        have = sum(st.has(c) for c in codes)
-        have_fin = sum(st.has_fin(c) for c in codes)
-        have_div = sum(st.has_div(c) for c in codes)
-        have_risk = sum(st.has_risk(c) for c in codes)
+        codes = set(uni["code"].unique())
+
+        def _count_dir(sub: str) -> int:
+            d = st.root / sub
+            return sum(1 for p in d.glob("*.parquet") if p.stem in codes) if d.exists() else 0
+
+        have = _count_dir("daily")
+        have_fin = _count_dir("fin")
+        have_div = _count_dir("div")
+        have_risk = _count_dir("risk")
         with ui.grid().classes("w-full gap-3 grid-cols-2 md:grid-cols-6"):
             metric_tile(t("sp.snapshots"), str(uni["date"].nunique()))
             metric_tile(t("sp.codes"), str(len(codes)), help_text=t("sp.codes_help"))
@@ -130,39 +138,85 @@ def _data_tab(SP, ctx, reload_all, universe: str | None = None):
         btn = ui.button(t("sp.download"), icon="download", on_click=download).props("unelevated no-caps") \
             .classes("self-start").mark("sp_download")
 
-    with ui.expansion(t("sp.pack"), icon="folder_zip").classes("w-full q-card"):
-        ui.label(t("sp.pack_note")).classes("sq-muted text-sm")
-        with ui.row().classes("w-full items-start gap-6"):
-            with ui.column().classes("gap-2"):
-                pack_box = ui.column()
+    _pack_section(SP, st, "stocks", reload_all, default_open=(ctx.lo is None))
 
-                async def build_pack():
-                    b.disable()
-                    try:
-                        SP["pack"] = await run.io_bound(st.export_zip)
-                    finally:
-                        b.enable()
-                    show_pack()
 
-                def show_pack():
-                    pack_box.clear()
-                    if SP.get("pack"):
-                        with pack_box:
-                            download_btn(t("sp.pack_download", mb=f"{len(SP['pack']) / 1e6:.0f}"), lambda: SP["pack"],
-                                         f"simplequant_stocks_{today()}.zip", "application/zip")
-                b = ui.button(t("sp.pack_build"), icon="archive", on_click=build_pack).props("outline no-caps")
-                show_pack()
-            with ui.column().classes("gap-2 grow"):
-                async def on_zip(e):
-                    import io
-                    try:
-                        n = st.import_zip(io.BytesIO(await e.file.read()))
-                        ui.notify(t("sp.pack_imported", n=n), type="positive")
-                        reload_all()
-                    except Exception as ex:  # noqa: BLE001
-                        ui.notify(f"{type(ex).__name__}: {ex}", type="negative", multi_line=True)
-                ui.upload(label=t("sp.pack_import"), auto_upload=True, on_upload=on_zip) \
-                    .props("accept=.zip flat bordered").classes("w-full")
+def _pack_section(SP, st, pack_name: str, reload_all, default_open: bool = False):
+    """云端数据包一键下载导入 + 本地 zip 导入（股票 / 可转债共用）"""
+    with ui.expansion(t("sp.pack"), icon="folder_zip", value=default_open) \
+            .classes("w-full q-card").mark(f"pack_exp_{pack_name}"):
+        ui.label(t("sp.cloud_pack_title")).classes("font-medium text-sm")
+        ui.label(t("sp.cloud_pack_note")).classes("sq-muted text-sm")
+        with ui.row().classes("w-full items-center gap-3 flex-wrap"):
+            code_in = ui.input(t("sp.cloud_pack_code"), value="", placeholder="sq-...") \
+                .props("outlined dense").classes("w-64").mark(f"cloud_pack_code_{pack_name}")
+            c_btn = ui.button(t("sp.cloud_pack_btn"), icon="cloud_download").props("unelevated no-caps") \
+                .mark(f"cloud_pack_btn_{pack_name}")
+            ui.link(t("set.cloud_link"), "https://simplequant.org/#cloud", new_tab=True) \
+                .classes("text-xs sq-muted").mark(f"link:cloud_{pack_name}")
+        c_prog = Progress()
+        c_out = ui.column().classes("w-full")
+
+        async def download_cloud():
+            code = (code_in.value or "").strip()
+            c_btn.disable()
+            c_out.clear()
+            c_prog.start()
+
+            def on_prog(done, total):
+                if total > 0:
+                    c_prog.set(done / total,
+                               t("sp.cloud_pack_downloading", done=f"{done / 1e6:.1f}", total=f"{total / 1e6:.1f}"))
+                else:
+                    c_prog.set(0, t("sp.cloud_pack_downloading_unknown", done=f"{done / 1e6:.1f}"))
+
+            def work():
+                with tempfile.TemporaryDirectory(prefix="sq_pack_") as td:
+                    zpath = Path(td) / f"{pack_name}.zip"
+                    _, left = llm.download_cloud_pack(code, pack_name, zpath, on_progress=on_prog, lang=lang())
+                    c_prog.set(1.0, t("sp.cloud_pack_importing"))
+                    n = st.import_zip(zpath)
+                    return n, left
+
+            try:
+                n, left = await run.io_bound(work)
+                if c_out.is_deleted:
+                    return
+                msg = (t("sp.cloud_pack_done_left", n=n, left=left) if left is not None
+                       else t("sp.cloud_pack_done", n=n))
+                ui.notify(msg, type="positive")
+            except llm.HostedError as ex:
+                if c_out.is_deleted:
+                    return
+                with c_out:
+                    notice(str(ex), "error", "error")
+                return
+            except Exception as ex:  # noqa: BLE001
+                if c_out.is_deleted:
+                    return
+                with c_out:
+                    notice(f"{type(ex).__name__}: {ex}", "error", "error")
+                return
+            finally:
+                c_prog.stop()
+                if not c_btn.is_deleted:
+                    c_btn.enable()
+            reload_all()
+
+        c_btn.on_click(download_cloud)
+
+        ui.separator().classes("q-my-sm")
+        with ui.column().classes("gap-2 w-full"):
+            async def on_zip(e):
+                import io
+                try:
+                    n = st.import_zip(io.BytesIO(await e.file.read()))
+                    ui.notify(t("sp.pack_imported", n=n), type="positive")
+                    reload_all()
+                except Exception as ex:  # noqa: BLE001
+                    ui.notify(f"{type(ex).__name__}: {ex}", type="negative", multi_line=True)
+            ui.upload(label=t("sp.pack_import"), auto_upload=True, on_upload=on_zip) \
+                .props("accept=.zip flat bordered").classes("w-full")
 
 
 def _cb_data_tab(SP, ctx, reload_all):
@@ -230,6 +284,8 @@ def _cb_data_tab(SP, ctx, reload_all):
 
         btn = ui.button(t("sp.download"), icon="download", on_click=download).props("unelevated no-caps") \
             .classes("self-start").mark("cb_download")
+
+    _pack_section(SP, st, "cb", reload_all, default_open=(ctx.lo is None))
 
     with ui.expansion(t("cb.rules"), icon="rule").classes("w-full q-card"):
         ui.markdown(t("cb.rules_text")).classes("text-sm")

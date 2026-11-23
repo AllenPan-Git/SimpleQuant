@@ -203,7 +203,7 @@ def _custom_factor_ai(SP, fill):
     """用一句话描述因子 → AI 写 factor(p) 代码；只做静态检查，填进编辑器后由用户试算"""
     lg = lang()
     A = SP["cf_ai"]
-    cfg = llm.load_config()
+    cfg = llm.load_config() or llm.LLMConfig()
     ready = bool(cfg and cfg.ready)
     with ui.expansion(t("cf.ai"), icon="auto_awesome", value=bool(A["result"])).classes("w-full q-card"):
         if not ready:

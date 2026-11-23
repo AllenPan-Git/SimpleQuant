@@ -642,7 +642,7 @@ def _next(no: str, title: str, body: str, on_click, rec: bool = False):
 
 
 def _explain(BT: dict, out):
-    cfg = llm.load_config()
+    cfg = llm.load_config() or llm.LLMConfig()
     if not (cfg and cfg.ready):
         return
 

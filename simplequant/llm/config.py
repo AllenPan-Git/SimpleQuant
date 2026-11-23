@@ -15,7 +15,7 @@ api_key 留空时，各 SDK 会读取自己的环境变量（ANTHROPIC_API_KEY /
 
 import json
 import os
-from dataclasses import dataclass, asdict, fields
+from dataclasses import dataclass, asdict, field, fields
 from pathlib import Path
 
 from ..i18n import L
@@ -32,6 +32,8 @@ def _config_dir() -> Path:
 
 CONFIG_DIR = _config_dir()
 CONFIG_PATH = CONFIG_DIR / "llm.json"
+HOSTED_API_ROOT = os.environ.get("SIMPLEQUANT_HOSTED_URL", "https://api.simplequant.org").rstrip("/")
+HOSTED_AI_BASE = HOSTED_API_ROOT if HOSTED_API_ROOT.endswith("/v1/ai") else f"{HOSTED_API_ROOT}/v1/ai"
 
 PROVIDERS = {
     "anthropic": L("Claude 官方接口", "Anthropic (Claude)"),
@@ -51,6 +53,8 @@ JSON_MODES = {
 
 # 预设：填好接口类型、地址和示例模型名。模型名会随服务商更新，以其文档为准。
 PRESETS = {
+    "hosted": {"label": L("SimpleQuant 托管接口（免配置）", "SimpleQuant Hosted (no setup)"), "provider": "openai",
+               "model": "deepseek-chat", "base_url": HOSTED_AI_BASE, "json_mode": "json_object"},
     "claude": {"label": L("Claude（Anthropic）", "Claude (Anthropic)"), "provider": "anthropic",
                "model": "claude-opus-5-5", "base_url": "", "json_mode": "schema", "key_env": "ANTHROPIC_API_KEY"},
     "openai": {"label": L("OpenAI", "OpenAI"), "provider": "openai",
@@ -79,14 +83,15 @@ PRESETS = {
 
 @dataclass
 class LLMConfig:
-    preset: str = "claude"
-    provider: str = "anthropic"
-    model: str = "claude-opus-5-5"
+    preset: str = "hosted"
+    provider: str = "openai"
+    model: str = "deepseek-chat"
     api_key: str = ""
-    base_url: str = ""
-    json_mode: str = "schema"
+    base_url: str = HOSTED_AI_BASE
+    json_mode: str = "json_object"
     timeout: float = 120.0
     refusal_fallback: bool = True      # 仅 Claude：模型拒答时由服务端自动换模型重试
+    preset_keys: dict[str, str] = field(default_factory=dict)   # 按预设名分别记住已填的 API Key / 额度码
 
     @property
     def ready(self) -> bool:
@@ -122,10 +127,26 @@ def load_config(path: Path = CONFIG_PATH) -> LLMConfig | None:
     except json.JSONDecodeError:
         return None
     known = {f.name for f in fields(LLMConfig)}
-    return LLMConfig(**{k: v for k, v in data.items() if k in known})
+    cfg = LLMConfig(**{k: v for k, v in data.items() if k in known})
+    if not isinstance(cfg.preset_keys, dict):
+        cfg.preset_keys = {}
+    if cfg.api_key and cfg.preset and cfg.preset not in cfg.preset_keys:
+        cfg.preset_keys[cfg.preset] = cfg.api_key
+    return cfg
+
+
+def effective_config(path: Path = CONFIG_PATH) -> LLMConfig:
+    """实际生效的配置：尚未保存 llm.json 时默认使用免配置托管接口。"""
+    return load_config(path) or LLMConfig.from_preset("hosted")
 
 
 def save_config(cfg: LLMConfig, path: Path = CONFIG_PATH) -> Path:
+    if cfg.preset:
+        cfg.preset_keys = {k: str(v) for k, v in (cfg.preset_keys or {}).items() if isinstance(k, str)}
+        if cfg.api_key:
+            cfg.preset_keys[cfg.preset] = cfg.api_key
+        elif cfg.preset in cfg.preset_keys:
+            cfg.preset_keys.pop(cfg.preset, None)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(asdict(cfg), ensure_ascii=False, indent=2), encoding="utf-8")
     return path

@@ -12,6 +12,7 @@ import threading
 import time
 
 from .config import LLMConfig, PRESETS
+from .hosted import ai_base_url, hosted_token, _friendly_error
 
 # 支持服务端拒答自动换模型（fallbacks="default"）的 Claude 模型
 _FALLBACK_MODELS = {"claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5"}
@@ -177,6 +178,10 @@ def _openai_style_kwargs(cfg: LLMConfig, system: str, messages: list[dict], sche
 class OpenAIProvider(Provider):
     def client(self, http_client=None):
         from openai import OpenAI
+        if self.cfg.preset == "hosted":
+            key = hosted_token(self.cfg.api_key)
+            base_url = self.cfg.base_url or ai_base_url()
+            return OpenAI(api_key=key, base_url=base_url, timeout=self.cfg.timeout, http_client=http_client)
         key = self.cfg.api_key or None
         env = PRESETS.get(self.cfg.preset, {}).get("key_env")
         if key is None and env and env != "OPENAI_API_KEY":
@@ -193,6 +198,8 @@ class OpenAIProvider(Provider):
             resp = self.client(http_client).chat.completions.create(
                 **_openai_style_kwargs(self.cfg, system, messages, schema))
         except openai.AuthenticationError as e:
+            if self.cfg.preset == "hosted":
+                raise LLMError(_friendly_error(401, "invalid_voucher", "")) from e
             raise LLMError(f"API key invalid / API key 无效: {e}") from e
         except openai.RateLimitError as e:
             raise LLMError(f"rate limited, try again later / 请求过于频繁，请稍后再试: {e}") from e
@@ -201,6 +208,12 @@ class OpenAIProvider(Provider):
                     "服务可能不支持 JSON Schema，请在设置里改为「JSON 模式」)") if self.cfg.json_mode == "schema" else ""
             raise LLMError(f"request rejected / 请求被拒绝: {e}{hint}") from e
         except openai.APIStatusError as e:
+            if e.status_code in (402, 403) and self.cfg.preset == "hosted":
+                body = getattr(e, "body", None)
+                err = body.get("error") if isinstance(body, dict) and isinstance(body.get("error"), dict) else body
+                code = str(err.get("code", "")) if isinstance(err, dict) else ""
+                msg = str(err.get("message", "")) if isinstance(err, dict) else ""
+                raise LLMError(_friendly_error(e.status_code, code, msg)) from e
             raise LLMError(f"API error {e.status_code}: {e}") from e
         except openai.APIConnectionError as e:
             raise LLMError(f"cannot reach {self.cfg.base_url or 'OpenAI'} / 无法连接: {e}") from e

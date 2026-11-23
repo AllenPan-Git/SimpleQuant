@@ -90,8 +90,25 @@ CSS = f"""
 }}
 
 body, .q-field, .q-btn, .q-item, .q-tab, .q-menu {{ font-family: var(--sq-sans); }}
+html {{ background: var(--sq-page); }}
 body {{ background: var(--sq-page); color: var(--sq-text); font-size: 14.5px; -webkit-font-smoothing: antialiased;
   font-variant-numeric: tabular-nums; }}
+
+/* 仅在点击深浅色切换按钮时启用 450ms 护眼渐变（平时切页 0 过渡，不闪白） */
+html.sq-theme-anim, html.sq-theme-anim body, html.sq-theme-anim .q-page-container,
+html.sq-theme-anim .sq-side, html.sq-theme-anim .q-card, html.sq-theme-anim .q-expansion-item,
+html.sq-theme-anim .sq-note, html.sq-theme-anim .q-uploader, html.sq-theme-anim .q-uploader__header {{
+  transition: background-color 450ms ease, color 450ms ease, border-color 450ms ease !important;
+}}
+/* 上传组件（数据包导入）：覆盖 Quasar 默认 primary 背景 + 白字，适配深浅色纸张主题 */
+.q-uploader {{ background: var(--sq-card) !important; border-color: var(--sq-border) !important; border-radius: 2px; }}
+.q-uploader__header {{ background: var(--sq-sunk) !important; color: var(--sq-text) !important;
+  border-bottom: 1px solid var(--sq-border); }}
+.q-uploader__header .q-btn, .q-uploader__header .q-icon {{ color: var(--sq-text) !important; }}
+.q-uploader__subtitle {{ color: var(--sq-muted) !important; }}
+@media (prefers-reduced-motion: reduce) {{
+  html.sq-theme-anim, html.sq-theme-anim * {{ transition: none !important; }}
+}}
 /* Quasar 深色模式把文字写死成纯白（body.body--dark、.q-dark、输入框、列表等，选择器比上面的 body 更具体），
    纯白在深色纸面上刺眼：一律改回米色墨（--sq-text） */
 html body.body--dark, .body--dark .q-dark, .body--dark .q-list--dark, .body--dark .q-item--dark,
@@ -412,7 +429,7 @@ def apply(dark: bool | None):
     """每页开头调用：Quasar 配色 + 明暗模式（深色下的主色等在 CSS 里用 --q-* 变量覆盖）"""
     ui.colors(primary=INK, accent=RED, secondary="#77716A", dark=DARK_CARD, dark_page=DARK_PAGE,
               positive=GREEN, negative=RED, info="#77716A", warning=GOLD)
-    ui.dark_mode(dark)
+    return ui.dark_mode(dark)
 
 
 def style_fig(fig, dark: bool | None):

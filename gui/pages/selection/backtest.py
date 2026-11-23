@@ -267,7 +267,7 @@ def _backtest_form(SP, ctx, rebuild):
 
     with setup, ui.column().classes("w-full gap-4 pt-3"):
         # ---- 用一句话描述（AI） ----
-        cfg = llm.load_config()
+        cfg = llm.load_config() or llm.LLMConfig()
         ready = bool(cfg and cfg.ready)
         with ui.expansion(t("sp.ai"), icon="auto_awesome", value=bool(SP.get("ai"))).classes("w-full q-card"):
             if not ready:
@@ -1013,8 +1013,8 @@ def _ml_results(info: dict, rspec: dict):
 
 
 def _explain(SP, rspec: dict, res):
-    """AI 解读本次选股回测结果（未配置大模型时不显示）"""
-    cfg = llm.load_config()
+    """AI 解读本次选股回测结果"""
+    cfg = llm.load_config() or llm.LLMConfig()
     if not (cfg and cfg.ready):
         return
 

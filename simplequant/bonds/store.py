@@ -500,6 +500,47 @@ class CBStore:
         self._set_start(start)
         return errors
 
+    # ---------- 数据包：导出 / 导入 ----------
+    def export_zip(self) -> bytes:
+        """把全部可转债数据打成 zip（parquet 已压缩，zip 只做归档）"""
+        import io
+        import zipfile
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as z:
+            for f in sorted(self.root.rglob("*")):
+                if f.is_file():
+                    z.write(f, f.relative_to(self.root).as_posix())
+        return buf.getvalue()
+
+    def import_zip(self, fileobj) -> int:
+        """
+        导入可转债数据包：覆盖同名文件；进度记录取两边较新的日期。返回导入的转债数量。
+        只接受本数据目录结构内的文件，拒绝绝对路径和 ".." 等越界路径。
+        """
+        import zipfile
+        allowed_dirs = {"daily"}
+        allowed_files = {"list.parquet", "info.parquet", "index.parquet", "manifest.json", "meta.json"}
+        with zipfile.ZipFile(fileobj) as z:
+            names = [n for n in z.namelist() if not n.endswith("/")]
+            for n in names:
+                parts = Path(n).parts
+                ok = (not Path(n).is_absolute() and ".." not in parts and
+                      ((len(parts) == 2 and parts[0] in allowed_dirs and n.endswith(".parquet"))
+                       or (len(parts) == 1 and parts[0] in allowed_files)))
+                if not ok:
+                    raise ValueError(f"unexpected file in data pack / 数据包中有不认识的文件: {n}")
+            incoming = json.loads(z.read("manifest.json")) if "manifest.json" in names else {}
+            for n in names:
+                if n != "manifest.json":
+                    target = self.root / n
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(z.read(n))
+        merged = self._manifest()
+        for code, d in incoming.items():
+            merged[code] = max(d, merged.get(code, ""))
+        self._save_manifest(merged)
+        return sum(1 for n in names if n.startswith("daily/"))
+
 
 def today() -> str:
     return dt.date.today().strftime("%Y-%m-%d")

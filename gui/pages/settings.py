@@ -5,7 +5,7 @@ from nicegui import run, ui
 from simplequant import llm
 from simplequant.llm import LLMConfig, PRESETS, PROVIDERS, JSON_MODES
 from simplequant.paper import library_sync
-from gui.common import t, p
+from gui.common import t, p, lang
 from gui import update, telemetry_ui, data_location_ui
 from gui.layout import frame, page_title
 from gui.widgets import folder_btn, notice
@@ -19,17 +19,26 @@ def page():
         page_title("/settings")
         cfg = llm.load_config() or LLMConfig()
         F = {"preset": cfg.preset, **{f: getattr(cfg, f) for f in FIELDS}}
+        preset_keys = dict(cfg.preset_keys or {})
+        if cfg.api_key and cfg.preset:
+            preset_keys[cfg.preset] = cfg.api_key
 
         with ui.column().classes("gap-1"):
             ui.label(t("set.ai")).classes("font-semibold")
             ui.label(t("set.intro")).classes("sq-muted text-sm")
         with ui.card().classes("w-full gap-3"):
             def on_preset(e):
-                """切换预设：填入接口类型、地址、示例模型；保留已填的 key（同一接口类型时）"""
+                """切换预设：自动暂存当前预设的密钥，并恢复目标预设已保存的密钥"""
+                old_preset = F["preset"]
+                if old_preset:
+                    if F["api_key"]:
+                        preset_keys[old_preset] = F["api_key"]
+                    else:
+                        preset_keys.pop(old_preset, None)
                 new = LLMConfig.from_preset(e.value)
-                keep_key = F["api_key"] if new.provider == F["provider"] else ""
                 F.update(preset=e.value, **{f: getattr(new, f) for f in FIELDS})
-                F["api_key"] = keep_key
+                F["api_key"] = preset_keys.get(e.value, "")
+                quota_info.text = ""
                 fill()
             ui.select({k: p(v["label"]) for k, v in PRESETS.items()}, label=t("set.preset"), value=F["preset"],
                       on_change=on_preset).props(DENSE).classes("w-full md:w-1/2").mark("llm_preset")
@@ -41,11 +50,43 @@ def page():
                     .props("outlined dense").mark("llm_api_key")
                 base_url = ui.input(t("set.base_url"), placeholder=t("set.base_url_ph")).props("outlined dense") \
                     .tooltip(t("set.base_url_help")).mark("llm_base_url")
-            with ui.row().classes("w-full items-center gap-4"):
+            with ui.row().classes("w-full items-center gap-4") as adv_row:
                 json_mode = ui.select({k: p(v) for k, v in JSON_MODES.items()}, label=t("set.json_mode")) \
                     .props(DENSE).classes("w-56").tooltip(t("set.json_mode_help")).mark("llm_json_mode")
                 timeout = ui.number(t("set.timeout"), min=10, max=600, step=10).props("outlined dense").classes("w-36")
                 fallback = ui.switch(t("set.fallback")).tooltip(t("set.fallback_help"))
+            def _fmt_quota(q: dict) -> str:
+                if q.get("mode") == "voucher":
+                    ai_t, pack_t = int(q.get("ai_total", 0)), int(q.get("pack_total", 0))
+                    if ai_t > 0 and pack_t > 0:
+                        return t("set.quota_voucher", ai_left=q.get("ai_left", 0), ai_total=ai_t,
+                                 pack_left=q.get("pack_left", 0), pack_total=pack_t)
+                    if ai_t > 0:
+                        return t("set.quota_voucher_ai", ai_left=q.get("ai_left", 0), ai_total=ai_t)
+                    return t("set.quota_voucher_pack", pack_left=q.get("pack_left", 0), pack_total=pack_t)
+                return t("set.quota_trial", ai_left=q.get("ai_left", 0), ai_total=q.get("ai_total", 5))
+
+            with ui.row().classes("w-full items-center gap-3 flex-wrap") as hosted_row:
+                async def check_quota():
+                    quota_btn.disable()
+                    quota_info.text = t("set.quota_checking")
+                    try:
+                        q = await run.io_bound(llm.query_quota, F["api_key"], 10.0, lang())
+                        txt = _fmt_quota(q)
+                    except llm.HostedError as e:
+                        txt = str(e)
+                    except Exception as e:  # noqa: BLE001
+                        txt = f"{type(e).__name__}: {e}"
+                    finally:
+                        if not quota_btn.is_deleted:
+                            quota_btn.enable()
+                    if not quota_info.is_deleted:
+                        quota_info.text = txt
+                quota_btn = ui.button(t("set.quota_btn"), icon="account_balance_wallet", on_click=check_quota) \
+                    .props("outline dense no-caps").mark("llm_quota")
+                ui.link(t("set.cloud_link"), "https://simplequant.org/#cloud", new_tab=True) \
+                    .classes("text-xs sq-muted").mark("link:set.cloud_link")
+                quota_info = ui.label().classes("text-xs sq-muted").mark("llm_quota_info")
             key_help = ui.label().classes("sq-muted text-xs")
             litellm_hint = ui.label(t("set.litellm_hint")).classes("sq-muted text-xs")
 
@@ -61,12 +102,23 @@ def page():
             extras()
 
         def extras():
-            model.props(f'placeholder="{t(f"set.model_ph_{F['provider']}")}"')
-            env = PRESETS.get(F["preset"], {}).get("key_env")
-            key_help.text = t("set.api_key_help_env", env=env) if env else t("set.api_key_help")
-            fallback.set_visibility(F["provider"] == "anthropic")
-            litellm_hint.set_visibility(F["provider"] == "litellm")
-            ok = bool(F["model"])
+            hosted = F["preset"] == "hosted"
+            provider.set_visibility(not hosted)
+            model.set_visibility(not hosted)
+            base_url.set_visibility(not hosted)
+            adv_row.set_visibility(not hosted)
+            hosted_row.set_visibility(hosted)
+            if hosted:
+                api_key.props(f'label="{t("set.voucher_code")}" placeholder="sq-..."')
+                key_help.text = t("set.hosted_help")
+            else:
+                api_key.props(f'label="{t("set.api_key")}" placeholder=""')
+                model.props(f'placeholder="{t(f"set.model_ph_{F['provider']}")}"')
+                env = PRESETS.get(F["preset"], {}).get("key_env")
+                key_help.text = t("set.api_key_help_env", env=env) if env else t("set.api_key_help")
+            fallback.set_visibility(not hosted and F["provider"] == "anthropic")
+            litellm_hint.set_visibility(not hosted and F["provider"] == "litellm")
+            ok = hosted or bool(F["model"])
             save_btn.set_enabled(ok)
             test_btn.set_enabled(ok)
 
@@ -83,7 +135,13 @@ def page():
             bind(el, field, cast)
 
         def current() -> LLMConfig:
-            return LLMConfig(preset=F["preset"], **{f: F[f] for f in FIELDS})
+            keys = dict(preset_keys)
+            if F["preset"]:
+                if F["api_key"]:
+                    keys[F["preset"]] = F["api_key"]
+                else:
+                    keys.pop(F["preset"], None)
+            return LLMConfig(preset=F["preset"], preset_keys=keys, **{f: F[f] for f in FIELDS})
 
         msg = ui.column().classes("w-full")
 
@@ -101,9 +159,16 @@ def page():
                     ui.spinner(size="sm")
                     ui.label(t("set.testing")).classes("sq-muted")
             try:
-                reply = await run.io_bound(llm.ping, llm.get_provider(current()))
-                text, kind = t("set.test_ok", reply=reply[:80]), "info"
-            except llm.LLMError as e:
+                if F["preset"] == "hosted":
+                    q = await run.io_bound(llm.query_quota, F["api_key"], 10.0, lang())
+                    q_txt = _fmt_quota(q)
+                    if not quota_info.is_deleted:
+                        quota_info.text = q_txt
+                    text, kind = t("set.test_hosted_ok", quota=q_txt), "info"
+                else:
+                    reply = await run.io_bound(llm.ping, llm.get_provider(current()))
+                    text, kind = t("set.test_ok", reply=reply[:80]), "info"
+            except (llm.LLMError, llm.HostedError) as e:
                 text, kind = str(e), "error"
             except Exception as e:  # noqa: BLE001 - 缺少依赖等
                 text, kind = f"{type(e).__name__}: {e}", "error"

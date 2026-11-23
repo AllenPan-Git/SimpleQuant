@@ -579,3 +579,143 @@ def test_to_rule_pacing():
     assert "cooldown" not in plain and "scale" not in plain
     assert to_rule({**out, "scale": {"adds": 1, "when": "signal", "pct": 3}})["scale"] == {"adds": 1, "when": "signal"}
     assert validate(to_rule({**out, "scale": {"adds": 1, "when": "gain", "pct": 0}}))     # 缺幅度：校验报错，发回模型
+
+
+def test_hosted_device_id_and_token(tmp_path, monkeypatch):
+    from simplequant.llm import hosted
+    tel = tmp_path / "telemetry.json"
+    uid = "3f2b8c1e-9a4d-4b7e-8c2a-1d5e6f7a8b9c"
+    tel.write_text(json.dumps({"install_id": uid}), encoding="utf-8")
+    cdir = tmp_path / "cfg"
+    # 首次优先复用 telemetry 的 install_id 并持久化到 device_id
+    assert hosted.device_id(config_dir=cdir, telemetry_path=tel) == uid
+    assert (cdir / "device_id").read_text(encoding="utf-8").strip() == uid
+    # 删除 telemetry.json 后依然稳定返回同一 ID
+    tel.unlink()
+    assert hosted.device_id(config_dir=cdir, telemetry_path=tel) == uid
+
+    monkeypatch.setattr(hosted, "device_id", lambda: uid)
+    assert hosted.hosted_token("") == f"trial:{uid}"
+    assert hosted.hosted_token("  sq-ABC12345  ") == "sq-ABC12345"
+
+
+def test_hosted_quota_and_pack_download_roundtrip(tmp_path, monkeypatch):
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from simplequant.llm import hosted
+
+    payload_zip = b"PK\x03\x04dummy-zip-bytes" * 100
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_GET(self):
+            if self.path == "/v1/ai/quota":
+                auth = self.headers.get("Authorization", "")
+                if auth == "Bearer sq-BAD":
+                    body = json.dumps({"error": {"code": "invalid_voucher", "message": "bad"}}).encode()
+                    self.send_response(401)
+                else:
+                    body = json.dumps({"mode": "trial", "ai_total": 5, "ai_left": 3, "pack_total": 0, "pack_left": 0}).encode()
+                    self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            elif self.path == "/v1/pack/list":
+                body = json.dumps({"packs": {"stocks": {"available": True, "size": len(payload_zip), "uploaded": "2026-11-23T00:00:00Z"}}}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        def do_POST(self):
+            length = int(self.headers.get("Content-Length", 0))
+            data = json.loads(self.rfile.read(length).decode())
+            if data.get("code") == "sq-EMPTY":
+                body = json.dumps({"error": {"code": "pack_exhausted", "message": "no left"}}).encode()
+                self.send_response(402)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/zip")
+            self.send_header("Content-Length", str(len(payload_zip)))
+            self.send_header("X-SQ-Pack-Left", "2")
+            self.end_headers()
+            self.wfile.write(payload_zip)
+
+    srv = HTTPServer(("127.0.0.1", 0), Handler)
+    port = srv.server_address[1]
+    th = threading.Thread(target=srv.serve_forever, daemon=True)
+    th.start()
+    try:
+        monkeypatch.setenv("SIMPLEQUANT_HOSTED_URL", f"http://127.0.0.1:{port}")
+        q = hosted.query_quota("")
+        assert q["ai_left"] == 3
+        with pytest.raises(hosted.HostedError, match="额度码无效"):
+            hosted.query_quota("sq-BAD")
+
+        packs = hosted.list_cloud_packs()
+        assert packs["stocks"]["available"] is True and packs["stocks"]["size"] == len(payload_zip)
+
+        prog = []
+        dest, left = hosted.download_cloud_pack("sq-OK1234", "stocks", tmp_path / "stocks.zip",
+                                                on_progress=lambda d, tot: prog.append((d, tot)))
+        assert dest.read_bytes() == payload_zip and left == 2 and prog[-1] == (len(payload_zip), len(payload_zip))
+
+        with pytest.raises(hosted.HostedError, match="下载次数已用完"):
+            hosted.download_cloud_pack("sq-EMPTY", "stocks", tmp_path / "fail.zip")
+        assert not (tmp_path / "fail.zip").exists()
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_hosted_openai_provider_402_friendly_message(monkeypatch):
+    import httpx
+    from simplequant.llm import LLMConfig, LLMError, get_provider, hosted
+
+    monkeypatch.setattr(hosted, "device_id", lambda: "3f2b8c1e-9a4d-4b7e-8c2a-1d5e6f7a8b9c")
+    seen_auth = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen_auth.append(req.headers.get("authorization"))
+        return httpx.Response(402, json={"error": {"code": "trial_exhausted", "message": "out"}})
+
+    cfg = LLMConfig.from_preset("hosted")
+    prov = get_provider(cfg)
+    with pytest.raises(LLMError, match="免费体验次数已用完"):
+        prov.chat("sys", [{"role": "user", "content": "hi"}],
+                  http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+    assert seen_auth == ["Bearer trial:3f2b8c1e-9a4d-4b7e-8c2a-1d5e6f7a8b9c"]
+
+
+def test_cb_store_export_import_zip(tmp_path):
+    import io
+    import zipfile
+    import pandas as pd
+    from simplequant.bonds import CBStore
+
+    src = CBStore(tmp_path / "src")
+    (src.root / "daily").mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({"code": ["110001"], "name": ["测试转债"]}).to_parquet(src.root / "list.parquet")
+    pd.DataFrame({"raw_close": [101.0]}).to_parquet(src.root / "daily" / "110001.parquet")
+    (src.root / "manifest.json").write_text(json.dumps({"110001": "2026-11-20"}), encoding="utf-8")
+
+    raw = src.export_zip()
+    dst = CBStore(tmp_path / "dst")
+    assert dst.import_zip(io.BytesIO(raw)) == 1
+    assert (dst.root / "daily" / "110001.parquet").exists()
+    assert json.loads((dst.root / "manifest.json").read_text(encoding="utf-8"))["110001"] == "2026-11-20"
+
+    bad = io.BytesIO()
+    with zipfile.ZipFile(bad, "w") as z:
+        z.writestr("../evil.txt", "x")
+    bad.seek(0)
+    with pytest.raises(ValueError, match="不认识的文件"):
+        dst.import_zip(bad)

@@ -5,6 +5,18 @@
 
 Changes in each release. `tools/release.py` copies the matching section into the GitHub release notes.
 
+## 3.6.0（2026-11-23）
+
+### 更新内容
+- 新增：「SimpleQuant 托管接口（免配置）」成为默认 AI 预设：新设备无需申请或配置 API Key 即可直接体验 5 次 AI 功能；填入托管额度码（`sq-...`）后可继续使用，支持设置页随时查询余量与 0 消耗连接测试；亦可随时切换为自有 API Key，各服务商的密钥会自动分别保存，切换模型无需重输
+- 新增：数据页「选股数据」与「可转债」均支持「云端数据包下载」，凭数据包下载码直接拉取并自动导入全量历史数据包；同步补齐可转债数据包导入支持
+- 改进：深浅色主题切换改为原地平滑过渡（不再整页刷新），修复数据包上传组件在深浅色主题下的配色对比度，并优化选股数据页统计加载速度
+
+### Changes
+- Added: "SimpleQuant Hosted (no setup)" is now the default AI preset, giving each new device 5 free trial calls with no API key required; enter a hosted voucher code (`sq-...`) to continue, check remaining quota or test connectivity without consuming quota in Settings, or switch to your own API key at any time (API keys are remembered per preset)
+- Added: "Cloud data pack download" in both the stock selection and convertible bond Data tabs to download and import prebuilt historical data packs with a voucher code, along with local zip import support for convertible bond data
+- Improved: smooth in-place light/dark theme transitions without full page reloads, fixed uploader contrast in both themes, and sped up stock data tab statistics loading
+
 ## 3.5.1（2026-11-23）
 
 ### 更新内容

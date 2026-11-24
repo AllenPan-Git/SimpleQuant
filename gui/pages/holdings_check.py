@@ -4,10 +4,12 @@ import numpy as np
 import pandas as pd
 from nicegui import background_tasks, run, ui
 
+from simplequant import llm, telemetry
 from simplequant.stocks import StockStore, UNIVERSES, today
 from simplequant.stocks import diagnosis as D
 from simplequant.stocks import overview as O
 from simplequant.stocks import universe as U
+from gui import cloud_ui
 from gui.common import t, p, lang
 from gui.components import metric_tile
 from gui.widgets import df_table, fmt_table, plot, notice
@@ -161,7 +163,7 @@ def diag_tab(SP, get_panel):
     draw_list()
     if hd.get("result") is not None:
         with out:
-            _render(hd["result"], hd["result_pool"], SP, lambda: run_check(hd, out, get_panel, SP))
+            _render(hd["result"], hd["result_pool"], SP, lambda: run_check(hd, out, get_panel, SP), hd)
 
 
 def run_check(hd, out, get_panel, SP):
@@ -196,17 +198,17 @@ def run_check(hd, out, get_panel, SP):
             with out:
                 notice(f"{type(ex).__name__}: {ex}", "error", "error")
             return
-        hd["result"], hd["result_pool"] = res, universe
+        hd["result"], hd["result_pool"], hd["ai_report"] = res, universe, None
         if out.is_deleted:
             return
         out.clear()
         with out:
-            _render(res, universe, SP, lambda: run_check(hd, out, get_panel, SP))
+            _render(res, universe, SP, lambda: run_check(hd, out, get_panel, SP), hd)
     background_tasks.create(load(), name="holdings check")
 
 
 # ================= 结果 =================
-def _render(d: D.Diagnosis, universe: str, SP, rerun):
+def _render(d: D.Diagnosis, universe: str, SP, rerun, hd: dict | None = None):
     lg = lang()
     uname = p(UNIVERSES[universe]["label"])
     names = dict(zip(d.holdings["code"], d.holdings["name"]))
@@ -226,6 +228,8 @@ def _render(d: D.Diagnosis, universe: str, SP, rerun):
         metric_tile(t("hd.top3"), f"{c['top3']:.1%}")
         metric_tile(t("hd.eff_n"), f"{c['effective_n']:.1f}", help_text=t("hd.eff_n_help"))
         metric_tile(t("hd.n_ind"), str(c["industries"]))
+
+    _ai_holdings_box(d, uname, hd if hd is not None else SP.setdefault("hd", {}))
 
     # 各股明细：点击一行打开个股概览
     ui.label(t("hd.sec_hold")).classes("sq-serif text-base font-semibold mt-2")
@@ -336,3 +340,52 @@ def _problems(d: D.Diagnosis, SP, rerun, sep):
             ui.notify(t("ov.dl_errors", e="; ".join(f"{c}: {m}" for c, m in errs.items())), type="warning")
         rerun()
     btn.on_click(download)
+
+
+def _ai_holdings_box(d: D.Diagnosis, uname: str, hd: dict):
+    """持仓诊断 AI 风险体检按钮与报告展示"""
+    cfg = llm.load_config() or llm.LLMConfig()
+    if not (cfg and cfg.ready):
+        return
+    with ui.column().classes("w-full gap-2 mt-1"):
+        with ui.row().classes("items-center gap-3"):
+            btn = ui.button(t("hd.ai_btn"), icon="auto_awesome").props("outline no-caps").mark("hd_ai_btn")
+            spin = ui.row().classes("items-center gap-2")
+            with spin:
+                ui.spinner(size="sm")
+                ui.label(t("ai.thinking")).classes("sq-muted text-sm")
+            spin.set_visibility(False)
+        box = ui.column().classes("w-full gap-1").mark("hd_ai_box")
+
+    def show():
+        if box.is_deleted:
+            return
+        box.clear()
+        if hd.get("ai_report"):
+            with box, ui.column().classes("w-full gap-1 sq-note py-3"):
+                ui.markdown(hd["ai_report"]).classes("text-sm")
+                ui.label(t("hd.ai_note")).classes("sq-muted text-xs")
+
+    async def run_ai():
+        c = llm.load_config() or llm.LLMConfig()
+        if not (c and c.ready):
+            return
+        btn.disable()
+        spin.set_visibility(True)
+        telemetry.ai("holdings")
+        try:
+            hd["ai_report"] = await run.io_bound(llm.explain_holdings, llm.get_provider(c), d, uname, lang())
+            cloud_ui.invalidate_quota()
+        except Exception as e:  # noqa: BLE001
+            if not box.is_deleted:
+                cloud_ui.handle_ai_error(e, box, on_retry=lambda: background_tasks.create(run_ai()))
+            return
+        finally:
+            if not btn.is_deleted:
+                btn.enable()
+            if not spin.is_deleted:
+                spin.set_visibility(False)
+        show()
+
+    btn.on_click(run_ai)
+    show()

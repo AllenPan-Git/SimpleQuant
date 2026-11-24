@@ -301,6 +301,19 @@ code, pre {{ font-family: var(--sq-mono); }}
 .sq-new .sq-side-group {{ font-family: var(--sq-serif); font-size: 13px; font-weight: 600; letter-spacing: .14em;
   color: var(--sq-muted); white-space: nowrap; }}
 .sq-new .sq-side-space {{ flex-grow: 1; min-height: 20px; }}
+.sq-new .sq-side-cloud {{ display: flex; align-items: center; gap: 10px; margin: 4px 0 8px; padding: 9px 11px;
+  border: 1px solid var(--sq-border); border-left: 2px solid var(--sq-red); background: var(--sq-surface);
+  cursor: pointer; transition: border-color .15s, background .15s; }}
+.sq-new .sq-side-cloud:hover {{ border-color: var(--sq-text); border-left-color: var(--sq-red); }}
+.sq-new .sq-side-cloud-ico {{ color: var(--sq-red); flex-shrink: 0; }}
+.sq-new .sq-side-cloud-title {{ font-family: var(--sq-serif); font-size: 13px; font-weight: 600; color: var(--sq-text);
+  line-height: 1.2; white-space: nowrap; }}
+.sq-new .sq-side-cloud-tag {{ font-size: 10px; padding: 0 5px; line-height: 1.5; border: 1px solid var(--sq-red);
+  color: var(--sq-red); white-space: nowrap; }}
+.sq-new .sq-side-cloud-sub {{ font-size: 11px; color: var(--sq-muted); line-height: 1.3; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; max-width: 150px; }}
+.sq-cloud-strip {{ padding: 14px 20px; border-top: 1px solid var(--sq-border); border-bottom: 1px solid var(--sq-border);
+  border-left: 2px solid var(--sq-red); background: var(--sq-surface); }}
 .sq-new .sq-side-foot {{ display: flex; align-items: center; gap: 4px; padding: 10px 0 0; border-top: 1px solid var(--sq-border); }}
 .sq-new .sq-side-foot > :first-child {{ margin-right: auto; }}
 .sq-new .sq-side-toggle {{ display: none; }}
@@ -324,6 +337,8 @@ body.sq-side-open .sq-side-tip {{ display: none; }}
     background: var(--sq-red); font-size: 0; }}
   {_MINI} .sq-side-prog {{ left: 8px; right: 8px; bottom: 3px; }}
   {_MINI} .sq-side-date, {_MINI} .sq-side-group {{ display: none; }}
+  {_MINI} .sq-side-cloud {{ justify-content: center; padding: 8px 0; border: 0; background: transparent; margin: 2px 0; }}
+  {_MINI} .sq-side-cloud-text {{ display: none; }}
   {_MINI} .sq-side-sep {{ display: block; height: 1px; margin: 8px 4px; padding: 0; background: var(--sq-border); }}
   {_MINI} .sq-side-sep::after {{ display: none; }}
   {_MINI} .sq-side-foot {{ flex-direction: column; padding: 8px 0 0; }}

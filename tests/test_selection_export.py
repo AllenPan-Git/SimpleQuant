@@ -639,6 +639,11 @@ def test_unsupported_selection_exports():
         check_selection_exportable(full_spec("value_liquidity"), "qmt")
     check_selection_exportable(full_spec("value_liquidity"), "joinquant")
     check_selection_exportable({**base, "factors": [{"key": "roe"}]}, "qmt", follow=True)
+    with pytest.raises(ValueError, match="行业"):
+        check_selection_exportable({**base, "filters": {"industry": {"mode": "exclude", "items": ["J66货币金融服务"]}}}, "joinquant")
+    with pytest.raises(ValueError, match="因子区间"):
+        check_selection_exportable({**base, "filters": {"factor_filters": [{"key": "ret5", "mode": "pct", "min": 10, "max": 90}]}}, "joinquant")
+    check_selection_exportable({**base, "filters": {"factor_filters": [{"key": "ret5", "mode": "pct", "min": 10, "max": 90}]}}, "joinquant", follow=True)
     with pytest.raises(ValueError):
         selection_platform_script("joinquant", base, BROKER_DICT, "2021-01-01", "2022-01-01", "2020-01-01",
                                   follow=True)

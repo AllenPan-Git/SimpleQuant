@@ -1216,6 +1216,54 @@ async def test_selection_filter_add_edit_delete(user: User):
 
 
 @needs_stocks
+async def test_selection_ext_filters_ui(user: User):
+    """待办 49：行业筛选、排雷金融业豁免开关、因子区间筛选（含非法上下限校验与删除清理）"""
+    from gui.pages.selection import current_spec, sp_state
+    s = sp_state()
+    s["indf"], s["risk_exempt_fin"], s["factorf"] = None, False, []
+    s["riskf"]["max_debt_ratio"] = None
+    SP = await _open_selection(user, "bt")
+
+    # 1) 添加行业筛选并选择排除行业
+    user.find(marker="sp_add_filter").click()
+    user.find(marker="sp_add_filter:industry").click()
+    await settle()
+    ind_sel = user.find(marker="sp_ind_items").elements.pop()
+    first_ind = next(iter(ind_sel.options))
+    ind_sel.set_value([first_ind])
+    await settle()
+    assert current_spec(SP)["filters"]["industry"] == {"mode": "exclude", "items": [first_ind]}
+
+    # 2) 添加资产负债率上限 → 出现金融业豁免复选框 → 删除排雷条件后豁免自动清零
+    user.find(marker="sp_add_filter").click()
+    user.find(marker="sp_add_filter:max_debt_ratio").click()
+    await settle()
+    user.find(marker="sp_risk_exempt_fin").elements.pop().set_value(True)
+    await settle()
+    assert current_spec(SP)["filters"].get("risk_exempt_fin") is True
+    user.find(marker="sp_del_filter:max_debt_ratio").click()
+    await settle()
+    assert "risk_exempt_fin" not in current_spec(SP)["filters"]
+
+    # 3) 添加因子区间筛选（默认 ret5 百分位 10~90）→ 输错下限>上限禁用回测按钮 → 修正 → 删除
+    user.find(marker="sp_add_filter").click()
+    user.find(marker="sp_add_filter:factor").click()
+    await settle()
+    assert current_spec(SP)["filters"]["factor_filters"] == [{"key": "ret5", "mode": "pct", "min": 10.0, "max": 90.0}]
+    user.find(marker="sp_ff_min:0").elements.pop().set_value(95)
+    await settle()
+    assert not user.find(marker="sp_run").elements.pop().enabled
+    user.find(marker="sp_ff_min:0").elements.pop().set_value(15)
+    await settle()
+    assert user.find(marker="sp_run").elements.pop().enabled
+    assert current_spec(SP)["filters"]["factor_filters"][0]["min"] == 15.0
+    user.find(marker="sp_del_ff:0").click()
+    user.find(marker="sp_del_filter:industry").click()
+    await settle()
+    assert "factor_filters" not in current_spec(SP)["filters"] and "industry" not in current_spec(SP)["filters"]
+
+
+@needs_stocks
 async def test_selection_advanced_settings(user: User):
     """高级设置：都是默认值时收起、标题无小字；载入改过空仓月份等的已保存策略后自动展开，标题列出改过的项；
     在表单里改回默认值，小字随之消失"""
@@ -3515,3 +3563,11 @@ async def test_data_cloud_pack_download_and_import(user: User, monkeypatch, tmp_
     user.find(marker="cloud_pack_code_stocks").elements.pop().set_value("sq-BADCODE")
     user.find(marker="cloud_pack_btn_stocks").click()
     await user.should_see("额度码无效，请核对后重试。", retries=20)
+
+
+async def test_cloud_dialog_go_settings(user: User, lib_dir):
+    await user.open("/")
+    user.find(marker="nav_cloud").click()
+    await user.should_see(marker="cloud_dialog")
+    user.find(marker="cloud_go_settings").click()
+    await user.should_see(marker="llm_preset")

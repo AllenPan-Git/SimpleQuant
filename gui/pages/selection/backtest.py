@@ -18,11 +18,13 @@ from simplequant.engine.phase import run_selection_phases, selection_cycle, phas
 from simplequant.stocks import UNIVERSES, FACTORS, REBALANCE, WEIGHTING, DIVIDEND, DEFAULT_FILTERS, run_selection
 from simplequant.stocks import universe as U, factors_for
 from simplequant.stocks import ml as ML
-from simplequant.stocks.selection import ic_history_short, skip_months, needs_fin, needs_risk, MARKET_INDS
+from simplequant.stocks.selection import (ic_history_short, skip_months, needs_fin, needs_risk, needs_div_factors,
+                                          needs_industry, industry_filter_of, active_factor_filters, FIN_EXEMPT_RISK,
+                                          MARKET_INDS)
 from simplequant.stocks.panel import STOCK_FILTERS, RISK_FILTERS
 from simplequant.bonds.panel import CB_FILTERS, CB_DEFAULT_FILTERS
 from simplequant.system import open_folder
-from gui import state, history, support, run_log
+from gui import state, history, support, run_log, cloud_ui
 from gui.common import t, p, lang
 from gui.missing_data import stock_bar
 from gui.components import broker_settings, metric_tiles, metric_tile, credibility_box, bench_label
@@ -53,17 +55,74 @@ FILTER_SUGGEST = {
 }
 
 
-def filter_editor(SP, kind: str, changed):
+def _available_industries(panel, extra=()) -> dict[str, str]:
+    """可选的证监会行业字典 {原值: 显示名}（优先合并面板与本地行业表，未下载时保留已选值以免下拉框丢失）"""
+    from gui import sel_panel
+    vals = set()
+    if panel is not None and not panel.industry.dropna().empty:
+        vals.update(str(x).strip() for x in panel.industry.dropna().unique())
+    try:
+        vals.update(str(x).strip() for x in sel_panel.store().load_industry().dropna().unique())
+    except Exception:  # noqa: BLE001
+        pass
+    vals.update(str(x).strip() for x in extra if str(x).strip())
+    vals.discard("")
+    return {s: (f"{s[:3]} · {s[3:]}" if s[:1].isalpha() and s[1:3].isdigit() else s) for s in sorted(vals)}
+
+
+def _ff_error(ff: dict) -> str:
+    lo, hi = ff.get("min"), ff.get("max")
+    if ff.get("mode") == "pct":
+        if (lo is not None and not (0.0 <= lo <= 100.0)) or (hi is not None and not (0.0 <= hi <= 100.0)):
+            return t("sp.ff_err_pct")
+    if lo is not None and hi is not None and lo > hi:
+        return t("sp.ff_err_bounds")
+    return ""
+
+
+def filter_editor(SP, panel, changed):
     """过滤条件：设了值的条件各占一行（可删除），其余从「＋添加条件」菜单里加"""
+    kind = panel.kind
     groups = FILTER_GROUPS.get(kind, [])
     mark_prefix = "cb_" if kind == "cb" else "sp_"
-    box = ui.column().classes("w-full gap-1")
+    ff_key = "cb_factorf" if kind == "cb" else "factorf"
+    f_opts = {k: factor_label(k) for k in factors_for(kind)}
+    box = ui.column().classes("w-full gap-1.5")
 
     def draw():
         box.clear()
         with box:
             ui.label(t("sp.filters")).classes("text-xs sq-muted")
             any_set = False
+            # 1) 行业范围筛选（仅股票池）
+            if kind == "stock" and SP.get("indf") is not None:
+                any_set = True
+                indf = SP["indf"]
+                ind_opts = _available_industries(panel, indf.get("items") or ())
+                with ui.row().classes("w-full items-center gap-2 wrap"):
+                    def on_ind_mode(e, indf=indf):
+                        indf["mode"] = e.value
+                        changed()
+                    ui.select({"exclude": t("sp.ind_exclude"), "include": t("sp.ind_include")},
+                              value=indf.get("mode", "exclude"), on_change=on_ind_mode) \
+                        .props(DENSE).classes("w-40").mark("sp_ind_mode")
+
+                    def on_ind_items(e, indf=indf):
+                        indf["items"] = list(e.value or [])
+                        changed()
+                    ui.select(ind_opts, label=t("sp.ind_pick"), value=list(indf.get("items") or []),
+                              multiple=True, with_input=True, on_change=on_ind_items) \
+                        .props(DENSE + " use-chips clearable").classes("grow min-w-[240px]").mark("sp_ind_items")
+                    ui.icon("help_outline").classes("sq-muted cursor-help").tooltip(t("sp.ind_filter_help"))
+
+                    def on_del_ind():
+                        SP["indf"] = None
+                        draw()
+                        changed()
+                    ui.button(icon="close", on_click=on_del_ind).props("flat round dense size=sm") \
+                        .tooltip(t("sp.del_filter")).mark("sp_del_filter:industry")
+
+            # 2) 固定数值筛选条件（价格/市值、财务排雷、可转债条件）
             for sk, table, _, note in groups:
                 vals = SP[sk]
                 for k, m in table.items():
@@ -82,12 +141,85 @@ def filter_editor(SP, kind: str, changed):
                         ui.icon("help_outline").classes("sq-muted cursor-help") \
                             .tooltip(p(m["help"]) + (t(note) if note else ""))
 
-                        def on_del(vals=vals, k=k):
+                        def on_del(vals=vals, sk=sk, k=k):
                             vals[k] = None
+                            if sk == "riskf" and all(vals.get(rk) is None for rk in FIN_EXEMPT_RISK):
+                                SP["risk_exempt_fin"] = False
                             draw()
                             changed()
                         ui.button(icon="close", on_click=on_del).props("flat round dense size=sm") \
                             .tooltip(t("sp.del_filter")).mark(f"sp_del_filter:{k}")
+                # 金融行业排雷豁免开关：启用了资产负债率或流动比率限制时出现
+                if kind == "stock" and sk == "riskf" and any(vals.get(rk) is not None for rk in FIN_EXEMPT_RISK):
+                    with ui.row().classes("items-center gap-1 pl-1"):
+                        def on_exempt(e):
+                            SP["risk_exempt_fin"] = bool(e.value)
+                            changed()
+                        ui.checkbox(t("sp.risk_exempt_fin"), value=bool(SP.get("risk_exempt_fin")),
+                                    on_change=on_exempt).props("dense").classes("text-sm") \
+                            .mark("sp_risk_exempt_fin")
+                        ui.icon("help_outline").classes("sq-muted cursor-help text-base") \
+                            .tooltip(t("sp.risk_exempt_fin_help"))
+
+            # 3) 通用因子区间筛选（支持内置因子与自定义因子，数值或截面百分位）
+            ffs = SP.setdefault(ff_key, [])
+            for i, ff in enumerate(ffs):
+                any_set = True
+                is_pct = ff.get("mode", "pct") == "pct"
+                num_props = "outlined dense" + (" suffix=%" if is_pct else "")
+                with ui.row().classes("w-full items-center gap-2 wrap"):
+                    def on_ff_key(e, ff=ff):
+                        if e.value:
+                            ff["key"] = e.value
+                            changed()
+                    ui.select(f_opts, label=t("sp.ff_factor"), value=ff["key"], with_input=True,
+                              on_change=on_ff_key).props(DENSE).classes("w-60").mark(f"sp_ff_key:{i}")
+
+                    def on_ff_mode(e, ff=ff):
+                        ff["mode"] = e.value
+                        draw()
+                        changed()
+                    ui.select({"pct": t("sp.ff_mode_pct"), "value": t("sp.ff_mode_val")},
+                              value=ff.get("mode", "pct"), on_change=on_ff_mode) \
+                        .props(DENSE).classes("w-32").mark(f"sp_ff_mode:{i}")
+
+                    if kind == "stock" and is_pct:
+                        def on_ff_scope(e, ff=ff):
+                            ff["scope"] = e.value
+                            changed()
+                        ui.select({"pool": t("sp.ff_scope_pool"), "industry": t("sp.ff_scope_ind")},
+                                  value=ff.get("scope", "pool"), on_change=on_ff_scope) \
+                            .props(DENSE).classes("w-32").mark(f"sp_ff_scope:{i}")
+
+                    err_lbl = None
+
+                    def on_ff_bound(side: str, val, ff=ff, get_err=lambda: err_lbl):
+                        ff[side] = float(val) if val not in (None, "") else None
+                        lbl = get_err()
+                        if lbl is not None:
+                            msg = _ff_error(ff)
+                            lbl.text = msg
+                            lbl.set_visibility(bool(msg))
+                        changed()
+                    ui.number(t("sp.ff_min"), value=ff.get("min"),
+                              on_change=lambda e, fn=on_ff_bound: fn("min", e.value)) \
+                        .props(num_props).classes("w-28").mark(f"sp_ff_min:{i}")
+                    ui.label("～").classes("sq-muted text-sm")
+                    ui.number(t("sp.ff_max"), value=ff.get("max"),
+                              on_change=lambda e, fn=on_ff_bound: fn("max", e.value)) \
+                        .props(num_props).classes("w-28").mark(f"sp_ff_max:{i}")
+                    ui.icon("help_outline").classes("sq-muted cursor-help").tooltip(t("sp.ff_help"))
+
+                    def on_del_ff(idx=i):
+                        ffs.pop(idx)
+                        draw()
+                        changed()
+                    ui.button(icon="close", on_click=on_del_ff).props("flat round dense size=sm") \
+                        .tooltip(t("sp.del_filter")).mark(f"sp_del_ff:{i}")
+                    init_err = _ff_error(ff)
+                    err_lbl = ui.label(init_err).classes("text-negative text-xs").mark(f"sp_ff_err:{i}")
+                    err_lbl.set_visibility(bool(init_err))
+
             if not any_set:
                 ui.label(t("sp.filters_empty")).classes("sq-muted text-sm")
 
@@ -95,7 +227,7 @@ def filter_editor(SP, kind: str, changed):
                        for sk, table, gk, _ in groups]
             missing = [g for g in missing if g[2]]
             with ui.button(t("sp.add_filter"), icon="add").props("flat no-caps dense color=primary") \
-                    .classes("self-start").mark("sp_add_filter") as add_btn:
+                    .classes("self-start").mark("sp_add_filter"):
                 with ui.menu():
                     for i, (sk, gk, items) in enumerate(missing):
                         if i:
@@ -107,7 +239,24 @@ def filter_editor(SP, kind: str, changed):
                                 draw()
                                 changed()
                             ui.menu_item(p(m["label"]), on_click=on_add).mark(f"sp_add_filter:{k}")
-            add_btn.set_enabled(bool(missing))
+                    if missing:
+                        ui.separator()
+                    ui.item_label(t("sp.filter_group_ext")).props("header").classes("text-xs sq-muted")
+                    if kind == "stock" and SP.get("indf") is None:
+                        def on_add_ind():
+                            SP["indf"] = {"mode": "exclude", "items": []}
+                            draw()
+                            changed()
+                        ui.menu_item(t("sp.add_ind_filter"), on_click=on_add_ind).mark("sp_add_filter:industry")
+
+                    def on_add_ff():
+                        default_fk = ("ret5" if "ret5" in f_opts else next(iter(f_opts))) if kind == "stock" \
+                            else ("cb_stock_ret20" if "cb_stock_ret20" in f_opts else next(iter(f_opts)))
+                        SP.setdefault(ff_key, []).append(
+                            {"key": default_fk, "mode": "pct", "scope": "pool", "min": 10.0, "max": 90.0})
+                        draw()
+                        changed()
+                    ui.menu_item(t("sp.add_factor_filter"), on_click=on_add_ff).mark("sp_add_filter:factor")
     draw()
 
 
@@ -159,9 +308,32 @@ def current_spec(SP) -> dict:
     filters = {"exclude_st": bool(SP["excl_st"]) and not cb, "min_list_days": int(SP["min_list"])}
     if cb:
         filters.update({k: SP["cbf"].get(k) for k in CB_FILTERS})
-    else:                                   # 只写设了值的，没用排雷/价格/市值条件的策略与原来一字不差
+    else:                                   # 只写设了值的，没用排雷/价格/市值/行业条件的策略与原来一字不差
         filters.update({k: v for k, v in (SP.get("stockf") or {}).items() if v is not None})
         filters.update({k: v for k, v in (SP.get("riskf") or {}).items() if v is not None})
+        indf = SP.get("indf")
+        if isinstance(indf, dict) and indf.get("items"):
+            items = [str(x).strip() for x in indf["items"] if str(x).strip()]
+            if items:
+                filters["industry"] = {"mode": "include" if indf.get("mode") == "include" else "exclude",
+                                       "items": items}
+        if SP.get("risk_exempt_fin") and any((SP.get("riskf") or {}).get(rk) is not None for rk in FIN_EXEMPT_RISK):
+            filters["risk_exempt_fin"] = True
+    ffs = []
+    for ff in SP.get("cb_factorf" if cb else "factorf") or ():
+        lo, hi = ff.get("min"), ff.get("max")
+        if ff.get("key") and (lo is not None or hi is not None):
+            mode = "value" if ff.get("mode") == "value" else "pct"
+            item = {"key": ff["key"], "mode": mode}
+            if mode == "pct" and not cb and ff.get("scope") == "industry":
+                item["scope"] = "industry"
+            if lo is not None:
+                item["min"] = float(lo)
+            if hi is not None:
+                item["max"] = float(hi)
+            ffs.append(item)
+    if ffs:
+        filters["factor_filters"] = ffs
     top_n = int(SP["top_n"])
     keep_n = int(SP["keep_n"]) if SP.get("keep_n") not in (None, "", 0) else 0
     return {"kind": "selection", "universe": SP["universe"],
@@ -185,8 +357,9 @@ def apply_spec(SP, spec: dict, name: str = ""):
     SP["universe"] = spec.get("universe", SP["universe"])
     kind = U.kind(SP["universe"])
     switch_kind(SP, old, kind)
+    usable = set(factors_for(kind))
     SP["factors"] = [{"key": f["key"], "weight": float(f.get("weight", 1)), "direction": int(f.get("direction", 1))}
-                     for f in spec["factors"] if f["key"] in factors_for(kind)]   # 已删除的自定义因子跳过
+                     for f in spec["factors"] if f["key"] in usable]   # 已删除的自定义因子跳过
     SP["top_n"] = int(spec["top_n"])
     keep_n = int(spec["keep_n"]) if spec.get("keep_n") not in (None, "", 0) else 0
     SP["keep_n"] = keep_n if keep_n > SP["top_n"] else None
@@ -201,11 +374,17 @@ def apply_spec(SP, spec: dict, name: str = ""):
                              "sell": market.get("sell") or {"logic": "any", "conditions": []}})
     flt = {**(CB_DEFAULT_FILTERS if kind == "cb" else DEFAULT_FILTERS), **(spec.get("filters") or {})}
     SP["excl_st"], SP["min_list"] = bool(flt["exclude_st"]), int(flt["min_list_days"])
+    ffs = [ff for ff in active_factor_filters(flt) if ff["key"] in usable]
     if kind == "cb":
         SP["cbf"] = {k: flt.get(k) for k in CB_FILTERS}
+        SP["cb_factorf"] = ffs
     else:
         SP["stockf"] = {k: flt.get(k) for k in STOCK_FILTERS}
         SP["riskf"] = {k: flt.get(k) for k in RISK_FILTERS}
+        ind_flt = industry_filter_of(flt)
+        SP["indf"] = {"mode": ind_flt[0], "items": list(ind_flt[1])} if ind_flt else None
+        SP["risk_exempt_fin"] = bool(flt.get("risk_exempt_fin"))
+        SP["factorf"] = ffs
     SP["pos"] = int(spec.get("position_pct", POS_DEFAULT))
     SP["weighting"] = spec.get("weighting", "manual")
     SP["lookback"] = int(spec.get("ic_lookback", 252))
@@ -284,21 +463,26 @@ def _backtest_form(SP, ctx, rebuild):
                 SP["ai_base"] = bool(e.value)
                 ai_text.props(f'placeholder="{placeholder()}"')
 
+            ai_err = ui.column().classes("w-full")
+
             async def ai_go():
                 SP["ai_text"] = ai_text.value or ""
+                c = llm.load_config() or llm.LLMConfig()
+                if not (c and c.ready):
+                    return
+                ai_err.clear()
                 ai_btn.disable()
                 telemetry.ai("selection")
                 try:
-                    SP["ai"] = await run.io_bound(llm.translate_selection, SP["ai_text"], llm.get_provider(cfg), lg,
+                    SP["ai"] = await run.io_bound(llm.translate_selection, SP["ai_text"], llm.get_provider(c), lg,
                                                   base=current_spec(SP) if SP["ai_base"] else None)
-                except llm.LLMError as e:
-                    SP["ai"] = None
-                    ui.notify(str(e), type="negative", multi_line=True)
+                    cloud_ui.invalidate_quota()
                 except Exception as e:  # noqa: BLE001
                     SP["ai"] = None
-                    ui.notify(f"{type(e).__name__}: {e}", type="negative", multi_line=True)
+                    cloud_ui.handle_ai_error(e, ai_err)
                 finally:
-                    ai_btn.enable()
+                    if not ai_btn.is_deleted:
+                        ai_btn.enable()
                 ai_result.refresh()
             with ui.row().classes("items-center gap-4"):
                 ai_btn = ui.button(t("ai.generate"), icon="auto_awesome", on_click=ai_go).props("outline no-caps") \
@@ -442,7 +626,7 @@ def _backtest_form(SP, ctx, rebuild):
                 reb_n.set_enabled(SP["reb"] == "n")
                 if panel.kind == "stock":
                     ui.switch(t("sp.exclude_st"), value=SP["excl_st"], on_change=lambda e: set_sp("excl_st", e.value))
-            filter_editor(SP, panel.kind, lambda: changed())
+            filter_editor(SP, panel, lambda: changed())
             if panel.kind == "cb":
                 ui.label(t("cb.coupon_note")).classes("sq-muted text-sm")
 
@@ -579,18 +763,22 @@ def _backtest_form(SP, ctx, rebuild):
     def changed():
         spec = current_spec(SP)
         preview.text = strategies.describe(spec, lg)
-        has = bool(SP["factors"])
+        ff_list = SP.get("cb_factorf" if panel.kind == "cb" else "factorf") or []
+        valid_ff = not any(_ff_error(ff) for ff in ff_list)
+        has = bool(SP["factors"]) and valid_ff
         save_btn.set_enabled(has and bool(SP["name"].strip()))
         run_btn.set_enabled(has)
         exp_btn.set_enabled(has)
         need_fin_ = not panel.has_fin and needs_fin(spec)
-        need_div_ = not panel.div_codes and any(FACTORS[f["key"]].get("requires_div") for f in SP["factors"])
+        need_div_ = not panel.div_codes and needs_div_factors(spec)
         need_risk_ = panel.kind == "stock" and not panel.has_risk and needs_risk(spec)
+        need_ind_ = (panel.kind == "stock" and panel.industry.dropna().empty
+                     and needs_industry(spec) and not need_fin_)
         need_cash_ = SP.get("dividend") == "cash" and not panel.div_codes and panel.kind == "stock"
         if panel.kind == "stock" and ctx.lo is not None:
             # 缺什么就地下载（gui/missing_data.py）；缺的种类没变时不重画，下载中的提示条不被冲掉
             want = ([("fin", "factor")] * need_fin_ + [("div", "factor")] * need_div_
-                    + [("risk", "screen")] * need_risk_, need_cash_)
+                    + [("risk", "screen")] * need_risk_ + [("industry", "screen")] * need_ind_, need_cash_)
             if want != warn_shown.get("want"):
                 warn_shown["want"] = want
                 fin_warn.clear()
@@ -612,6 +800,9 @@ def _backtest_form(SP, ctx, rebuild):
             if need_risk_:
                 with fin_warn:
                     notice(t("sp.need_risk"), "warning", "warning")
+            if need_ind_:
+                with fin_warn:
+                    notice(t("sp.need_industry"), "warning", "warning")
             div_warn.clear()
             if need_cash_:
                 with div_warn:
@@ -767,9 +958,12 @@ def _chip_items(SP, kind: str, lg: str) -> list[tuple[str, str, str]]:
 
     # 条件：设了值的过滤条件 + 实际生效的大盘条件 + 回撤停手（排除 ST、上市天数是常设项，不计）
     if kind == "cb":
-        n_filters = sum(SP["cbf"].get(k) is not None for k in CB_FILTERS)
+        n_filters = sum(SP["cbf"].get(k) is not None for k in CB_FILTERS) + sum(
+            ff.get("min") is not None or ff.get("max") is not None for ff in (SP.get("cb_factorf") or []))
     else:
-        n_filters = sum(v is not None for d in (SP.get("stockf") or {}, SP.get("riskf") or {}) for v in d.values())
+        n_filters = (sum(v is not None for d in (SP.get("stockf") or {}, SP.get("riskf") or {}) for v in d.values())
+                     + (1 if (SP.get("indf") or {}).get("items") else 0)
+                     + sum(ff.get("min") is not None or ff.get("max") is not None for ff in (SP.get("factorf") or [])))
     market = market_spec(SP) or {}
     n_market = sum(len((market.get(s) or {}).get("conditions") or []) for s in ("sell", "buy"))
     dd = float(SP.get("dd_stop") or 0)
@@ -885,7 +1079,7 @@ def _selection_results(SP, ctx, top=None):
         notice(t("sp.div_patched", n=len(cash), m=len(rights), eg=eg + ("…" if len(cash) > 5 else "")), "info", "info")
     ml_info = res.schedule.ml if res.schedule else None
     _sel_checks(SP, base_checks(res), ctx)
-    _explain(SP, rspec, res)
+    _explain(SP, rspec, res, ctx)
     if ml_info:
         _ml_results(ml_info, rspec)
     run_panel = SP.get("result_panel") or panel
@@ -1012,36 +1206,55 @@ def _ml_results(info: dict, rspec: dict):
                     .classes("sq-muted text-xs max-w-sm")
 
 
-def _explain(SP, rspec: dict, res):
+def _explain(SP, rspec: dict, res, ctx=None):
     """AI 解读本次选股回测结果"""
     cfg = llm.load_config() or llm.LLMConfig()
     if not (cfg and cfg.ready):
         return
 
     async def explain():
+        c = llm.load_config() or llm.LLMConfig()
+        if not (c and c.ready):
+            return
         btn.disable()
+        err_box.clear()
         telemetry.ai("explain")
         try:
             SP["explanation"] = await run.io_bound(
-                llm.explain_result, llm.get_provider(cfg), strategies.describe(rspec, lang()), res.metrics, lang(),
+                llm.explain_result, llm.get_provider(c), strategies.describe(rspec, lang()), res.metrics, lang(),
                 llm.trade_details(res, res.names))
-        except llm.LLMError as e:
-            ui.notify(str(e), type="negative", multi_line=True)
+            cloud_ui.invalidate_quota()
         except Exception as e:  # noqa: BLE001
-            ui.notify(f"{type(e).__name__}: {e}", type="negative", multi_line=True)
+            cloud_ui.handle_ai_error(e, err_box)
+            return
         finally:
-            btn.enable()
+            if not btn.is_deleted:
+                btn.enable()
         show.refresh()
 
     btn = ui.button(t("ai.explain"), icon="auto_awesome", on_click=explain).props("outline no-caps") \
         .classes("self-start").mark("sp_explain")
+    err_box = ui.column().classes("w-full")
+
+    def on_apply_iterated(nl_res):
+        apply_spec(SP, nl_res.spec, nl_res.name or SP.get("name", ""))
+        if ctx is not None and hasattr(ctx, "rebuild_bt"):
+            ctx.rebuild_bt()
 
     @ui.refreshable
     def show():
         if SP.get("explanation"):
-            with ui.column().classes("w-full gap-1 sq-note py-3"):
+            with ui.column().classes("w-full gap-2 sq-note py-3"):
                 ui.markdown(SP["explanation"]).classes("text-sm")
                 ui.label(t("ai.explain_note")).classes("sq-muted text-xs")
+                ui.button(
+                    t("ai.iterate_btn"), icon="auto_fix_high",
+                    on_click=lambda: cloud_ui.iterate_dialog(
+                        SP["explanation"],
+                        lambda req, c: llm.translate_selection(req, llm.get_provider(c), lang(), 1, base=rspec),
+                        on_apply_iterated,
+                    ),
+                ).props("outline dense no-caps").classes("self-start mt-1").mark("sp_ai_iterate")
     show()
 
 

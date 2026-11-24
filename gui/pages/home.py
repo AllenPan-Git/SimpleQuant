@@ -9,7 +9,7 @@ from simplequant import migrate, telemetry
 from simplequant.data import library
 from simplequant.paper import list_accounts, load_calendar, health, schedule
 from simplequant.strategies import list_strategies
-from gui import history, state, routes, telemetry_ui, data_location_ui, missing_data
+from gui import history, state, routes, telemetry_ui, data_location_ui, missing_data, cloud_ui
 from gui.common import t, lang
 from gui.components import accounts_table, strategy_progress
 from gui.layout import frame
@@ -71,6 +71,8 @@ def page():
             with ui.column().classes("w-full gap-0"):
                 for e in recent:
                     _recent_row(e)
+
+        cloud_ui.home_cloud_strip()
 
         with ui.expansion(t("home.sources"), icon="help_outline").classes("w-full q-card mt-8"):
             ui.markdown(t("home.sources_table"))

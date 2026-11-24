@@ -406,6 +406,38 @@ def test_translate_selection_modify_keeps_cb_filters():
     assert res.spec["filters"]["max_price"] == 120.0
 
 
+def test_selection_llm_factor_filters_and_exempt_roundtrip():
+    """待办 49：AI 选股支持金融业排雷豁免与因子过滤（含数值 0 下限），增量修改保留手动行业筛选"""
+    from simplequant.llm import to_selection_spec, from_selection_spec, validate_selection, translate_selection
+    raw = sel_output(
+        max_debt_ratio=70,
+        risk_exempt_fin=True,
+        factor_filters=[
+            {"key": "ret5", "mode": "pct", "scope": "pool", "has_min": True, "min": 10, "has_max": True, "max": 90},
+            {"key": "ep", "mode": "value", "scope": "pool", "has_min": True, "min": 0, "has_max": False, "max": 0},
+        ],
+    )
+    spec = to_selection_spec(raw)
+    assert spec["filters"]["risk_exempt_fin"] is True
+    assert spec["filters"]["factor_filters"] == [
+        {"key": "ret5", "mode": "pct", "min": 10.0, "max": 90.0},
+        {"key": "ep", "mode": "value", "min": 0.0},
+    ]
+    assert validate_selection(spec) == []
+    assert to_selection_spec(from_selection_spec(spec)) == spec
+
+    # 非法上下限与跨品种因子报错
+    bad = {**spec, "filters": {**spec["filters"], "factor_filters": [{"key": "ret5", "mode": "pct", "min": 80, "max": 20}]}}
+    assert any("下限" in e for e in validate_selection(bad, "zh"))
+
+    # 增量修改时，基础策略中手设的行业排除条件保持不丢
+    base = {**spec, "filters": {**spec["filters"], "industry": {"mode": "exclude", "items": ["J66货币金融服务"]}}}
+    reply = {**from_selection_spec(base), "name": "改", "understood": "持有15只", "unsupported": [], "top_n": 15}
+    res = translate_selection("持有15只", FakeProvider([json.dumps(reply)]), base=base)
+    assert res.ok and res.spec["top_n"] == 15
+    assert res.spec["filters"]["industry"] == {"mode": "exclude", "items": ["J66货币金融服务"]}
+
+
 def test_explain_result_prompt_has_yardsticks():
     from simplequant.llm import explain_result
     fake = FakeProvider(["- 偏弱"])
@@ -719,3 +751,113 @@ def test_cb_store_export_import_zip(tmp_path):
     bad.seek(0)
     with pytest.raises(ValueError, match="不认识的文件"):
         dst.import_zip(bad)
+
+
+def test_translate_modifies_base_rule():
+    from simplequant.llm import translate, from_rule
+    from simplequant.llm.nl import to_rule
+
+    base_rule = to_rule(MACD_STOP)
+    back = from_rule(base_rule)
+    assert to_rule(back) == base_rule
+
+    updated = {**MACD_STOP, "cooldown": 5}
+    fake = FakeProvider([json.dumps(updated)])
+    res = translate("卖出后冷却5天", fake, base={"kind": "rule", "rule": base_rule})
+    msg = fake.calls[0]["messages"][0]["content"]
+    assert msg.startswith("Current rule:") and msg.endswith("Change request:\n卖出后冷却5天")
+    assert "Editing an existing rule" in fake.calls[0]["system"]
+    assert res.ok and res.spec["rule"]["cooldown"] == 5
+
+
+def test_explain_holdings_summary_and_prompt():
+    import pandas as pd
+    from simplequant.stocks.diagnosis import Diagnosis
+    from simplequant.llm import explain_holdings, holdings_summary
+
+    df = pd.DataFrame([
+        {"code": "sh.600519", "name": "贵州茅台", "shares": 100.0, "price": 1500.0, "value": 150000.0,
+         "weight": 0.6, "industry": "C15酒、饮料和精制茶制造业", "pe_pct": 65.0, "pb_pct": 80.0, "roe_pct": 95.0, "stale": False},
+        {"code": "sh.601398", "name": "工商银行", "shares": 20000.0, "price": 5.0, "value": 100000.0,
+         "weight": 0.4, "industry": "J66货币金融服务", "pe_pct": 12.0, "pb_pct": 10.0, "roe_pct": 40.0, "stale": False},
+    ])
+    inds = pd.DataFrame([
+        {"industry": "C15酒、饮料和精制茶制造业", "weight": 0.6, "pool_weight": 0.1},
+        {"industry": "J66货币金融服务", "weight": 0.4, "pool_weight": 0.15},
+    ])
+    corr = pd.DataFrame([[1.0, 0.25], [0.25, 1.0]], index=["贵州茅台", "工商银行"], columns=["贵州茅台", "工商银行"])
+    diag = Diagnosis(
+        asof=pd.Timestamp("2026-11-20"), holdings=df, pool_median={"mcap": 1e10},
+        style_pct={"mcap": 90.0, "pe": 44.0, "pb": 52.0, "dy": 70.0, "roe": 73.0},
+        style_cover={"mcap": 1.0, "pe": 1.0, "pb": 1.0, "dy": 1.0, "roe": 1.0},
+        concentration={"n": 2, "top1": 0.6, "top3": 1.0, "effective_n": 1.92, "industries": 2},
+        industries=inds, corr=corr, avg_corr=0.25, top_pairs=[("贵州茅台", "工商银行", 0.25)],
+        curve=None, perf={"portfolio": {"total_return": 0.12, "volatility": 0.18, "max_drawdown": -0.1},
+                          "benchmark": {"total_return": 0.08, "volatility": 0.16, "max_drawdown": -0.12}, "beta": 0.9},
+        pool_size=300,
+    )
+    summary = holdings_summary(diag, "沪深300")
+    assert summary["concentration"]["effective_n"] == 1.92
+    assert summary["industry_comparison"][0]["industry"] == "酒、饮料和精制茶制造业"
+
+    fake = FakeProvider(["- 集中度偏高"])
+    out = explain_holdings(fake, diag, "沪深300", "zh")
+    assert out == "- 集中度偏高"
+    assert "NEVER recommend buying, selling" in fake.calls[0]["system"]
+    assert "沪深300" in fake.calls[0]["messages"][0]["content"]
+
+
+def test_review_credibility_prompt():
+    from simplequant.llm import review_credibility
+
+    fake = FakeProvider(["- 过拟合风险：中"])
+    checks = [
+        {"level": "warn", "key": "cred.few_trades", "args": {"n": 8}},
+        {"level": "warn", "key": "cred.concentrated", "args": {"k": 3, "top": 0.25, "rest": -0.02, "total": 0.23}},
+    ]
+    extra = {"walk_forward": {"windows": 4, "wfe": 0.65, "oos_metrics": {"cagr": 0.06}}}
+    out = review_credibility(fake, "双均线", {"cagr": 0.12, "sharpe": 1.1}, checks, extra, "zh")
+    assert out == "- 过拟合风险：中"
+    assert "overfitting risk rating" in fake.calls[0]["system"]
+    body = fake.calls[0]["messages"][0]["content"]
+    assert "8" in body and "25.0%" in body and "walk_forward" in body
+
+
+def test_cloud_ui_quota_error_detection():
+    from simplequant.llm import HostedError
+    from gui.cloud_ui import is_quota_error
+
+    assert is_quota_error(HostedError("x", status=402, code="trial_exhausted"))
+    assert is_quota_error(RuntimeError("当前设备的免费体验次数已用完"))
+    assert not is_quota_error(RuntimeError("network timeout"))
+
+
+def test_explain_allocation_and_compare_runs():
+    import pandas as pd
+    from types import SimpleNamespace
+    from simplequant.llm import allocation_summary, explain_allocation, compare_runs
+
+    idx = pd.date_range("2024-01-02", periods=6, freq="B")
+    R = pd.DataFrame({"a": [0.01, -0.01, 0.02, 0.0, 0.01, -0.005], "b": [0.002, 0.003, -0.001, 0.002, 0.001, 0.002]}, index=idx)
+    eq = pd.DataFrame({"value": [1.0, 1.005, 1.01, 1.012, 1.02, 1.018], "benchmark": [1.0, 0.99, 1.01, 1.01, 1.02, 1.015]}, index=idx)
+    res = SimpleNamespace(metrics={"cagr": 0.07, "volatility": 0.08, "max_drawdown": -0.05, "sharpe": 0.85},
+                          stats={"risk": 3}, n_rebalances=4, equity=eq)
+    r = {"profile": SimpleNamespace(level=3, max_dd=0.15), "res": res, "R": R, "manual": False,
+         "rebalance": "quarterly", "weights": {"a": 0.4, "b": 0.6},
+         "sleeves": [{"id": "a", "class": "equity"}, {"id": "b", "class": "bond"}]}
+    alloc_checks = [{"level": "ok", "key": "alloc.dd_within", "args": {"dd": 0.05, "limit": 0.15}}]
+    s = allocation_summary(r, {"a": "沪深300ETF", "b": "国债ETF"}, {"equity": "股票", "bond": "债券"}, "稳健型", alloc_checks)
+    assert s["risk_profile"]["level"] == "C3" and len(s["class_mix"]) == 2
+    assert len(s["yearly_returns"]) == 1 and s["yearly_returns"][0]["year"] == 2024
+    assert "5.0%" in s["checks"][0]["detail"] and "15.0%" in s["checks"][0]["detail"]
+
+    fake1 = FakeProvider(["- 风险等级匹配"])
+    assert explain_allocation(fake1, s, "zh") == "- 风险等级匹配"
+    assert "NEVER recommend buying, selling" in fake1.calls[0]["system"]
+    assert fake1.calls[0]["messages"][0]["content"].startswith("Asset allocation backtest summary:\n")
+
+    fake2 = FakeProvider(["- 回撤明显收窄"])
+    prev = {"name": "旧版", "metrics": {"total_return": 0.2, "max_drawdown": -0.18}, "setup": {"data": "510300"}}
+    curr = {"name": "新版", "metrics": {"total_return": 0.18, "max_drawdown": -0.10}, "setup": {"data": "510300"}}
+    assert compare_runs(fake2, prev, curr, ["新增 8% 移动止损"], "旧规则", "新规则", "zh") == "- 回撤明显收窄"
+    assert fake2.calls[0]["messages"][0]["content"].startswith("Backtest A/B comparison:\n")

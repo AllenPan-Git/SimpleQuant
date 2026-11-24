@@ -6,9 +6,10 @@
 
 import datetime as dt
 
-from nicegui import ui
+from nicegui import background_tasks, run, ui
 
-from gui import state
+from simplequant import llm, strategies, telemetry
+from gui import state, cloud_ui
 from gui.common import t, lang
 from ui.shared import push_run, run_diff, pct, DIFF_METRICS
 
@@ -36,14 +37,63 @@ def compare(kind: str, no: int | None):
     if no is None or len(rs) < 2 or rs[0]["no"] != no:
         return
     lg = lang()
-    lines = run_diff(rs[1], rs[0], lg)
+    prev, curr = rs[1], rs[0]
+    lines = run_diff(prev, curr, lg)
+    cfg = llm.load_config() or llm.LLMConfig()
     with ui.element("div").classes("sq-run-diff w-full").mark("run_diff"):
         with ui.row().classes("w-full items-baseline justify-between no-wrap gap-3"):
-            ui.label(t("diff.title", time=rs[1]["time"][:5])).classes("sq-eyebrow")
-            ui.button(t("diff.history", n=len(rs)), on_click=lambda: _history(rs)) \
-                .props("flat dense no-caps").classes("sq-run-diff-more").mark("run_history")
+            ui.label(t("diff.title", time=prev["time"][:5])).classes("sq-eyebrow")
+            with ui.row().classes("items-center gap-2 shrink-0"):
+                ai_btn = None
+                if cfg and cfg.ready:
+                    ai_btn = ui.button(t("diff.ai_btn"), icon="auto_awesome") \
+                        .props("flat dense no-caps").classes("sq-red text-xs").mark("run_diff_ai")
+                ui.button(t("diff.history", n=len(rs)), on_click=lambda: _history(rs)) \
+                    .props("flat dense no-caps").classes("sq-run-diff-more").mark("run_history")
         for line in lines:
             ui.label(line).classes("text-sm sq-run-diff-line")
+        if ai_btn is not None:
+            ai_box = ui.column().classes("w-full gap-1 pt-2").mark("run_diff_ai_box")
+            key = (prev["no"], curr["no"])
+            cache = state.STATE.setdefault("run_diff_ai", {})
+
+            def show():
+                if ai_box.is_deleted:
+                    return
+                ai_box.clear()
+                if cache.get(key):
+                    with ai_box, ui.column().classes("w-full gap-1 sq-note py-2"):
+                        ui.markdown(cache[key]).classes("text-sm")
+                        ui.label(t("diff.ai_note")).classes("sq-muted text-xs")
+
+            async def go():
+                c = llm.load_config() or llm.LLMConfig()
+                if not (c and c.ready):
+                    return
+                ai_btn.disable()
+                ai_box.clear()
+                with ai_box, ui.row().classes("items-center gap-2"):
+                    ui.spinner(size="sm")
+                    ui.label(t("ai.thinking")).classes("sq-muted text-xs")
+                telemetry.ai("compare_runs")
+                try:
+                    prev_desc = strategies.describe(prev["spec"], lg)
+                    curr_desc = strategies.describe(curr["spec"], lg)
+                    cache[key] = await run.io_bound(
+                        llm.compare_runs, llm.get_provider(c), prev, curr, lines, prev_desc, curr_desc, lg,
+                    )
+                    cloud_ui.invalidate_quota()
+                except Exception as e:  # noqa: BLE001
+                    if not ai_box.is_deleted:
+                        cloud_ui.handle_ai_error(e, ai_box, on_retry=lambda: background_tasks.create(go()))
+                    return
+                finally:
+                    if not ai_btn.is_deleted:
+                        ai_btn.enable()
+                show()
+
+            ai_btn.on_click(go)
+            show()
 
 
 def _history(rs: list[dict]):

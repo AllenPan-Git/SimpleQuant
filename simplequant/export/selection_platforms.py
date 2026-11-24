@@ -41,7 +41,9 @@ def check_selection_exportable(spec: dict, platform: str, follow: bool = False, 
         raise ValueError(pick(L("机器学习合成因子需要在本机训练模型，无法转换为平台代码，请使用「按名单调仓」方式导出",
                                 "Machine-learning factor combination trains models locally and can't be translated for "
                                 "platforms; use the 'follow picks' export instead"), lang))
-    keys = [f["key"] for f in spec["factors"]]
+    from ..stocks.selection import (all_factor_keys, industry_filter_of, market_errors, needs_risk,
+                                    uses_factor_filters, uses_risk_exempt_fin, uses_stock_filters)
+    keys = all_factor_keys(spec)
     custom = [k for k in keys if k.startswith("u_")]
     if custom:
         raise ValueError(pick(L("策略使用了自定义因子，无法自动转换为平台代码，请使用「按名单调仓」方式导出",
@@ -53,10 +55,19 @@ def check_selection_exportable(spec: dict, platform: str, follow: bool = False, 
                                 "暂不支持在平台上计算；可以用「按名单调仓」导出",
                                 f"Financial factors ({', '.join(fin)}) differ across platforms and can't be computed "
                                 "there yet; use the 'follow picks' export instead"), lang))
-    from ..stocks.selection import needs_risk, market_errors, uses_stock_filters
     if market_errors(spec, lang):
         raise ValueError(pick(L("大盘条件只能用收盘价算的指标（均线、MACD、RSI 等）", "Market conditions can only use "
                                 "close-based indicators (MA, MACD, RSI, ...)"), lang))
+    if industry_filter_of(spec.get("filters")) is not None or uses_risk_exempt_fin(spec):
+        raise ValueError(pick(L("用到了行业筛选或金融行业排雷豁免（采用证监会行业分类，与各平台口径不同），"
+                                "暂不支持在平台上计算；请使用「按名单调仓」方式导出",
+                                "Industry filters or financial-sector exemptions use CSRC classifications that differ "
+                                "across platforms; use the 'follow picks' export instead"), lang))
+    if uses_factor_filters(spec):
+        raise ValueError(pick(L("用到了因子区间筛选条件（各平台的因子与截面百分位口径不同），暂不支持在平台上计算；"
+                                "请使用「按名单调仓」方式导出",
+                                "Factor range or percentile filters differ across platforms and can't be computed "
+                                "there yet; use the 'follow picks' export instead"), lang))
     if needs_risk(spec):
         raise ValueError(pick(L("用到了排雷因子或排雷条件（资产负债率等），各平台的财务数据口径不同，暂不支持在平台上计算；"
                                 "可以用「按名单调仓」导出",

@@ -557,11 +557,11 @@ def selection_script(spec: dict, broker: dict, start: str, project_dir: str, tit
     多因子选股：生成调用 SimpleQuant 引擎的脚本
     :param exe: 打包版 SimpleQuant 可执行文件的路径；给出时说明改为用它运行（自带引擎，不需要装 Python）
     """
-    from ..stocks import FACTORS
-    from ..stocks.selection import panel_warmup_days, needs_fin as _needs_fin, needs_risk
+    from ..stocks.selection import (panel_warmup_days, needs_fin as _needs_fin, needs_div as _needs_div,
+                                    needs_risk, needs_industry)
     needs_fin = _needs_fin(spec)
-    needs_div = spec.get("dividend") == "cash" or \
-        any(FACTORS.get(f["key"], {}).get("requires_div") for f in spec["factors"])
+    needs_div = _needs_div(spec)
+    needs_ind = needs_industry(spec)
     if exe:
         how = f'''请用 SimpleQuant 运行（不需要安装 Python）：
     - 在 SimpleQuant「多因子选股」页的「导出」菜单点「运行选股脚本」，选择这个文件；或
@@ -597,6 +597,7 @@ START = "{start}"
 NEEDS_FIN = {needs_fin!r}
 NEEDS_DIV = {needs_div!r}
 NEEDS_RISK = {needs_risk(spec)!r}
+NEEDS_INDUSTRY = {needs_ind!r}
 WARMUP_DAYS = {panel_warmup_days(spec)!r}       # 机器学习的训练窗口、超过 252 天的 IC 回看期要多取，其余为 400
 OUT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -605,7 +606,8 @@ if __name__ == "__main__":
     store = StockStore()
     end = latest_expected_day(load_calendar()).date().isoformat()
     print("updating data / 更新数据…", flush=True)
-    universe.update(SPEC["universe"], START, end, store, fin=NEEDS_FIN, div=NEEDS_DIV, risk=NEEDS_RISK)
+    universe.update(SPEC["universe"], START, end, store, fin=NEEDS_FIN, div=NEEDS_DIV,
+                    industry=NEEDS_INDUSTRY, risk=NEEDS_RISK)
     first = universe.load_benchmark(SPEC["universe"], store).index[0]
     first = max(first, pd.Timestamp(START) - pd.Timedelta(days=WARMUP_DAYS))    # 面板往前多取一段预热因子
     print("backtesting / 回测…", flush=True)

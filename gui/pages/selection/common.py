@@ -54,6 +54,10 @@ def sp_state() -> dict:
     sp.setdefault("cbf", {k: v for k, v in CB_DEFAULT_FILTERS.items() if k in CB_FILTERS})
     sp.setdefault("stockf", {k: None for k in STOCK_FILTERS})    # 股票的价格/市值条件（None = 不限）
     sp.setdefault("riskf", {k: None for k in RISK_FILTERS})      # 股票的排雷条件（None = 不限）
+    sp.setdefault("indf", None)                                  # 股票的行业筛选：None 或 {"mode", "items"}
+    sp.setdefault("risk_exempt_fin", False)                      # 股票排雷：金融行业豁免负债率与流动比率限制
+    sp.setdefault("factorf", [])                                 # 股票的因子区间筛选列表
+    sp.setdefault("cb_factorf", [])                              # 可转债的因子区间筛选列表
     sp["dl"].setdefault("with_risk", False)
     sp.setdefault("forms", {})
     sp.setdefault("ml_model", ML.DEFAULT_MODEL)
@@ -109,9 +113,13 @@ def switch_kind(SP, old: str, new: str):
 
 
 def prune_factors(SP):
-    """自定义因子保存 / 删除后：回测因子列表、因子研究里已不存在的因子去掉（都没了就回到默认因子）"""
+    """自定义因子保存 / 删除后：回测因子列表、因子过滤、因子研究里已不存在的因子去掉（都没了就回到默认因子）"""
     kind = U.kind(SP["universe"])
     SP["factors"] = [f for f in SP["factors"] if f["key"] in factors_for(kind)] or kind_defaults(kind)["factors"]
+    stock_fks = set(factors_for("stock"))
+    cb_fks = set(factors_for("cb"))
+    SP["factorf"] = [ff for ff in (SP.get("factorf") or []) if ff.get("key") in stock_fks]
+    SP["cb_factorf"] = [ff for ff in (SP.get("cb_factorf") or []) if ff.get("key") in cb_fks]
     if SP["res"]["fkey"] not in factors_for(kind):
         SP["res"]["fkey"] = factors_for(kind)[0]
     if SP.get("report") and SP["report"][0] not in FACTORS:      # 刚分析过的因子被删了，研究结果一起清掉

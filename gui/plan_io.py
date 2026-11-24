@@ -193,10 +193,15 @@ def apply(plan: dict, metas: list):
 def _display_spec(plan: dict) -> dict:
     """描述策略用：自定义因子尚未在本机登记，显示方案里的名称"""
     spec = copy.deepcopy(plan["strategy"])
+    custom = plan.get("custom_factors") or {}
     for f in spec["factors"]:
-        d = (plan.get("custom_factors") or {}).get(f["key"])
+        d = custom.get(f["key"])
         if d:
             f["key"] = d["name"]
+    for ff in (spec.get("filters") or {}).get("factor_filters") or []:
+        d = custom.get(ff.get("key"))
+        if d:
+            ff["key"] = d["name"]
     return spec
 
 
@@ -315,6 +320,9 @@ def apply_selection(plan: dict):
     spec = copy.deepcopy(plan["strategy"])
     for f in spec["factors"]:
         f["key"] = mapping.get(f["key"], f["key"])
+    for ff in (spec.get("filters") or {}).get("factor_filters") or []:
+        if ff.get("key"):
+            ff["key"] = mapping.get(ff["key"], ff["key"])
     name = _unique_name(plan["name"], spec)
     strategies.save_strategy(name, spec, broker=asdict(P.broker_of(plan)))
     SP = sp_state()

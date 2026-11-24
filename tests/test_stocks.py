@@ -601,3 +601,97 @@ def test_selection_buffer_rule_and_stock_filters(panel):
         if picks:
             prices = panel["raw_close"].loc[d, picks]
             assert (prices <= 40.0).all()
+
+
+def test_industry_filter_risk_exempt_and_factor_filters():
+    """待办 49：行业排除/限定、金融业排雷豁免（不穿透 ST/停牌/现金流风控）、全池与同行业因子百分位/数值过滤、缓存键哈希"""
+    from simplequant import strategies
+    from simplequant.stocks.panel import RISK_FILTERS
+    from simplequant.stocks.selection import build_schedule, eligible_mask, effective_filters
+
+    p = make_panel(n=10, days=320, seed=11)
+    codes = p.codes
+    # 前 5 只为 J66货币金融服务，后 5 只为 C39计算机
+    p.industry = pd.Series(["J66货币金融服务"] * 5 + ["C39计算机"] * 5, index=codes)
+
+    # 1) 行业排除与仅限
+    m_excl = eligible_mask(p, {"exclude_st": True, "min_list_days": 0,
+                               "industry": {"mode": "exclude", "items": ["J66货币金融服务"]}})
+    assert not m_excl[codes[:5]].any().any() and m_excl[codes[5:]].any().any()
+    m_incl = eligible_mask(p, {"exclude_st": True, "min_list_days": 0,
+                               "industry": {"mode": "include", "items": ["J66货币金融服务"]}})
+    assert m_incl[codes[:5]].any().any() and not m_incl[codes[5:]].any().any()
+
+    # 缺少行业分类时绝不悄悄当成「不限」跳过
+    p_no_ind = make_panel(n=6, days=100, seed=12)
+    p_no_ind.industry = pd.Series(dtype=str)
+    with pytest.raises(ValueError, match="行业"):
+        eligible_mask(p_no_ind, {"exclude_st": True, "min_list_days": 0,
+                                 "industry": {"mode": "exclude", "items": ["J66货币金融服务"]}})
+
+    # 2) 金融行业排雷豁免 + 风控正交性验证
+    p.has_risk = True
+    p.extra_filters = {k: m["fn"] for k, m in RISK_FILTERS.items()}
+    df_const = lambda vals: pd.DataFrame(np.tile(vals, (len(p.calendar), 1)), index=p.calendar, columns=codes)
+    # 银行股 codes[0..4] 高负债(90%)、无流动比率(NaN)；codes[3] 现金流差(0.1)；codes[4] 被标 ST
+    # 计算机 codes[5] 高负债(85%)，其余 codes[6..9] 健康(负债40%、流动比率2.0、cfo_np=1.2)
+    p.fields["debt_ratio"] = df_const([90.0] * 5 + [85.0] + [40.0] * 4)
+    p.fields["current_ratio"] = df_const([np.nan] * 5 + [0.8] + [2.0] * 4)
+    p.fields["cfo_np"] = df_const([1.5, 1.5, 1.5, 0.1, 1.5] + [1.2] * 5)
+    p.is_st.loc[:, codes[4]] = True
+
+    base_risk = {"exclude_st": True, "min_list_days": 0,
+                 "max_debt_ratio": 70.0, "min_current_ratio": 1.0, "min_cfo_np": 0.5}
+    m_strict = eligible_mask(p, base_risk)
+    assert not m_strict[codes[:6]].any().any() and m_strict[codes[6:]].all().all()
+
+    m_exempt = eligible_mask(p, {**base_risk, "risk_exempt_fin": True})
+    # J66 的 codes[0..2] 获豁免保留；codes[3] 因 cfo_np<0.5 被拦；codes[4] 因 ST 被拦；非金融高负债 codes[5] 仍被拦
+    assert m_exempt[codes[:3]].all().all()
+    assert not m_exempt[codes[3]].any()
+    assert not m_exempt[codes[4]].any()
+    assert not m_exempt[codes[5]].any()
+    assert m_exempt[codes[6:]].all().all()
+
+    # 3) 因子区间筛选：全池对称百分位 [10, 90] 精确剔除 10 只中的首尾各 1 只
+    p2 = make_panel(n=10, days=150, seed=13)
+    p2.industry = pd.Series(["J66货币金融服务"] * 5 + ["C39计算机"] * 5, index=p2.codes)
+    # 构造确定性 pe（全部为正，ep = 1/pe 从大到小即 codes[0]..codes[9]）
+    p2.fields["pe"] = pd.DataFrame(np.tile(np.arange(1, 11, dtype=float), (len(p2.calendar), 1)),
+                                   index=p2.calendar, columns=p2.codes)
+    m_pct = eligible_mask(p2, {"exclude_st": False, "min_list_days": 0,
+                               "factor_filters": [{"key": "ep", "mode": "pct", "scope": "pool",
+                                                   "min": 10.0, "max": 90.0}]})
+    # ep 最大的是 codes[0] (pe=1, 95%)，最小的是 codes[9] (pe=10, 5%)，两者均被剔除，中间 8 只保留
+    assert not m_pct[p2.codes[0]].any() and not m_pct[p2.codes[9]].any()
+    assert m_pct[p2.codes[1:9]].all().all()
+
+    # 同行业内百分位 [20, 80]：每个 5 只的行业各自剔除首尾 1 只（codes[0], codes[4] 与 codes[5], codes[9]）
+    m_ind_pct = eligible_mask(p2, {"exclude_st": False, "min_list_days": 0,
+                                   "factor_filters": [{"key": "ep", "mode": "pct", "scope": "industry",
+                                                       "min": 20.0, "max": 80.0}]})
+    for dropped in (0, 4, 5, 9):
+        assert not m_ind_pct[p2.codes[dropped]].any()
+    for kept in (1, 2, 3, 6, 7, 8):
+        assert m_ind_pct[p2.codes[kept]].all()
+
+    # 数值区间模式 + build_schedule 缓存哈希兼容性 + describe 文本
+    spec = {
+        "kind": "selection", "universe": "hs300",
+        "factors": [{"key": "ep", "weight": 1.0, "direction": 1}],
+        "top_n": 3, "rebalance": 20, "position_pct": 95,
+        "filters": {
+            "exclude_st": True, "min_list_days": 0,
+            "industry": {"mode": "exclude", "items": ["J66货币金融服务"]},
+            "factor_filters": [{"key": "ep", "mode": "value", "min": 0.12, "max": 0.19}],
+        },
+    }
+    cache = {}
+    s1 = build_schedule(p2, spec, start=str(p2.calendar[30].date()), cache=cache)
+    s2 = build_schedule(p2, {**spec, "top_n": 2}, start=str(p2.calendar[30].date()), cache=cache)
+    assert len(s1.picks) > 0 and len(s2.picks) > 0
+    for picks in s1.picks.values():
+        # J66 (codes[0..4]) 已排除，C39 中只有 pe=6,7,8 (codes[5,6,7], ep≈0.167,0.143,0.125) 落在 [0.12, 0.19]
+        assert set(picks) <= set(p2.codes[5:8])
+    desc = strategies.describe(spec, "zh")
+    assert "排除行业：货币金融服务" in desc and "0.12～0.19" in desc

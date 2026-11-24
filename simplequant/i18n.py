@@ -160,6 +160,17 @@ TEXT = {
     "sel.dd_stop_title": L("回撤停手", "Drawdown stop-loss"),
     "sel.dd_stop_desc": L("最大回撤达到 {dd}% 停手清仓，大盘满足恢复条件后于下一个调仓日恢复",
                           "Stop and liquidate when max drawdown reaches {dd}%, resume on next rebalance date after market meets recovery condition"),
+    "sel.ind_exclude": L("排除行业：{items}", "exclude industries: {items}"),
+    "sel.ind_include": L("仅限行业：{items}", "industries only: {items}"),
+    "sel.ind_more": L(" 等 {n} 个", " ({n} total)"),
+    "sel.risk_exempt_fin": L("金融行业豁免负债率与流动比率限制", "financial sector exempt from debt & current-ratio limits"),
+    "sel.ff_scope_ind": L("同行业内", "within-industry "),
+    "sel.ff_pct_both": L("{name} {scope}百分位 {lo}%～{hi}%", "{name} {scope}pct {lo}%–{hi}%"),
+    "sel.ff_pct_min": L("{name} {scope}百分位 ≥ {lo}%", "{name} {scope}pct ≥ {lo}%"),
+    "sel.ff_pct_max": L("{name} {scope}百分位 ≤ {hi}%", "{name} {scope}pct ≤ {hi}%"),
+    "sel.ff_val_both": L("{name} {lo}～{hi}", "{name} {lo}–{hi}"),
+    "sel.ff_val_min": L("{name} ≥ {lo}", "{name} ≥ {lo}"),
+    "sel.ff_val_max": L("{name} ≤ {hi}", "{name} ≤ {hi}"),
 
     # ---- 规则描述 ----
     "rule.buy": L("买入", "Buy"),
@@ -203,5 +214,9 @@ TEXT = {
                              "Factor \"{name}\" does not apply to this universe (stocks and convertibles use different factors)"),
     "err.sel_top_n": L("持有股票数必须在 1~100 之间", "Number of stocks must be between 1 and 100"),
     "err.sel_rebalance": L("调仓间隔必须在 1~250 个交易日之间", "Rebalance interval must be 1-250 trading days"),
+    "err.sel_ff_bounds": L("因子筛选条件「{name}」的下限不能大于上限",
+                           "Lower bound cannot exceed upper bound in factor filter \"{name}\""),
+    "err.sel_ff_pct": L("因子筛选条件「{name}」的百分位须在 0～100 之间",
+                        "Percentile bounds in factor filter \"{name}\" must be within 0–100"),
     "err.pct": L("仓位比例必须在 0~100 之间", "position % must be between 0 and 100"),
 }

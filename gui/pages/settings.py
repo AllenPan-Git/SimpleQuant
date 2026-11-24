@@ -6,7 +6,7 @@ from simplequant import llm
 from simplequant.llm import LLMConfig, PRESETS, PROVIDERS, JSON_MODES
 from simplequant.paper import library_sync
 from gui.common import t, p, lang
-from gui import update, telemetry_ui, data_location_ui
+from gui import update, telemetry_ui, data_location_ui, cloud_ui
 from gui.layout import frame, page_title
 from gui.widgets import folder_btn, notice
 
@@ -72,6 +72,7 @@ def page():
                     quota_info.text = t("set.quota_checking")
                     try:
                         q = await run.io_bound(llm.query_quota, F["api_key"], 10.0, lang())
+                        cloud_ui.set_cached_quota(current(), q)
                         txt = _fmt_quota(q)
                     except llm.HostedError as e:
                         txt = str(e)
@@ -147,6 +148,7 @@ def page():
 
         def save():
             path = llm.save_config(current())
+            cloud_ui.invalidate_quota()
             msg.clear()
             with msg:
                 notice(t("set.saved"), "check_circle")

@@ -6,7 +6,7 @@ from nicegui import app, ui
 
 from simplequant import telemetry
 from simplequant.i18n import LANGS, tr
-from gui import theme, update, paper_job
+from gui import theme, update, paper_job, cloud_ui
 from gui.common import t, lang, set_lang, dark, set_dark
 
 # (路由, 文字键, 图标)：全部页面（注册路由、页面标题用）
@@ -141,6 +141,7 @@ def _sidebar(route: str, dm):
                 if i and group != NAV[i - 1][3]:
                     if group == "bottom":
                         ui.element("div").classes("sq-side-space")
+                        cloud_ui.sidebar_cloud_card()
                     else:   # 分组名；图标列下 CSS 把它变回一条细线
                         with ui.element("div").classes("sq-side-sep"):
                             ui.label(t(f"side.group_{group}")).classes("sq-side-group")

@@ -9,10 +9,10 @@
 
 from types import SimpleNamespace
 
-from nicegui import ui
+from nicegui import background_tasks, run, ui
 
-from simplequant import strategies
-from gui import state
+from simplequant import llm, strategies, telemetry
+from gui import state, cloud_ui
 from gui.common import t, lang
 from gui.components import credibility_box
 from gui.widgets import notice
@@ -123,6 +123,7 @@ def verify_tab(SP, ctx, go_backtest) -> SimpleNamespace:
                     .props("outline no-caps").classes("self-start").mark("spv_go_backtest")
             elif k == "credibility":
                 credibility_box(base_checks(SP["result"][0]))
+                _ai_sel_cred_review(SP, ctx)
             elif not phase_keys(SP["result"][1]):
                 notice(t("spv.phase_na"), "info")
             else:
@@ -137,3 +138,83 @@ def verify_tab(SP, ctx, go_backtest) -> SimpleNamespace:
 
     draw()
     return SimpleNamespace(refresh=draw, select=select)
+
+
+def _ai_sel_cred_review(SP, ctx):
+    """选股验证页：AI 过拟合综合评审（整合基础可信度、调仓日相位检验与滚动优化结果）"""
+    cfg = llm.load_config() or llm.LLMConfig()
+    r = SP.get("result")
+    if not (cfg and cfg.ready) or not r:
+        return
+    res, rspec = r[0], r[1]
+    with ui.column().classes("w-full gap-2 mt-2"):
+        with ui.row().classes("items-center gap-3"):
+            btn = ui.button(t("vf.ai_review_btn"), icon="auto_awesome").props("outline no-caps") \
+                .mark("sp_vf_ai_review")
+            spin = ui.row().classes("items-center gap-2")
+            with spin:
+                ui.spinner(size="sm")
+                ui.label(t("ai.thinking")).classes("sq-muted text-sm")
+            spin.set_visibility(False)
+        box = ui.column().classes("w-full gap-1").mark("sp_vf_ai_box")
+
+    def _checks_and_extra():
+        checks = list(base_checks(res))
+        ph = _phase(SP)
+        if ph and ph.get("found"):
+            checks.extend(ph["found"])
+        ex = {}
+        wf = SP.get("wf")
+        if wf and wf.get("spec") == rspec and wf.get("range") == (ctx.start, ctx.end):
+            wres = wf["res"]
+            wf_m = getattr(wres, "metrics", None) or getattr(wres, "oos_metrics", None) or {}
+            base_m = getattr(wres, "baseline_metrics", None) or {}
+            wfe = getattr(wres, "wfe", None)
+            ex["walk_forward"] = {
+                "windows": len(wres.windows),
+                "wfe": round(float(wfe), 4) if isinstance(wfe, (int, float)) and wfe == wfe else None,
+                "oos_metrics": {k: round(float(v), 4) for k, v in wf_m.items()
+                                if isinstance(v, (int, float)) and v == v},
+                "baseline_metrics": {k: round(float(v), 4) for k, v in base_m.items()
+                                     if isinstance(v, (int, float)) and v == v},
+            }
+        return checks, ex or None
+
+    def show():
+        if box.is_deleted:
+            return
+        box.clear()
+        rev = SP.get("cred_review")
+        if rev and rev.get("res_id") == id(res):
+            with box, ui.column().classes("w-full gap-1 sq-note py-3"):
+                ui.markdown(rev["text"]).classes("text-sm")
+                ui.label(t("vf.ai_review_note")).classes("sq-muted text-xs")
+
+    async def go():
+        c = llm.load_config() or llm.LLMConfig()
+        if not (c and c.ready):
+            return
+        btn.disable()
+        spin.set_visibility(True)
+        telemetry.ai("credibility_review")
+        try:
+            checks, ex = _checks_and_extra()
+            txt = await run.io_bound(
+                llm.review_credibility, llm.get_provider(c), strategies.describe(rspec, lang()),
+                res.metrics, checks, ex, lang(),
+            )
+            SP["cred_review"] = {"res_id": id(res), "text": txt}
+            cloud_ui.invalidate_quota()
+        except Exception as e:  # noqa: BLE001
+            if not box.is_deleted:
+                cloud_ui.handle_ai_error(e, box, on_retry=lambda: background_tasks.create(go()))
+            return
+        finally:
+            if not btn.is_deleted:
+                btn.enable()
+            if not spin.is_deleted:
+                spin.set_visibility(False)
+        show()
+
+    btn.on_click(go)
+    show()

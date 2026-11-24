@@ -262,3 +262,34 @@ def test_selection_skip_months_version_and_round_trip():
     assert plan["version"] == P.SKIP_VERSION <= P.VERSION
     assert P.loads(P.dumps(plan))["strategy"]["skip_months"] == [1, 4]
     assert P.selection_version({**SEL, "skip_months": []}) == P.SELECTION_VERSION
+
+
+def test_ext_filters_plan_version_custom_factor_and_needs(tmp_path, monkeypatch):
+    """待办 49：行业/排雷豁免/因子筛选写 EXT_FILTER_VERSION；仅出现在因子筛选里的自定义因子也随方案打包并参与依赖判断"""
+    import pytest
+    from simplequant.stocks import custom_factors as cf
+    monkeypatch.setattr(cf, "FACTOR_DIR", tmp_path)
+    cf.load_all()
+    ckey = cf.save_factor("负债辅助筛选", 'def factor(p):\n    return p["debt_ratio"]\n', -1, "测试")
+    try:
+        spec = {
+            **SEL,
+            "filters": {
+                "exclude_st": True, "min_list_days": 250,
+                "industry": {"mode": "exclude", "items": ["J66货币金融服务"]},
+                "max_debt_ratio": 70.0, "risk_exempt_fin": True,
+                "factor_filters": [{"key": ckey, "mode": "pct", "scope": "pool", "min": 10.0, "max": 90.0}],
+            },
+        }
+        plan = P.make_selection_plan("扩展过滤方案", spec, "2021-01-04", "2022-01-04", "2020-01-02", BrokerConfig())
+        assert plan["version"] == P.EXT_FILTER_VERSION == P.VERSION
+        assert ckey in plan["custom_factors"]
+        loaded = P.loads(P.dumps(plan))
+        assert P.needs(loaded) == {"fin": False, "div": False, "industry": True, "risk": True}
+
+        # 非法上下限（min > max 或 pct 超出 0~100）被拒绝
+        bad = P.dumps(plan).replace('"min": 10.0', '"min": 95.0')
+        with pytest.raises(P.PlanError):
+            P.loads(bad)
+    finally:
+        cf.delete_factor(ckey)

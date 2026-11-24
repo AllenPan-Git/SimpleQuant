@@ -5,6 +5,18 @@
 
 Changes in each release. `tools/release.py` copies the matching section into the GitHub release notes.
 
+## 3.7.0（2026-11-24）
+
+### 更新内容
+- 新增：多因子选股过滤条件支持「行业范围筛选」（排除或仅限指定证监会行业）、「金融行业豁免资产负债率与流动比率限制」，以及通用「因子区间筛选」（股票与可转债均支持任选内置因子或自定义因子，按原始数值上下限或当日截面百分位区间做初筛，股票池百分位可选全池或同行业内），同步兼容 `.sqplan` 方案文件、独立 Python 脚本导出、模拟盘与 AI 选股
+- 新增：AI 辅助研究场景扩展——支持「持仓诊断 AI 体检报告」、「资产配置 AI 方案解读」、择时与选股结果页「可信度与样本外综合 AI 评审」、最近两次回测「A/B 对比 AI 解读」，以及策略自然语言增量修改与「按诊断生成改进版」迭代闭环
+- 改进：侧栏与首页新增「云端托管服务」统一入口对话框，支持随时查询余量、就地填写托管额度码，并在免费体验额度用尽时提供就地引导
+
+### Changes
+- Added: multi-factor selection filters now support industry inclusion/exclusion (CSRC sectors), exempting financial-sector stocks from debt-ratio and current-ratio limits, and generic factor range/percentile pre-screens on any built-in or custom factor (both stock and convertible-bond pools; stock percentiles support pool-wide or within-industry ranking), integrated across `.sqplan` plans, standalone Python exports, paper trading, and AI strategy generation
+- Added: expanded AI research workflows including portfolio holdings checkup reports, asset allocation commentary, holistic credibility & out-of-sample reviews on timing and selection reports, side-by-side A/B backtest comparison commentary, incremental natural-language strategy editing, and one-click iterative strategy refinement from AI diagnostics
+- Improved: unified "Cloud Hosted Services" dialog in the sidebar and home page to check remaining quota, save voucher codes in place, and guide users smoothly when trial quota runs out
+
 ## 3.6.0（2026-11-23）
 
 ### 更新内容

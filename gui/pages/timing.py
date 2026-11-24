@@ -7,11 +7,11 @@ state.strategy() 里，数据、资金等在 state.STATE 的 bt_* 里）。运�
 
 from types import SimpleNamespace
 
-from nicegui import ui
+from nicegui import background_tasks, run, ui
 
-from simplequant import strategies
+from simplequant import llm, strategies, telemetry
 from simplequant.data import library
-from gui import state, run_log
+from gui import state, run_log, cloud_ui
 from gui.common import t, lang
 from gui.components import strategy_progress, credibility_box
 from gui.missing_data import market_bar
@@ -80,11 +80,19 @@ def _workbench(S, by_id: dict):
         ui.tab("verify", t("timing.tab_verify")).mark("tab:verify")
     panels = ui.tab_panels(tabs, value=cur, on_change=on_tab).classes("w-full bg-transparent").mark("timing_panels")
 
+    def apply_iterated(res):
+        """AI 诊断迭代草案：回填规则编辑器、展开设置区，便于核对后重新回测"""
+        load_spec(S, res.spec, res.name or S["name"])
+        ctx.set_name(S["name"])
+        ctx.reload()
+        bar.setup.value = True
+        _scroll_into_view(bar.setup_row)
+
     @ui.refreshable
     def results():
         if BT.get("result") is None and BT.get("batch") is None:
             ui.label(t("timing.no_report")).classes("sq-muted text-sm py-4")
-        report(BT, bar.exp_menu, to_verify=lambda: show_verify("optimize"))
+        report(BT, bar.exp_menu, to_verify=lambda: show_verify("optimize"), on_iterate=apply_iterated)
 
     @ui.refreshable
     def compare():
@@ -287,6 +295,85 @@ def _vf_auto(k: str, S, BT: dict, bar):
         credibility_box(checks, pending)
     else:
         notice(t("vf.skipped" if k == "random" else "vf.na"), "info")
+    if k == "credibility":
+        _ai_cred_review(BT, opt_state())
+
+
+def _ai_cred_review(BT: dict, O: dict):
+    """择时验证页：AI 过拟合综合评审（汇总主回测、可信度/随机对照/相位检验与已跑的网格/滚动优化）"""
+    cfg = llm.load_config() or llm.LLMConfig()
+    if not (cfg and cfg.ready) or BT.get("result") is None:
+        return
+    res = BT["result"]
+    spec = BT["spec"]
+    with ui.column().classes("w-full gap-2 mt-2"):
+        with ui.row().classes("items-center gap-3"):
+            btn = ui.button(t("vf.ai_review_btn"), icon="auto_awesome").props("outline no-caps").mark("vf_ai_review")
+            spin = ui.row().classes("items-center gap-2")
+            with spin:
+                ui.spinner(size="sm")
+                ui.label(t("ai.thinking")).classes("sq-muted text-sm")
+            spin.set_visibility(False)
+        box = ui.column().classes("w-full gap-1").mark("vf_ai_box")
+
+    def _extra() -> dict:
+        ex = {}
+        opt = O.get("result")
+        if opt and spec_key(spec) in (spec_key(opt.get("spec")), spec_key(opt.get("best_spec"))):
+            ex["grid_search"] = {"tried_combinations": int(opt.get("tried", 0))}
+        wf = O.get("wf")
+        if wf and O.get("wf_spec") is not None and spec_key(O["wf_spec"]) == spec_key(spec):
+            wres = wf[0]
+            wf_m = getattr(wres, "metrics", None) or getattr(wres, "oos_metrics", None) or {}
+            base_m = getattr(wres, "baseline_metrics", None) or {}
+            wfe = getattr(wres, "wfe", None)
+            ex["walk_forward"] = {
+                "windows": len(wres.windows),
+                "wfe": round(float(wfe), 4) if isinstance(wfe, (int, float)) and wfe == wfe else None,
+                "oos_metrics": {k: round(float(v), 4) for k, v in wf_m.items()
+                                if isinstance(v, (int, float)) and v == v},
+                "baseline_metrics": {k: round(float(v), 4) for k, v in base_m.items()
+                                     if isinstance(v, (int, float)) and v == v},
+            }
+        return ex
+
+    def show():
+        if box.is_deleted:
+            return
+        box.clear()
+        rev = BT.get("cred_review")
+        if rev and rev.get("res_id") == id(res):
+            with box, ui.column().classes("w-full gap-1 sq-note py-3"):
+                ui.markdown(rev["text"]).classes("text-sm")
+                ui.label(t("vf.ai_review_note")).classes("sq-muted text-xs")
+
+    async def go():
+        c = llm.load_config() or llm.LLMConfig()
+        if not (c and c.ready):
+            return
+        btn.disable()
+        spin.set_visibility(True)
+        telemetry.ai("credibility_review")
+        try:
+            txt = await run.io_bound(
+                llm.review_credibility, llm.get_provider(c), strategies.describe(spec, lang()),
+                res.metrics, BT.get("checks", []), _extra() or None, lang(),
+            )
+            BT["cred_review"] = {"res_id": id(res), "text": txt}
+            cloud_ui.invalidate_quota()
+        except Exception as e:  # noqa: BLE001
+            if not box.is_deleted:
+                cloud_ui.handle_ai_error(e, box, on_retry=lambda: background_tasks.create(go()))
+            return
+        finally:
+            if not btn.is_deleted:
+                btn.enable()
+            if not spin.is_deleted:
+                spin.set_visibility(False)
+        show()
+
+    btn.on_click(go)
+    show()
 
 
 def _strategy_part(S, ctx: Ctx, on_change, on_broker) -> dict:

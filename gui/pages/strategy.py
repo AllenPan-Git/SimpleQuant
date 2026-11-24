@@ -9,6 +9,7 @@ from simplequant.rules import INDICATORS, GROUPS, OPS, CROSS_OPS, LOGICS, valida
 from simplequant.rules.schema import MAX_DAYS, MAX_COOLDOWN, MAX_ADDS, ADD_WHEN
 from simplequant.rules.hints import condition_notes, wording_hints, rule_signature
 from simplequant.strategies import TEMPLATES, code_strategy
+from gui import cloud_ui
 from gui.common import t, p, lang
 from gui.widgets import section, code_editor, notice, hint
 from ui.shared import PRESETS, cond, clean, with_ids
@@ -542,41 +543,67 @@ def _ai_editor(S, ctx):
             for ex in AI_EXAMPLES:
                 ui.chip(t(ex + "_short"), on_click=lambda ex=ex: text.set_value(t(ex))) \
                     .props("outline clickable color=primary")
-        text = ui.textarea(t("ai.describe"), value=S["ai_text"], placeholder=t("ai.placeholder")) \
+
+        def _current_base_rule():
+            res = S.get("ai_result")
+            if res and res.ok and res.spec.get("kind") == "rule":
+                return res.spec["rule"]
+            r = clean(S["rule"])
+            if (r.get("buy") or {}).get("conditions") or (r.get("sell") or {}).get("conditions"):
+                return r
+            return None
+
+        def _ph():
+            return t("ai.base_placeholder") if S.get("ai_base") else t("ai.placeholder")
+
+        text = ui.textarea(t("ai.describe"), value=S["ai_text"], placeholder=_ph()) \
             .props("outlined autogrow").classes("w-full")
+        err_box = ui.column().classes("w-full")
 
         async def generate():
             S["ai_text"] = text.value or ""
             if not S["ai_text"].strip():
                 return
+            c = llm.load_config() or llm.LLMConfig()
+            if not (c and c.ready):
+                return
+            err_box.clear()
             btn.disable()
             spinner.set_visibility(True)
             telemetry.ai("strategy")
             try:
-                res = await run.io_bound(llm.translate, S["ai_text"], llm.get_provider(cfg), lang())
+                base = _current_base_rule() if S.get("ai_base") else None
+                res = await run.io_bound(llm.translate, S["ai_text"], llm.get_provider(c), lang(), 1, base)
                 S["ai_result"], S["ai_symbols"], S["name"] = res, res.symbols, res.name
                 ctx.set_name(res.name)
+                cloud_ui.invalidate_quota()
                 # 同一段描述再次生成、规则却不同：描述有歧义，提醒核对
                 key, rule = " ".join(S["ai_text"].split()), res.spec["rule"]
                 sig, prev = rule_signature(rule), S.setdefault("ai_prev", {}).get(key)
-                S["ai_changed"] = prev[1] if res.ok and prev and prev[0] != sig else None
-                if res.ok:
+                S["ai_changed"] = prev[1] if res.ok and prev and prev[0] != sig and not base else None
+                if res.ok and not base:
                     # 提示条是 Markdown，行尾两个空格才换行
                     S["ai_prev"][key] = (sig, describe_rule(rule, lang()).replace("\n", "  \n"))
-            except llm.LLMError as e:
+            except Exception as e:  # noqa: BLE001 - 额度耗尽、缺少依赖、网络等
                 S["ai_result"] = None
-                ui.notify(str(e), type="negative", multi_line=True)
-            except Exception as e:  # noqa: BLE001 - 缺少依赖、网络等
-                S["ai_result"] = None
-                ui.notify(f"{type(e).__name__}: {e}", type="negative", multi_line=True)
+                cloud_ui.handle_ai_error(e, err_box)
             finally:
-                btn.enable()
-                spinner.set_visibility(False)
+                if not btn.is_deleted:
+                    btn.enable()
+                if not spinner.is_deleted:
+                    spinner.set_visibility(False)
             result.refresh()
             ctx.changed()
 
-        with ui.row().classes("items-center gap-3"):
+        def on_base(e):
+            S["ai_base"] = bool(e.value)
+            text.props(f'placeholder="{_ph()}"')
+
+        with ui.row().classes("items-center gap-4 flex-wrap"):
             btn = ui.button(t("ai.generate"), icon="auto_awesome", on_click=generate).props("unelevated no-caps").mark("generate")
+            base_cb = ui.checkbox(t("ai.base_rule"), value=bool(S.get("ai_base")), on_change=on_base) \
+                .tooltip(t("ai.base_rule_help")).mark("ai_base_rule")
+            base_cb.set_visibility(_current_base_rule() is not None)
             spinner = ui.row().classes("items-center gap-2")
             with spinner:
                 ui.spinner(size="sm")

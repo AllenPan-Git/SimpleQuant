@@ -20,7 +20,7 @@ from . import __version__
 from .engine.runner import BrokerConfig
 
 FORMAT = "simplequant-plan"
-VERSION = 13                    # 能读取的最高版本
+VERSION = 14                    # 能读取的最高版本
 TIMING_VERSION = 1              # 择时方案仍写 1，旧版软件也能导入
 SELECTION_VERSION = 2           # 选股方案：0.2.4 及以前的版本会提示「请先更新软件」
 ML_VERSION = 3                  # 用机器学习合成因子的选股方案：0.3.0 及以前的版本会提示「请先更新软件」
@@ -35,6 +35,7 @@ DRAWDOWN_STOP_VERSION = 11      # 选股设了回撤停手：2.0.0 及以前的�
 BUFFER_FILTER_VERSION = 12      # 选股设了调仓缓冲区或最高股价 / 市值排名条件：2.1.0 及以前的版本会提示「请先更新软件」
 CASH_YIELD_VERSION = 13         # 设了闲置现金年化收益率：3.1.0 及以前的版本会提示「请先更新软件」
 HOLD_RULE_VERSION = 13          # 规则用了持仓最高点回撤 / 持仓天数：3.1.0 及以前的版本会提示「请先更新软件」
+EXT_FILTER_VERSION = 14         # 选股设了行业筛选、金融行业排雷豁免或因子区间筛选：3.6.0 及以前的版本会提示「请先更新软件」
 HOLD_RULE_INDS = ("dd_from_high", "hold_days")
 SUFFIX = ".sqplan"
 DOWNLOADABLE = ("akshare", "baostock")          # 导入时可以自动下载的数据源
@@ -110,7 +111,10 @@ def make_plan(name: str, spec: dict, metas: list, start, end, broker: BrokerConf
 
 def selection_version(spec: dict, broker: BrokerConfig | None = None) -> int:
     """旧版软件会忽略不认识的条件（结果悄悄不同），所以用到新功能就写更高的版本号"""
-    from .stocks.selection import needs_risk, sel_market_on, uses_buffer, uses_drawdown_stop, uses_stock_filters
+    from .stocks.selection import (needs_risk, sel_market_on, uses_buffer, uses_drawdown_stop,
+                                   uses_ext_filters, uses_stock_filters)
+    if uses_ext_filters(spec):
+        return EXT_FILTER_VERSION
     if broker is not None and broker.cash_yield:
         return CASH_YIELD_VERSION
     if uses_buffer(spec) or uses_stock_filters(spec):
@@ -139,17 +143,18 @@ def make_selection_plan(name: str, spec: dict, start, end, warmup_start, broker:
     :param result: 用同样设置得到的回测指标（可选）
     """
     from .stocks import custom_factors as cf
+    from .stocks.selection import all_factor_keys
     spec = copy.deepcopy({k: v for k, v in spec.items() if k != "name"})
     if spec.get("kind") != "selection" or not spec.get("factors"):
         raise PlanError("plan.err_format")
     saved = cf.list_factors()
     custom = {}
-    for f in spec["factors"]:
-        if cf.is_custom(f["key"]):
-            d = saved.get(f["key"])
+    for key in all_factor_keys(spec):
+        if cf.is_custom(key):
+            d = saved.get(key)
             if d is None:
-                raise PlanError("plan.err_factor_missing", name=f["key"])
-            custom[f["key"]] = {k: d.get(k, "") for k in ("name", "code", "direction", "desc")}
+                raise PlanError("plan.err_factor_missing", name=key)
+            custom[key] = {k: d.get(k, "") for k in ("name", "code", "direction", "desc")}
     plan = {
         "format": FORMAT, "version": selection_version(spec, broker),
         "app": __version__,
@@ -224,8 +229,30 @@ def _check_selection(plan: dict):
     custom = plan.get("custom_factors") or {}
     if not isinstance(custom, dict):
         raise PlanError("plan.err_format")
-    for f in factors:
-        k = f["key"]
+    from .stocks.selection import all_factor_keys, active_factor_filters, market_errors
+    flt = spec.get("filters") or {}
+    if not isinstance(flt, dict):
+        raise PlanError("plan.err_format")
+    if "industry" in flt and flt["industry"] is not None:
+        ind = flt["industry"]
+        if not isinstance(ind, dict) or ind.get("mode", "exclude") not in ("exclude", "include") \
+                or not isinstance(ind.get("items", []), list):
+            raise PlanError("plan.err_format")
+    if "factor_filters" in flt and flt["factor_filters"] is not None:
+        if not isinstance(flt["factor_filters"], list) or not all(isinstance(x, dict) for x in flt["factor_filters"]):
+            raise PlanError("plan.err_format")
+        try:
+            ffs = active_factor_filters(flt)
+        except (TypeError, ValueError):
+            raise PlanError("plan.err_format") from None
+        for ff in ffs:
+            lo, hi = ff["min"], ff["max"]
+            if lo is not None and hi is not None and lo > hi:
+                raise PlanError("plan.err_format")
+            if ff["mode"] == "pct" and any(v is not None and not (0.0 <= v <= 100.0) for v in (lo, hi)):
+                raise PlanError("plan.err_format")
+    fkeys = all_factor_keys(spec)
+    for k in fkeys:
         if cf.is_custom(k):
             d = custom.get(k)
             if not re.fullmatch(r"u_[0-9a-f]{8}", k) or not isinstance(d, dict) or not isinstance(d.get("code"), str) \
@@ -236,7 +263,7 @@ def _check_selection(plan: dict):
                 raise PlanError("plan.err_factor_code", name=d["name"], detail=errors[0])
         elif k not in FACTORS:
             raise PlanError("plan.err_factor", name=k)
-    plan["custom_factors"] = {k: custom[k] for k in (f["key"] for f in factors) if k in custom}
+    plan["custom_factors"] = {k: custom[k] for k in fkeys if k in custom}
     try:
         top_n = int(spec.get("top_n", 0))
         if spec.get("keep_n") not in (None, "", 0):
@@ -247,7 +274,6 @@ def _check_selection(plan: dict):
             raise ValueError
     except (TypeError, ValueError):
         raise PlanError("plan.err_format") from None
-    from .stocks.selection import market_errors
     if market_errors(spec):
         raise PlanError("plan.err_format")
     if spec.get("weighting") == "ml":
@@ -344,23 +370,24 @@ def compare(recorded: dict | None, metrics: dict, tol: float = 0.0005) -> str | 
 
 # ---------------- 选股方案的数据 ----------------
 def needs(plan: dict) -> dict:
-    """选股方案除行情外还需要的数据：财务（财务因子、市值中性化）、分红（现金分红、分红字段）、行业（行业中性化）"""
+    """选股方案除行情外还需要的数据：财务（财务因子、市值中性化）、分红（现金分红、分红字段）、行业（行业中性化或行业筛选）"""
     from .stocks import FACTORS, custom_factors as cf, universe as U
     spec = plan["strategy"]
     if U.kind(spec["universe"]) == "cb":
         return {"fin": False, "div": False, "industry": False, "risk": False}
-    from .stocks.selection import uses_mcap_filters, uses_risk_filters
+    from .stocks.selection import all_factor_keys, uses_industry_filter, uses_mcap_filters, uses_risk_filters
     custom = plan.get("custom_factors") or {}
+    fkeys = all_factor_keys(spec)
 
-    def flag(f, name, uses):
-        d = custom.get(f["key"])
-        return uses(d["code"]) if d else bool(FACTORS.get(f["key"], {}).get(name))
+    def flag(k, name, uses):
+        d = custom.get(k)
+        return uses(d["code"]) if d else bool(FACTORS.get(k, {}).get(name))
     neutral = spec.get("neutralize") or {}
-    return {"fin": any(flag(f, "requires_fin", cf.uses_fin) for f in spec["factors"]) or bool(neutral.get("size"))
+    return {"fin": any(flag(k, "requires_fin", cf.uses_fin) for k in fkeys) or bool(neutral.get("size"))
             or bool(uses_mcap_filters(spec)),
-            "div": spec.get("dividend") == "cash" or any(flag(f, "requires_div", cf.uses_div) for f in spec["factors"]),
-            "industry": bool(neutral.get("industry")),
-            "risk": bool(uses_risk_filters(spec)) or any(flag(f, "requires_risk", cf.uses_risk) for f in spec["factors"])}
+            "div": spec.get("dividend") == "cash" or any(flag(k, "requires_div", cf.uses_div) for k in fkeys),
+            "industry": bool(neutral.get("industry")) or uses_industry_filter(spec),
+            "risk": bool(uses_risk_filters(spec)) or any(flag(k, "requires_risk", cf.uses_risk) for k in fkeys)}
 
 
 def selection_missing(plan: dict, store=None) -> list[str]:

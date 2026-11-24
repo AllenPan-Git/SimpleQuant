@@ -141,8 +141,8 @@ def refresh_selection_data(acc: PaperAccount, store, done: set | None = None, wo
                            calendar: pd.DatetimeIndex | None = None, progress=None) -> None:
     """选股账户：增量更新股票池里用得到的股票（见 selection_codes）；同一次运行中同样的范围只更新一次。
     progress(账户内比例, 步骤键, 完成数, 总数)：见 steps"""
-    from ..stocks import UNIVERSES, FACTORS, universe
-    from ..stocks.selection import panel_warmup_days, needs_fin, needs_risk
+    from ..stocks import UNIVERSES, universe
+    from ..stocks.selection import panel_warmup_days, needs_fin, needs_div, needs_risk, needs_industry
     done = done if done is not None else set()
     since = _panel_since(acc)
     key = acc.universe if universe.kind(acc.universe) == "cb" else (acc.universe, since.date().isoformat())
@@ -159,9 +159,8 @@ def refresh_selection_data(acc: PaperAccount, store, done: set | None = None, wo
         return
     first = store.load_index(UNIVERSES[acc.universe]["index"]).index[0].date().isoformat() \
         if (store.root / "index" / f"{UNIVERSES[acc.universe]['index']}.parquet").exists() else acc.start
-    fin, industry = needs_fin(acc.spec), bool((acc.spec.get("neutralize") or {}).get("industry"))
-    div = acc.spec.get("dividend") == "cash" or \
-        any(FACTORS.get(f["key"], {}).get("requires_div") for f in acc.spec["factors"])
+    fin, industry = needs_fin(acc.spec), needs_industry(acc.spec)
+    div = needs_div(acc.spec)
     risk = needs_risk(acc.spec)
     report = steps(progress, ["universe", "index", "stocks"] + ["fin"] * fin + ["industry"] * industry
                    + ["div"] * div + ["risk"] * risk)

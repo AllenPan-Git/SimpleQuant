@@ -72,7 +72,8 @@ def describe_selection(spec: dict, lang: str = "zh") -> str:
             how = pick(MODELS[cfg["model"]], lang) + ("，" if lang == "zh" else ", ") +                 ("，" if lang == "zh" else ", ").join(f"{pick(PARAM_LABELS[k], lang)} {v:g}"
                                                      for k, v in cfg.items() if k != "model")
         facs = f"{names}（{how}）" if lang == "zh" else f"{names} ({how})"
-    from ..stocks.selection import keep_top_n, uses_buffer, uses_drawdown_stop, drawdown_stop_threshold
+    from ..stocks.selection import (keep_top_n, uses_buffer, uses_drawdown_stop, drawdown_stop_threshold,
+                                    industry_filter_of, industry_short, uses_risk_exempt_fin, active_factor_filters)
     neutral = [tr(f"sel.neutral_{k}", lang) for k, v in (spec.get("neutralize") or {}).items() if v]
     top_text = tr("sel.top_n", lang, n=spec["top_n"]) + (
         tr("sel.keep_n", lang, m=keep_top_n(spec)) if uses_buffer(spec) else "")
@@ -91,19 +92,46 @@ def describe_selection(spec: dict, lang: str = "zh") -> str:
     if uses_drawdown_stop(spec):
         dd_pct = drawdown_stop_threshold(spec) * 100
         text += f"\n【{tr('sel.dd_stop_title', lang)}】" + tr("sel.dd_stop_desc", lang, dd=f"{dd_pct:g}")
-    if UNIVERSES[spec["universe"]].get("kind") == "cb":          # 可转债：价格上限等条件
+    is_cb = UNIVERSES[spec["universe"]].get("kind") == "cb"
+    if is_cb:                                                        # 可转债：价格上限等条件 + 因子区间条件
         from ..bonds.panel import CB_FILTERS, cb_filters
         flt = cb_filters(spec.get("filters"))
         items = [f"{pick(m['label'], lang)} {flt[k]:g}" for k, m in CB_FILTERS.items() if flt.get(k) is not None]
-        if items:
-            text += f"\n【{tr('sel.filters', lang)}】" + sep.join(items)
-    else:                                                        # 股票：价格/市值条件与排雷条件（设了的才写）
+    else:                                                            # 股票：行业、价格/市值、排雷与因子区间条件
         from ..stocks.panel import STOCK_FILTERS, RISK_FILTERS
         flt = spec.get("filters") or {}
-        items = [f"{pick(m['label'], lang)} {float(flt[k]):g}" for k, m in {**STOCK_FILTERS, **RISK_FILTERS}.items()
-                 if flt.get(k) not in (None, "")]
-        if items:
-            text += f"\n【{tr('sel.filters', lang)}】" + sep.join(items)
+        items = []
+        ind_flt = industry_filter_of(flt)
+        if ind_flt is not None:
+            ind_mode, inds = ind_flt
+            shown = sep.join(industry_short(x) if lang == "zh" else x for x in inds[:4])
+            if len(inds) > 4:
+                shown += tr("sel.ind_more", lang, n=len(inds))
+            items.append(tr("sel.ind_include" if ind_mode == "include" else "sel.ind_exclude", lang, items=shown))
+        items.extend(f"{pick(m['label'], lang)} {float(flt[k]):g}"
+                     for k, m in {**STOCK_FILTERS, **RISK_FILTERS}.items() if flt.get(k) not in (None, ""))
+        if uses_risk_exempt_fin(spec):
+            items.append(tr("sel.risk_exempt_fin", lang))
+    for ff in active_factor_filters(spec.get("filters")):
+        fname = pick(FACTORS[ff["key"]]["label"], lang) if ff["key"] in FACTORS else ff["key"]
+        lo, hi = ff["min"], ff["max"]
+        if ff["mode"] == "pct":
+            scope = tr("sel.ff_scope_ind", lang) if ff["scope"] == "industry" and not is_cb else ""
+            if lo is not None and hi is not None:
+                items.append(tr("sel.ff_pct_both", lang, name=fname, scope=scope, lo=f"{lo:g}", hi=f"{hi:g}"))
+            elif lo is not None:
+                items.append(tr("sel.ff_pct_min", lang, name=fname, scope=scope, lo=f"{lo:g}"))
+            else:
+                items.append(tr("sel.ff_pct_max", lang, name=fname, scope=scope, hi=f"{hi:g}"))
+        else:
+            if lo is not None and hi is not None:
+                items.append(tr("sel.ff_val_both", lang, name=fname, lo=f"{lo:g}", hi=f"{hi:g}"))
+            elif lo is not None:
+                items.append(tr("sel.ff_val_min", lang, name=fname, lo=f"{lo:g}"))
+            else:
+                items.append(tr("sel.ff_val_max", lang, name=fname, hi=f"{hi:g}"))
+    if items:
+        text += f"\n【{tr('sel.filters', lang)}】" + sep.join(items)
     if spec.get("dividend") == "cash":
         text += " · " + tr("sel.div_cash", lang)
     return text

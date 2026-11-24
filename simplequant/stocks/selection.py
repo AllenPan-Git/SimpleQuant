@@ -220,6 +220,69 @@ def uses_buffer(spec: dict) -> bool:
     return keep_top_n(spec) > int(spec.get("top_n") or 10)
 
 
+FIN_EXEMPT_RISK = ("max_debt_ratio", "min_current_ratio")
+FIN_INDUSTRY_NAMES = frozenset({
+    "银行", "非银金融", "证券", "保险", "金融", "金融业", "多元金融",
+    "货币金融服务", "资本市场服务", "保险业", "其他金融业",
+})
+
+
+def industry_short(s: str) -> str:
+    """证监会行业简称（去掉开头的门类字母与两位代码，如 J66货币金融服务 -> 货币金融服务）"""
+    s = str(s or "").strip()
+    return s[3:] if s[:1].isalpha() and s[1:3].isdigit() else (s or "—")
+
+
+def is_financial_industry(ind: pd.Series) -> pd.Series:
+    """是否为证监会 J 门类金融业（银行、券商、保险、多元金融等）"""
+    s = ind.fillna("").astype(str).str.strip()
+    short = s.map(lambda x: x[3:] if x[:1].isalpha() and x[1:3].isdigit() else x)
+    return s.str.match(r"^J\d") | short.isin(FIN_INDUSTRY_NAMES)
+
+
+def industry_filter_of(filters: dict | None) -> tuple[str, list[str]] | None:
+    """解析行业筛选设置：返回 (mode: 'exclude' | 'include', 行业列表)；未启用返回 None"""
+    ind = (filters or {}).get("industry")
+    if not isinstance(ind, dict):
+        return None
+    mode = "include" if ind.get("mode") == "include" else "exclude"
+    items = []
+    for x in ind.get("items") or ():
+        v = str(x).strip()
+        if v and v not in items:
+            items.append(v)
+    return (mode, items) if items else None
+
+
+def active_factor_filters(filters: dict | None) -> list[dict]:
+    """解析实际生效的因子区间筛选列表（至少设置了 min 或 max 之一）"""
+    out = []
+    for it in (filters or {}).get("factor_filters") or ():
+        if not isinstance(it, dict) or not it.get("key"):
+            continue
+        lo_raw, hi_raw = it.get("min"), it.get("max")
+        lo = float(lo_raw) if lo_raw not in (None, "") else None
+        hi = float(hi_raw) if hi_raw not in (None, "") else None
+        if lo is None and hi is None:
+            continue
+        mode = "value" if it.get("mode") == "value" else "pct"
+        scope = "industry" if mode == "pct" and it.get("scope") == "industry" else "pool"
+        out.append({"key": str(it["key"]), "mode": mode, "scope": scope, "min": lo, "max": hi})
+    return out
+
+
+def all_factor_keys(spec: dict) -> list[str]:
+    """选股打分与因子过滤共同用到的全部因子键（保序去重）"""
+    keys = []
+    for f in spec.get("factors") or ():
+        if isinstance(f, dict) and f.get("key") and f["key"] not in keys:
+            keys.append(f["key"])
+    for ff in active_factor_filters(spec.get("filters")):
+        if ff["key"] not in keys:
+            keys.append(ff["key"])
+    return keys
+
+
 def uses_stock_filters(spec: dict) -> list[str]:
     """设了值的股票价格/市值筛选条件（可转债池忽略）"""
     if spec.get("universe") == "cb":
@@ -238,24 +301,88 @@ def uses_mcap_filters(spec: dict) -> list[str]:
     return [k for k, m in STOCK_FILTERS.items() if m.get("requires_fin") and flt.get(k) not in (None, "")]
 
 
-def needs_fin(spec: dict) -> bool:
-    """选股策略是否需要财务数据：用到财务因子、市值中性化或市值筛选条件"""
-    return (any(F.FACTORS.get(f["key"], {}).get("requires_fin") for f in spec.get("factors", []))
-            or bool((spec.get("neutralize") or {}).get("size"))
-            or bool(uses_mcap_filters(spec)))
-
-
 def uses_risk_filters(spec: dict) -> list[str]:
     """设了值的排雷条件"""
+    if spec.get("universe") == "cb":
+        return []
     from .panel import RISK_FILTERS
     flt = spec.get("filters") or {}
     return [k for k in RISK_FILTERS if flt.get(k) not in (None, "")]
 
 
+def uses_risk_exempt_fin(spec: dict) -> bool:
+    """是否启用了金融行业豁免负债率与流动比率限制"""
+    if spec.get("universe") == "cb":
+        return False
+    flt = spec.get("filters") or {}
+    return bool(flt.get("risk_exempt_fin")) and any(flt.get(k) not in (None, "") for k in FIN_EXEMPT_RISK)
+
+
+def uses_factor_filters(spec: dict) -> list[dict]:
+    """设了值的因子区间筛选条件"""
+    return active_factor_filters(spec.get("filters"))
+
+
+def uses_industry_filter(spec: dict) -> bool:
+    """选股过滤是否依赖行业分类（行业排除/限定、金融业排雷豁免、同行业内因子百分位）"""
+    if spec.get("universe") == "cb":
+        return False
+    flt = spec.get("filters") or {}
+    return (bool(industry_filter_of(flt))
+            or uses_risk_exempt_fin(spec)
+            or any(ff["mode"] == "pct" and ff["scope"] == "industry" for ff in active_factor_filters(flt)))
+
+
+def uses_ext_filters(spec: dict) -> bool:
+    """是否使用了 3.7 扩展过滤能力（行业筛选、金融业排雷豁免、因子区间过滤）"""
+    flt = spec.get("filters") or {}
+    return ((spec.get("universe") != "cb" and (bool(industry_filter_of(flt)) or uses_risk_exempt_fin(spec)))
+            or bool(active_factor_filters(flt)))
+
+
+def needs_fin(spec: dict) -> bool:
+    """选股策略是否需要财务数据：用到财务因子（含因子过滤）、市值中性化或市值筛选条件"""
+    if spec.get("universe") == "cb":
+        return False
+    return (any(F.FACTORS.get(k, {}).get("requires_fin") for k in all_factor_keys(spec))
+            or bool((spec.get("neutralize") or {}).get("size"))
+            or bool(uses_mcap_filters(spec)))
+
+
 def needs_risk(spec: dict) -> bool:
-    """选股策略要不要排雷数据：用到排雷因子（含用到排雷字段的自定义因子）或设了排雷条件"""
-    return bool(uses_risk_filters(spec)) or \
-        any(F.FACTORS.get(f["key"], {}).get("requires_risk") for f in spec.get("factors", []))
+    """选股策略要不要排雷数据：用到排雷因子（含自定义因子与因子过滤）或设了排雷条件"""
+    if spec.get("universe") == "cb":
+        return False
+    return (bool(uses_risk_filters(spec))
+            or any(F.FACTORS.get(k, {}).get("requires_risk") for k in all_factor_keys(spec)))
+
+
+def needs_div_factors(spec: dict) -> bool:
+    """打分或因子过滤中是否用到了分红类因子"""
+    if spec.get("universe") == "cb":
+        return False
+    return any(F.FACTORS.get(k, {}).get("requires_div") for k in all_factor_keys(spec))
+
+
+def needs_div(spec: dict) -> bool:
+    """选股策略是否需要分红数据：按现金分红计算或用到分红类因子"""
+    return spec.get("universe") != "cb" and (spec.get("dividend") == "cash" or needs_div_factors(spec))
+
+
+def needs_industry(spec: dict) -> bool:
+    """选股策略是否需要行业分类数据：行业中性化或行业相关筛选"""
+    return spec.get("universe") != "cb" and (
+        bool((spec.get("neutralize") or {}).get("industry")) or uses_industry_filter(spec))
+
+
+def _freeze(obj):
+    if isinstance(obj, dict):
+        return tuple(sorted((k, _freeze(v)) for k, v in obj.items()))
+    if isinstance(obj, (list, tuple)):
+        return tuple(_freeze(x) for x in obj)
+    if isinstance(obj, set):
+        return tuple(sorted(_freeze(x) for x in obj))
+    return obj
 
 
 def apply_stock_filters(panel, mask: pd.DataFrame, filters: dict) -> pd.DataFrame:
@@ -286,20 +413,107 @@ def apply_stock_filters(panel, mask: pd.DataFrame, filters: dict) -> pd.DataFram
     return mask
 
 
+def apply_industry_filter(panel, mask: pd.DataFrame, filters: dict) -> pd.DataFrame:
+    """在股票池上应用行业排除 / 仅限指定行业筛选"""
+    if getattr(panel, "kind", "stock") != "stock":
+        return mask
+    ind_flt = industry_filter_of(filters)
+    if ind_flt is None:
+        return mask
+    if panel.industry.dropna().empty:
+        raise ValueError(pick(L("用到了行业筛选条件，需要先在「数据」标签页更新行业分类",
+                                "Industry filters require industry classification data; update it on the Data tab first")))
+    mode, items = ind_flt
+    ind = panel.industry.reindex(panel.codes)
+    keep = ind.isin(items) if mode == "include" else ~ind.isin(items)
+    return mask & keep.to_numpy(dtype=bool)[None, :]
+
+
+def _cross_pct(df: pd.DataFrame) -> pd.DataFrame:
+    """按日计算对称经验百分位 (rank - 0.5) / N × 100，使得 [10, 90] 精确剔除首尾各 10%"""
+    rk = df.rank(axis=1, ascending=True, method="average")
+    cnt = df.notna().sum(axis=1).replace(0, np.nan)
+    return rk.sub(0.5).div(cnt, axis=0) * 100.0
+
+
+def _cross_pct_by_industry(df: pd.DataFrame, industry: pd.Series) -> pd.DataFrame:
+    """按日在同行业内计算对称经验百分位"""
+    ind = industry.reindex(df.columns).fillna("未分类").astype(str)
+    ind = ind.where(ind.str.strip() != "", "未分类")
+    out = pd.DataFrame(np.nan, index=df.index, columns=df.columns)
+    for _, cols in ind.groupby(ind).groups.items():
+        out[cols] = _cross_pct(df[cols])
+    return out
+
+
+def apply_factor_filters(panel, mask: pd.DataFrame, filters: dict) -> pd.DataFrame:
+    """按顺序应用因子数值区间或截面百分位区间过滤（支持内置因子与自定义因子）"""
+    ffs = active_factor_filters(filters)
+    if not ffs:
+        return mask
+    is_stock = getattr(panel, "kind", "stock") == "stock"
+    for ff in ffs:
+        key = ff["key"]
+        meta = F.FACTORS.get(key) or {}
+        if is_stock:
+            if meta.get("requires_fin") and not getattr(panel, "has_fin", False):
+                raise ValueError(pick(L("因子筛选条件用到了财务数据，需要先在「数据」标签页下载财务数据",
+                                        "Factor filters require financial data; download it on the Data tab first")))
+            if meta.get("requires_risk") and not getattr(panel, "has_risk", False):
+                raise ValueError(pick(L("因子筛选条件用到了排雷数据，需要先在「数据」标签页下载排雷数据",
+                                        "Factor filters require risk data; download it on the Data tab first")))
+            if meta.get("requires_div") and not getattr(panel, "div_codes", None):
+                raise ValueError(pick(L("因子筛选条件用到了分红数据，需要先在「数据」标签页下载分红数据",
+                                        "Factor filters require dividend data; download it on the Data tab first")))
+        raw = F.compute(panel, key).where(mask)
+        if ff["mode"] == "value":
+            vals = raw
+        elif ff["scope"] == "industry" and is_stock:
+            if panel.industry.dropna().empty:
+                raise ValueError(pick(L("用到了同行业内百分位筛选，需要先在「数据」标签页更新行业分类",
+                                        "Within-industry percentile filters require industry classification data; "
+                                        "update it on the Data tab first")))
+            vals = _cross_pct_by_industry(raw, panel.industry)
+        else:
+            vals = _cross_pct(raw)
+        cond = vals.notna()
+        if ff["min"] is not None:
+            cond = cond & (vals >= ff["min"])
+        if ff["max"] is not None:
+            cond = cond & (vals <= ff["max"])
+        mask = mask & cond
+    return mask
+
+
 def eligible_mask(panel, filters: dict) -> pd.DataFrame:
-    """可选范围：成分股、正常交易、非 ST、上市天数，加上品种自己的条件（可转债的价格上限等；值为空表示不限）"""
+    """可选范围：成分股、正常交易、非 ST、上市天数，加上品种自己的条件、行业、排雷与因子区间条件"""
     mask = panel.eligible(bool(filters.get("exclude_st")), int(filters.get("min_list_days") or 0))
     mask = apply_stock_filters(panel, mask, filters)
+    mask = apply_industry_filter(panel, mask, filters)
     from .panel import RISK_FILTERS
     extra = getattr(panel, "extra_filters", None) or {}
+    is_stock = getattr(panel, "kind", "stock") == "stock"
     lacking = [k for k in RISK_FILTERS if filters.get(k) not in (None, "") and k not in extra]
-    if lacking and getattr(panel, "kind", "stock") == "stock":   # 不能当作「不限」悄悄跳过
+    if lacking and is_stock:   # 不能当作「不限」悄悄跳过
         raise ValueError(pick(L("用到了排雷条件，需要先在「数据」标签页下载排雷数据",
                                 "Risk screens need the risk data; download it on the Data tab first")))
+    exempt_fin = (is_stock and bool(filters.get("risk_exempt_fin"))
+                  and any(filters.get(k) not in (None, "") for k in FIN_EXEMPT_RISK))
+    fin_cols = None
+    if exempt_fin:
+        if panel.industry.dropna().empty:
+            raise ValueError(pick(L("启用了金融行业排雷豁免，需要先在「数据」标签页更新行业分类",
+                                    "Financial-sector exemption requires industry classification data; "
+                                    "update it on the Data tab first")))
+        fin_cols = is_financial_industry(panel.industry.reindex(panel.codes)).to_numpy(dtype=bool)[None, :]
     for k, fn in extra.items():
         v = filters.get(k)
         if v is not None and v != "":
-            mask = mask & fn(panel, float(v)).fillna(False).astype(bool)
+            cond = fn(panel, float(v)).fillna(False).astype(bool)
+            if fin_cols is not None and k in FIN_EXEMPT_RISK:
+                cond = cond | fin_cols
+            mask = mask & cond
+    mask = apply_factor_filters(panel, mask, filters)
     return mask
 
 
@@ -311,7 +525,7 @@ def build_schedule(panel, spec: dict, start=None, next_days=None, cache: dict | 
     cache：同一面板上反复选股时共用（参数优化），因子只算一次
     """
     filters = effective_filters(panel, spec)
-    fkey = ("filters",) + tuple(sorted((k, v) for k, v in filters.items()))
+    fkey = ("filters", _freeze(filters))
     sub = cache.setdefault(fkey, {}) if cache is not None else {}
     if "mask" not in sub:
         sub["mask"] = eligible_mask(panel, filters)

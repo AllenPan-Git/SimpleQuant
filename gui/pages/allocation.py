@@ -3,12 +3,12 @@
 import uuid
 
 import pandas as pd
-from nicegui import run, ui
+from nicegui import background_tasks, run, ui
 
-from simplequant import allocation as A, strategies
+from simplequant import allocation as A, llm, strategies, telemetry
 from simplequant.data import library
 from simplequant.strategies import TEMPLATES
-from gui import state
+from gui import state, cloud_ui
 from gui.common import t, p, lang
 from gui.components import credibility_box
 from gui.layout import frame, page_title
@@ -327,8 +327,11 @@ def _results(AL, rerun):
     ui.label(t("al.class_mix", mix=sep.join(f"{p(A.CLASSES[c])} {pct(v / tot, 0)}" for c, v in mix.items() if v > 0))) \
         .classes("text-sm pt-2")
 
+    checks_list = A.checks(prof.level, prof.max_dd, res, r["shifted"], names)
     with ui.column().classes("w-full pt-4"):
-        credibility_box(A.checks(prof.level, prof.max_dd, res, r["shifted"], names))
+        credibility_box(checks_list)
+
+    _ai_alloc_box(r, names, {k: p(v) for k, v in A.CLASSES.items()}, level["name"], checks_list)
 
     with ui.column().classes("w-full gap-1 pt-4"):
         plot(equity_chart(res.equity, lg, t("al.chart_bench"), t("al.chart_portfolio")))
@@ -342,6 +345,56 @@ def _results(AL, rerun):
         plot(corr_heatmap(corr, names, lg))
 
     _paper_form(AL, r)
+
+
+def _ai_alloc_box(r: dict, names: dict, class_labels: dict, level_label: str, checks_list: list[dict]):
+    """资产配置 AI 方案解读按钮与报告展示"""
+    cfg = llm.load_config() or llm.LLMConfig()
+    if not (cfg and cfg.ready):
+        return
+    with ui.column().classes("w-full gap-2 pt-3"):
+        with ui.row().classes("items-center gap-3"):
+            btn = ui.button(t("al.ai_btn"), icon="auto_awesome").props("outline no-caps").mark("al_ai_btn")
+            spin = ui.row().classes("items-center gap-2")
+            with spin:
+                ui.spinner(size="sm")
+                ui.label(t("ai.thinking")).classes("sq-muted text-sm")
+            spin.set_visibility(False)
+        box = ui.column().classes("w-full gap-1").mark("al_ai_box")
+
+    def show():
+        if box.is_deleted:
+            return
+        box.clear()
+        if r.get("ai_report"):
+            with box, ui.column().classes("w-full gap-1 sq-note py-3"):
+                ui.markdown(r["ai_report"]).classes("text-sm")
+                ui.label(t("al.ai_note")).classes("sq-muted text-xs")
+
+    async def go():
+        c = llm.load_config() or llm.LLMConfig()
+        if not (c and c.ready):
+            return
+        btn.disable()
+        spin.set_visibility(True)
+        telemetry.ai("allocation")
+        try:
+            summary = llm.allocation_summary(r, names, class_labels, level_label, checks_list, lang())
+            r["ai_report"] = await run.io_bound(llm.explain_allocation, llm.get_provider(c), summary, lang())
+            cloud_ui.invalidate_quota()
+        except Exception as e:  # noqa: BLE001
+            if not box.is_deleted:
+                cloud_ui.handle_ai_error(e, box, on_retry=lambda: background_tasks.create(go()))
+            return
+        finally:
+            if not btn.is_deleted:
+                btn.enable()
+            if not spin.is_deleted:
+                spin.set_visibility(False)
+        show()
+
+    btn.on_click(go)
+    show()
 
 
 def _paper_form(AL, r):

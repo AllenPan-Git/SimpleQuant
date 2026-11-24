@@ -109,8 +109,8 @@ def download_bar(key: str, text: str, button: str, work, on_done=None, note: str
     watch()
 
 
-# ---------------- 选股数据：财务 / 分红 / 排雷 ----------------
-STOCK_PARTS = ("fin", "div", "risk")
+# ---------------- 选股数据：财务 / 分红 / 排雷 / 行业 ----------------
+STOCK_PARTS = ("fin", "div", "risk", "industry")
 
 
 def stock_bar(part: str, universe: str, start_year: int, reason: str, on_done=None, store=None):
@@ -139,6 +139,9 @@ def stock_bar(part: str, universe: str, start_year: int, reason: str, on_done=No
         if part == "fin":
             st.update_industry()
             return st.update_fundamentals(codes, start_year, progress=step)
+        if part == "industry":
+            st.update_industry()
+            return None
         if part == "div":
             return st.update_dividends(codes, start_year, progress=step)
         return st.update_risk(codes, start_year, progress=step)

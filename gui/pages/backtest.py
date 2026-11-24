@@ -19,7 +19,7 @@ from simplequant.engine.credibility import check_backtest, check_phase
 from simplequant.engine.phase import run_timing, timing_cycle, phases
 from simplequant.engine.native_plot import render as render_native, MAX_BARS as NATIVE_MAX_BARS
 from simplequant.export import PLATFORMS
-from gui import state, history, support, routes
+from gui import state, history, support, routes, cloud_ui
 from gui.plan_io import import_button, export_bytes, plan_filename, plan_check_notice
 from simplequant import plan as plan_mod
 from gui.common import t, p, lang
@@ -34,13 +34,13 @@ from ui.shared import (export_script, export_filename, platform_export, orders_t
                        spec_key, timing_verify)
 
 
-def report(BT: dict, exp_menu, to_verify):
+def report(BT: dict, exp_menu, to_verify, on_iterate=None):
     """回测报告：分别回测是分布与明细，否则是完整报告；还没有结果时什么都不画。
     to_verify()：右侧「下一步」的验证（择时工作台切到「验证」标签）"""
     if BT.get("batch") is not None:
         _batch_results(BT)
     elif BT.get("result") is not None:
-        _results(BT, exp_menu, to_verify)
+        _results(BT, exp_menu, to_verify, on_iterate=on_iterate)
 
 
 def setup_bar(by_id: dict, BT: dict, strategy_part, sticky: bool = False, open_: bool | None = None) -> SimpleNamespace:
@@ -518,7 +518,7 @@ def _checks(BT: dict):
     draw()
 
 
-def _results(BT: dict, exp_menu, to_verify):
+def _results(BT: dict, exp_menu, to_verify, on_iterate=None):
     lg = lang()
     res = BT["result"]
     label, names, freq = BT["title"]
@@ -591,7 +591,7 @@ def _results(BT: dict, exp_menu, to_verify):
             _next("03", t("bt.next_verify"), t("bt.next_verify_body"), to_verify, rec=True).mark("next_opt")
             _next("04", t("bt.next_paper"), t("bt.next_paper_body"), lambda: ui.navigate.to("/paper"))
             _next("↗", t("bt.next_export"), t("bt.next_export_body"), exp_menu.open)
-            _explain(BT, explain_out)
+            _explain(BT, explain_out, on_iterate=on_iterate)
 
             _rule_title(t("bt.recent_trades"), top=True)
             if res.trades.empty:
@@ -641,32 +641,47 @@ def _next(no: str, title: str, body: str, on_click, rec: bool = False):
     return el
 
 
-def _explain(BT: dict, out):
+def _explain(BT: dict, out, on_iterate=None):
     cfg = llm.load_config() or llm.LLMConfig()
     if not (cfg and cfg.ready):
         return
 
     async def explain():
+        c = llm.load_config() or llm.LLMConfig()
+        if not (c and c.ready):
+            return
         el.classes(add="opacity-50")
         telemetry.ai("explain")
         try:
             BT["explanation"] = await run.io_bound(
-                llm.explain_result, llm.get_provider(cfg), strategies.describe(BT["spec"], lang()),
+                llm.explain_result, llm.get_provider(c), strategies.describe(BT["spec"], lang()),
                 BT["result"].metrics, lang(), llm.trade_details(BT["result"]))
-        except llm.LLMError as e:
-            ui.notify(str(e), type="negative", multi_line=True)
+            cloud_ui.invalidate_quota()
         except Exception as e:  # noqa: BLE001
-            ui.notify(f"{type(e).__name__}: {e}", type="negative", multi_line=True)
+            cloud_ui.handle_ai_error(e, out)
+            return
         finally:
-            el.classes(remove="opacity-50")
+            if not el.is_deleted:
+                el.classes(remove="opacity-50")
         show()
 
     def show():
+        if out.is_deleted:
+            return
         out.clear()
         if BT.get("explanation"):
-            with out, ui.column().classes("w-full gap-1 sq-note py-3"):
+            with out, ui.column().classes("w-full gap-2 sq-note py-3"):
                 ui.markdown(BT["explanation"]).classes("text-sm")
                 ui.label(t("ai.explain_note")).classes("sq-muted text-xs")
+                if on_iterate and (BT.get("spec") or {}).get("kind") == "rule":
+                    ui.button(
+                        t("ai.iterate_btn"), icon="auto_fix_high",
+                        on_click=lambda: cloud_ui.iterate_dialog(
+                            BT["explanation"],
+                            lambda req, c: llm.translate(req, llm.get_provider(c), lang(), 1, BT["spec"]),
+                            on_iterate,
+                        ),
+                    ).props("outline dense no-caps").classes("self-start mt-1").mark("bt_ai_iterate")
 
     el = _next("AI", t("ai.explain"), t("bt.next_ai_body"), explain).mark("explain")
     show()

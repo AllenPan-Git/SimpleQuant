@@ -65,9 +65,8 @@ async def main(d):
         d.one(marker="sq_sidebar")
         s = state.strategy()
         s["mode"], s["tpl_key"] = "template", "sma_cross"
-        old = {c.id for c in type(d.client).instances.values()}
         await d.click(marker="nav:/timing")
-        await d.wait_client("/timing", exclude=old)
+        await d.until(lambda: d.find(marker="run"), what="timing workbench after sidebar navigation")
         first = state.STATE.get("bt", {}).get("result")
 
         def new_result():

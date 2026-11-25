@@ -6,6 +6,7 @@ import contextlib
 import datetime as dt
 import io
 import os
+from urllib.parse import parse_qs, urlsplit
 
 import pandas as pd
 from nicegui import background_tasks, run, ui
@@ -29,6 +30,8 @@ from ui.shared import POPULAR, ADJUST, parse_symbols, import_csv, dataset_label,
 
 
 _NAMES_LOCK = asyncio.Lock()
+_BENCH_RANGE_CACHE: dict[tuple[str, str, int], tuple[dt.date, dt.date]] = {}
+_RATES_TEXT_CACHE: dict[tuple[str, int, str], str] = {}
 
 CENTER_TABS = (("market", "data.tab_market", "candlestick_chart"), ("stocks", "data.tab_stocks", "filter_list"),
                ("cb", "data.tab_cb", "receipt_long"), ("rates", "data.tab_rates", "percent"))
@@ -43,22 +46,42 @@ def page():
 
 # ---------------- 数据中心 ----------------
 def _center():
-    """按数据类型分标签：行情 / 选股数据 / 可转债 / 利率；当前标签记在 state.STATE["data_tab"]"""
+    """按数据类型分标签：行情 / 选股数据 / 可转债 / 利率；当前标签记在 state.STATE["data_tab"]，未打开的标签按需懒加载"""
     keys = [k for k, _, _ in CENTER_TABS]
+    q_tab = parse_qs(urlsplit(ui.context.client.sub_pages_router.current_path).query).get("tab", [None])[0]
+    if q_tab in keys:
+        state.STATE["data_tab"] = q_tab
     cur = state.STATE.get("data_tab") if state.STATE.get("data_tab") in keys else "market"
+    builders = {
+        "market": _market_blocks,
+        "stocks": _stock_data,
+        "cb": lambda: _universe_data("cb"),
+        "rates": _rates_card,
+    }
+    tab_panels_map = {}
+    built: set[str] = set()
+
+    def ensure_tab(k: str):
+        tp = tab_panels_map.get(k)
+        if k in built or tp is None or tp.is_deleted or k not in builders:
+            return
+        built.add(k)
+        with tp:
+            builders[k]()
+
     with ui.tabs().classes("w-full").props("align=left no-caps") as tabs:
         for k, key, icon in CENTER_TABS:
             ui.tab(k, t(key), icon=icon)
     with ui.tab_panels(tabs, value=cur).classes("w-full bg-transparent").mark("data_tabs") as panels:
-        with ui.tab_panel("market").classes("px-0 gap-4"):
-            _market_blocks()
-        with ui.tab_panel("stocks").classes("px-0 gap-4"):
-            _stock_data()
-        with ui.tab_panel("cb").classes("px-0 gap-4"):
-            _universe_data("cb")
-        with ui.tab_panel("rates").classes("px-0 gap-4"):
-            _rates_card()
-    panels.on_value_change(lambda e: state.STATE.__setitem__("data_tab", e.value))
+        for k, _, _ in CENTER_TABS:
+            with ui.tab_panel(k).classes("px-0 gap-4") as tp:
+                tab_panels_map[k] = tp
+    ensure_tab(cur)
+
+    def on_tab(e):
+        state.STATE["data_tab"] = e.value
+        ensure_tab(e.value)
+    panels.on_value_change(on_tab)
 
 
 def _market_blocks():
@@ -66,15 +89,17 @@ def _market_blocks():
     lib_head = _block_head(t("data.tab_library"), mark="data_lib_head", first=True)
     lib_box = ui.column().classes("w-full gap-2").mark("data_lib")
 
-    def refresh_lib():
+    def refresh_lib(metas: list | None = None):
+        metas = library.list_datasets() if metas is None else metas
         lib_box.clear()
-        lib_head.text = t("data.lib_count", n=len(library.list_datasets()))
+        lib_head.text = t("data.lib_count", n=len(metas))
         with lib_box:
-            _library_view(refresh_lib, fold=True)
+            _library_view(refresh_lib, fold=True, metas=metas)
+        return metas
 
-    async def fill_names():
+    async def fill_names(metas: list):
         """名称只有代码的数据在后台补上简称（第一次要拉 BaoStock 证券列表，约 40 秒），补到了就刷新列表"""
-        if not any(sec_names.needs_name(m) for m in library.list_datasets()):
+        if not any(sec_names.needs_name(m) for m in metas):
             return
         async with _NAMES_LOCK:             # 打开页面时和下载完成后各补一次，不同时拉列表
             try:
@@ -85,8 +110,8 @@ def _market_blocks():
             refresh_lib()
 
     def changed():
-        refresh_lib()
-        background_tasks.create(fill_names(), name="fill security names")
+        metas = refresh_lib()
+        background_tasks.create(fill_names(metas), name="fill security names")
 
     _block_head(t("data.tab_download"))
     _download_tab(on_change=changed)
@@ -125,6 +150,21 @@ def _stock_data():
     sel.on_value_change(on_uni)
 
 
+def _benchmark_bounds(u: str, st) -> tuple[dt.date, dt.date]:
+    from simplequant.stocks import UNIVERSES, universe as U
+    if U.kind(u) == "cb":
+        from simplequant.bonds import CBStore
+        p_idx = CBStore().root / "index.parquet"
+    else:
+        p_idx = st.root / "index" / f"{UNIVERSES[u]['index']}.parquet"
+    mtime = p_idx.stat().st_mtime_ns if p_idx.exists() else -1
+    ck = (str(p_idx), u, mtime)
+    if ck not in _BENCH_RANGE_CACHE:
+        idx = U.load_benchmark(u, st)
+        _BENCH_RANGE_CACHE[ck] = (idx.index[0].date(), idx.index[-1].date())
+    return _BENCH_RANGE_CACHE[ck]
+
+
 def _universe_data(universe, box=None):
     """一个股票池的数据状态与下载（选股包的 _data_tab）。universe：股票池或返回股票池的函数；
     返回重画函数：下载、导入数据包完成后（以及换股票池时）整块重画，重新判断有没有数据"""
@@ -132,7 +172,6 @@ def _universe_data(universe, box=None):
     from gui.pages.selection.common import Ctx
     from gui.pages.selection.data_tab import _data_tab
     from gui.sel_panel import store, universe_ready
-    from simplequant.stocks import universe as U
     box = box or ui.column().classes("w-full gap-4")
 
     def draw():
@@ -141,8 +180,7 @@ def _universe_data(universe, box=None):
         u = universe() if callable(universe) else universe
         ctx = Ctx()
         if universe_ready(u):
-            idx = U.load_benchmark(u, store())
-            ctx.lo, ctx.hi = idx.index[0].date(), idx.index[-1].date()
+            ctx.lo, ctx.hi = _benchmark_bounds(u, store())
         box.clear()
         with box:
             _data_tab(sp_state(), ctx, draw, universe=u)
@@ -267,11 +305,17 @@ def _rates_card():
 
         def show():
             if st.ready():
-                m = st.load().dropna()
-                last = m.iloc[-1] if len(m) else None
-                status.text = t("rates.status", start=m.index[0].date(), end=m.index[-1].date(),
-                                cgb=f"{last['cgb10y']:.2f}", term=f"{last['term_spread']:.0f}",
-                                credit=f"{last['credit_spread']:.0f}") if last is not None else ""
+                mtime = st.path.stat().st_mtime_ns if st.path.exists() else -1
+                ck = (str(st.path), mtime, lang())
+                if ck not in _RATES_TEXT_CACHE:
+                    m = st.load().dropna()
+                    last = m.iloc[-1] if len(m) else None
+                    _RATES_TEXT_CACHE[ck] = (
+                        t("rates.status", start=m.index[0].date(), end=m.index[-1].date(),
+                          cgb=f"{last['cgb10y']:.2f}", term=f"{last['term_spread']:.0f}",
+                          credit=f"{last['credit_spread']:.0f}") if last is not None else ""
+                    )
+                status.text = _RATES_TEXT_CACHE[ck]
             else:
                 status.text = t("rates.none")
         show()
@@ -406,10 +450,10 @@ def _csv_tab(on_change):
 
 
 # ---------------- 本地数据库 ----------------
-def _library_view(refresh, fold: bool = False):
-    """fold：预览（图表、下载 CSV、删除）收进折叠区（新版「行情」标签：免得图表把下面的在线下载挤远）"""
+def _library_view(refresh, fold: bool = False, metas: list | None = None):
+    """fold：预览（图表、下载 CSV、删除）收进折叠区（新版「行情」标签：免得图表把下面的在线下载挤远，且展开时才加载 Parquet 绘图）"""
     lg = lang()
-    metas = library.list_datasets()
+    metas = library.list_datasets() if metas is None else metas
     if not metas:
         ui.label(t("data.empty")).classes("sq-muted")
         return
@@ -430,32 +474,75 @@ def _library_view(refresh, fold: bool = False):
         t("lib.rows"): m.rows, t("lib.updated"): m.created} for m in metas]))
 
     by_id = {m.id: m for m in metas}
-    box = ui.expansion(t("lib.preview_fold"), icon="show_chart").props("dense").classes("w-full sq-adv")         .mark("data_lib_preview") if fold else contextlib.nullcontext()
-    with box:
+    exp = ui.expansion(t("lib.preview_fold"), icon="show_chart").props("dense").classes("w-full sq-adv") \
+        .mark("data_lib_preview") if fold else None
+    with (exp if exp is not None else contextlib.nullcontext()):
         sel = ui.select({i: dataset_label(m, lg) for i, m in by_id.items()}, label=t("lib.preview"),
                         value=next(iter(by_id))).props("outlined dense").classes("w-full")
-        detail = ui.column().classes("w-full gap-2")
+        chart_box = ui.column().classes("w-full gap-2")
+        act_box = ui.row().classes("gap-2")
 
-    def show():
-        detail.clear()
-        m = by_id[sel.value]
-        df = library.load(sel.value)
+    chart_state = {"id": None, "seq": 0}
+
+    def _build_preview(mid: str, name: str):
+        df = library.load(mid)
         factor_cols = [c for c in EXTRA_COLUMNS if c in df.columns]
-        with detail:
+        return factor_cols, preview_chart(df, name, lg)
+
+    async def draw_chart():
+        if chart_box.is_deleted:
+            return
+        mid = sel.value
+        if chart_state["id"] == mid:
+            return
+        chart_state["seq"] += 1
+        seq = chart_state["seq"]
+        m = by_id[mid]
+        chart_box.clear()
+        with chart_box:
+            with ui.row().classes("items-center gap-2 py-2"):
+                ui.spinner(size="sm")
+                ui.label(t("sp.loading_panel")).classes("sq-muted text-sm")
+        try:
+            factor_cols, fig = await run.io_bound(_build_preview, mid, m.name)
+        except Exception as e:  # noqa: BLE001
+            if not chart_box.is_deleted and chart_state["seq"] == seq:
+                chart_box.clear()
+                with chart_box:
+                    ui.label(f"{type(e).__name__}: {e}").classes("text-negative text-sm")
+            return
+        if chart_box.is_deleted or chart_state["seq"] != seq or sel.value != mid:
+            return
+        chart_state["id"] = mid
+        chart_box.clear()
+        with chart_box:
             ui.label(t("lib.factors", cols=", ".join(p(INDICATORS[c]["label"]) for c in factor_cols))
                      if factor_cols else t("lib.no_factors")).classes("text-sm sq-muted")
-            plot(preview_chart(df, m.name, lg))
-            with ui.row().classes("gap-2"):
-                ui.button(t("lib.download_csv"), icon="download", on_click=lambda: ui.download.content(
-                    df.rename_axis("date").reset_index().to_csv(index=False).encode("utf-8-sig"),
-                    f"{m.symbol}.csv", "text/csv")).props("outline no-caps")
-                if can_update(m):
-                    one = ui.button(t("lib.update_one"), icon="update",
-                                    on_click=lambda: update_latest(one, prog, refresh, m)) \
-                        .props("outline no-caps").tooltip(t("lib.update_tip")).mark("data_lib_update_one")
-                ui.button(t("lib.delete"), icon="delete", on_click=lambda: confirm_delete(m, refresh))                     .props("outline no-caps color=negative")
-    sel.on_value_change(show)
-    show()
+            plot(fig)
+
+    def draw_actions():
+        act_box.clear()
+        m = by_id[sel.value]
+        with act_box:
+            ui.button(t("lib.download_csv"), icon="download", on_click=lambda m=m: ui.download.content(
+                library.load(m.id).rename_axis("date").reset_index().to_csv(index=False).encode("utf-8-sig"),
+                f"{m.symbol}.csv", "text/csv")).props("outline no-caps")
+            if can_update(m):
+                one = ui.button(t("lib.update_one"), icon="update",
+                                on_click=lambda m=m: update_latest(one, prog, refresh, m)) \
+                    .props("outline no-caps").tooltip(t("lib.update_tip")).mark("data_lib_update_one")
+            ui.button(t("lib.delete"), icon="delete", on_click=lambda m=m: confirm_delete(m, refresh)) \
+                .props("outline no-caps color=negative")
+
+    def on_select():
+        draw_actions()
+        if exp is None or exp.value:
+            background_tasks.create(draw_chart(), name="preview dataset chart")
+
+    sel.on_value_change(lambda _: on_select())
+    if exp is not None:
+        exp.on_value_change(lambda e: background_tasks.create(draw_chart(), name="preview dataset chart") if e.value else None)
+    on_select()
 
 
 async def update_latest(btn, prog, refresh, meta=None):

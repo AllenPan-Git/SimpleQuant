@@ -56,17 +56,19 @@ DEFAULT_SLEEVES = [
 ]
 
 
-def find_dataset(symbol: str) -> library.DatasetMeta | None:
+def find_dataset(symbol: str, datasets: list[library.DatasetMeta] | None = None) -> library.DatasetMeta | None:
     """本地行情库中该代码的日线：优先后复权、其次结束日期最新、再次起始日期最早"""
-    metas = [m for m in library.list_datasets() if m.symbol == symbol and m.freq == "1d"]
+    src = library.list_datasets() if datasets is None else datasets
+    metas = [m for m in src if m.symbol == symbol and m.freq == "1d"]
     if not metas:
         return None
     return sorted(metas, key=lambda m: (m.adjust == "hfq", m.end, -int(m.start.replace("-", "") or 0)))[-1]
 
 
-def missing_data(sleeves: list[dict]) -> list[str]:
+def missing_data(sleeves: list[dict], datasets: list[library.DatasetMeta] | None = None) -> list[str]:
     """需要行情但本地没有的代码"""
-    return sorted({s["symbol"] for s in sleeves if s["kind"] in ("hold", "timing") and not find_dataset(s["symbol"])})
+    src = library.list_datasets() if datasets is None else datasets
+    return sorted({s["symbol"] for s in sleeves if s["kind"] in ("hold", "timing") and not find_dataset(s["symbol"], src)})
 
 
 def download(symbol: str, end: str, start: str = DEFAULT_DATA_START, name: str = ""):

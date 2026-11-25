@@ -1,12 +1,13 @@
 """选股页「数据」标签页（股票 / 可转债）"""
 
 import datetime as dt
+import os
 import tempfile
 import time
 from pathlib import Path
 
 import pandas as pd
-from nicegui import run, ui
+from nicegui import background_tasks, run, ui
 
 from simplequant import llm
 from simplequant.stocks import UNIVERSES, today
@@ -18,6 +19,80 @@ from gui.widgets import hint, notice, Progress
 from gui import sel_panel
 
 
+# 按目录 / 元数据 mtime 缓存统计结果：切回数据页或切换股票池时无需重复扫盘，目录内文件增删改时自动失效
+_STOCK_STATS_CACHE: dict[tuple, tuple] = {}
+_CB_STATS_CACHE: dict[tuple, tuple] = {}
+_RISK_EST_CACHE: dict[tuple, int] = {}
+
+
+def clear_stats_cache():
+    _STOCK_STATS_CACHE.clear()
+    _CB_STATS_CACHE.clear()
+    _RISK_EST_CACHE.clear()
+
+
+def _mtime(path: Path) -> int:
+    try:
+        return path.stat().st_mtime_ns
+    except OSError:
+        return -1
+
+
+def _stock_stats(st, universe: str) -> tuple[int, int, int, int, int, int]:
+    sig = (str(st.root), universe,
+           _mtime(st.root / "universe" / f"{universe}.parquet"),
+           _mtime(st.root / "daily"), _mtime(st.root / "fin"),
+           _mtime(st.root / "div"), _mtime(st.root / "risk"))
+    hit = _STOCK_STATS_CACHE.get(sig)
+    if hit is not None:
+        return hit
+    uni = st.load_universe(universe)
+    codes = set(uni["code"].unique())
+
+    def _count_dir(sub: str) -> int:
+        d = st.root / sub
+        if not d.exists():
+            return 0
+        return sum(1 for name in os.listdir(d) if name.endswith(".parquet") and name[:-8] in codes)
+
+    res = (int(uni["date"].nunique()), len(codes),
+           _count_dir("daily"), _count_dir("fin"), _count_dir("div"), _count_dir("risk"))
+    _STOCK_STATS_CACHE[sig] = res
+    return res
+
+
+def _cb_stats(st) -> tuple[int, int, int]:
+    today_d = dt.date.today()
+    sig = (str(st.root), today_d.isoformat(),
+           _mtime(st.root / "list.parquet"), _mtime(st.root / "info.parquet"), _mtime(st.root / "daily"))
+    hit = _CB_STATS_CACHE.get(sig)
+    if hit is not None:
+        return hit
+    lst, info = st.load_list(), st.load_info()
+    daily_dir = st.root / "daily"
+    existing = {n[:-8] for n in os.listdir(daily_dir) if n.endswith(".parquet")} if daily_dir.exists() else set()
+    have_codes = [c for c in lst["code"] if c in existing]
+    now = pd.Timestamp(today_d)
+    sub = info.loc[info.index.intersection(have_codes), "delist_date"]
+    trading = int((sub.isna() | (sub > now)).sum())
+    res = (len(lst), len(have_codes), trading)
+    _CB_STATS_CACHE[sig] = res
+    return res
+
+
+def _risk_requests_cached(st, universe: str, year: int) -> int:
+    sig = (str(st.root), universe, year, dt.date.today().isoformat(),
+           _mtime(st.root / "universe" / f"{universe}.parquet"),
+           _mtime(st.root / "risk_manifest.json"), _mtime(st.root / "risk"))
+    hit = _RISK_EST_CACHE.get(sig)
+    if hit is not None:
+        return hit
+    codes = sorted(st.load_universe(universe)["code"].unique())
+    n = st.risk_requests(codes, year)
+    _RISK_EST_CACHE[sig] = n
+    return n
+
+
 # ================= 数据 =================
 def _data_tab(SP, ctx, reload_all, universe: str | None = None):
     """universe：下载哪个股票池（新版数据中心自己选）；为空时用选股页当前的股票池。ctx 只用 lo / hi（是否已有数据）"""
@@ -26,25 +101,18 @@ def _data_tab(SP, ctx, reload_all, universe: str | None = None):
         _cb_data_tab(SP, ctx, reload_all)
         return
     st = sel_panel.store()
+    def _reload():
+        clear_stats_cache()
+        reload_all()
     if ctx.lo is not None:
-        uni = st.load_universe(universe)
-        codes = set(uni["code"].unique())
-
-        def _count_dir(sub: str) -> int:
-            d = st.root / sub
-            return sum(1 for p in d.glob("*.parquet") if p.stem in codes) if d.exists() else 0
-
-        have = _count_dir("daily")
-        have_fin = _count_dir("fin")
-        have_div = _count_dir("div")
-        have_risk = _count_dir("risk")
+        n_snap, n_codes, have, have_fin, have_div, have_risk = _stock_stats(st, universe)
         with ui.grid().classes("w-full gap-3 grid-cols-2 md:grid-cols-6"):
-            metric_tile(t("sp.snapshots"), str(uni["date"].nunique()))
-            metric_tile(t("sp.codes"), str(len(codes)), help_text=t("sp.codes_help"))
-            metric_tile(t("sp.downloaded"), f"{have}/{len(codes)}")
-            metric_tile(t("sp.fin_downloaded"), f"{have_fin}/{len(codes)}", help_text=t("sp.fin_help"))
-            metric_tile(t("sp.div_downloaded"), f"{have_div}/{len(codes)}", help_text=t("sp.div_help"))
-            metric_tile(t("sp.risk_downloaded"), f"{have_risk}/{len(codes)}", help_text=t("sp.risk_help"))
+            metric_tile(t("sp.snapshots"), str(n_snap))
+            metric_tile(t("sp.codes"), str(n_codes), help_text=t("sp.codes_help"))
+            metric_tile(t("sp.downloaded"), f"{have}/{n_codes}")
+            metric_tile(t("sp.fin_downloaded"), f"{have_fin}/{n_codes}", help_text=t("sp.fin_help"))
+            metric_tile(t("sp.div_downloaded"), f"{have_div}/{n_codes}", help_text=t("sp.div_help"))
+            metric_tile(t("sp.risk_downloaded"), f"{have_risk}/{n_codes}", help_text=t("sp.risk_help"))
     else:
         notice(t("sp.no_data"), "info")
 
@@ -60,8 +128,10 @@ def _data_tab(SP, ctx, reload_all, universe: str | None = None):
             with_risk = ui.switch(t("sp.with_risk"), value=D["with_risk"]).tooltip(t("sp.risk_help"))                 .mark("sp_with_risk")
         risk_est = ui.label().classes("text-sm")
 
+        est_seq = {"n": 0}
+
         def estimate():
-            """排雷数据要的请求多（每只每季度 2 次），按当前进度估计还要几天，免得以为卡住了"""
+            """排雷数据要的请求多（每只每季度 2 次），后台估算还要几天，避免同步读数百份 Parquet 卡住界面"""
             risk_est.set_visibility(bool(with_risk.value) and ctx.lo is not None)
             if not risk_est.visible:
                 return
@@ -69,9 +139,20 @@ def _data_tab(SP, ctx, reload_all, universe: str | None = None):
                 year = int(str(d_start.value)[:4]) - 1
             except ValueError:
                 return
-            codes = sorted(st.load_universe(universe)["code"].unique())
-            n = st.risk_requests(codes, year)
-            risk_est.text = t("sp.risk_estimate", n=f"{n:,}", days=max(1, -(-n // DAILY_LIMIT))) if n                 else t("sp.risk_estimate_none")
+            est_seq["n"] += 1
+            seq = est_seq["n"]
+
+            async def _calc():
+                try:
+                    n = await run.io_bound(_risk_requests_cached, st, universe, year)
+                except Exception:  # noqa: BLE001
+                    return
+                if risk_est.is_deleted or est_seq["n"] != seq:
+                    return
+                risk_est.text = t("sp.risk_estimate", n=f"{n:,}", days=max(1, -(-n // DAILY_LIMIT))) if n \
+                    else t("sp.risk_estimate_none")
+
+            background_tasks.create(_calc(), name="estimate risk requests")
         with_risk.on_value_change(lambda _: estimate())
         d_start.on_value_change(lambda _: estimate())
         estimate()
@@ -133,12 +214,12 @@ def _data_tab(SP, ctx, reload_all, universe: str | None = None):
             finally:
                 prog.stop()
                 btn.enable()
-            reload_all()
+            _reload()
 
         btn = ui.button(t("sp.download"), icon="download", on_click=download).props("unelevated no-caps") \
             .classes("self-start").mark("sp_download")
 
-    _pack_section(SP, st, "stocks", reload_all, default_open=(ctx.lo is None))
+    _pack_section(SP, st, "stocks", _reload, default_open=(ctx.lo is None))
 
 
 def _pack_section(SP, st, pack_name: str, reload_all, default_open: bool = False):
@@ -223,14 +304,13 @@ def _cb_data_tab(SP, ctx, reload_all):
     """可转债全市场：列表、条款、日线、中证转债指数"""
     from simplequant.bonds import CBStore
     st = CBStore()
+    def _reload():
+        clear_stats_cache()
+        reload_all()
     if ctx.lo is not None:
-        lst, info = st.load_list(), st.load_info()
-        have = sum(st.has(c) for c in lst["code"])
-        now = pd.Timestamp(dt.date.today())
-        trading = sum(1 for c in lst["code"] if st.has(c) and c in info.index
-                      and (pd.isna(info.at[c, "delist_date"]) or info.at[c, "delist_date"] > now))
+        total, have, trading = _cb_stats(st)
         with ui.grid().classes("w-full gap-3 grid-cols-2 md:grid-cols-4"):
-            metric_tile(t("cb.total"), str(len(lst)), help_text=t("cb.total_help"))
+            metric_tile(t("cb.total"), str(total), help_text=t("cb.total_help"))
             metric_tile(t("cb.downloaded"), str(have), help_text=t("cb.downloaded_help"))
             metric_tile(t("cb.trading"), str(trading))
             metric_tile(t("cb.as_of"), str(ctx.hi))
@@ -280,12 +360,20 @@ def _cb_data_tab(SP, ctx, reload_all):
             finally:
                 prog.stop()
                 btn.enable()
-            reload_all()
+            _reload()
 
         btn = ui.button(t("sp.download"), icon="download", on_click=download).props("unelevated no-caps") \
             .classes("self-start").mark("cb_download")
 
-    _pack_section(SP, st, "cb", reload_all, default_open=(ctx.lo is None))
+    _pack_section(SP, st, "cb", _reload, default_open=(ctx.lo is None))
 
-    with ui.expansion(t("cb.rules"), icon="rule").classes("w-full q-card"):
-        ui.markdown(t("cb.rules_text")).classes("text-sm")
+    with ui.expansion(t("cb.rules"), icon="rule").classes("w-full q-card") as rules_exp:
+        rules_box = ui.column().classes("w-full")
+        rules_drawn = {"ok": False}
+
+        def _draw_rules(e):
+            if e.value and not rules_drawn["ok"] and not rules_box.is_deleted:
+                rules_drawn["ok"] = True
+                with rules_box:
+                    ui.markdown(t("cb.rules_text")).classes("text-sm")
+        rules_exp.on_value_change(_draw_rules)

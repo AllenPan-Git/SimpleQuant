@@ -16,7 +16,7 @@ os.makedirs(os.environ["NICEGUI_STORAGE_PATH"], exist_ok=True)
 from nicegui import app, ui  # noqa: E402
 
 from simplequant.data import library  # noqa: E402
-from gui import theme  # noqa: E402
+from gui import theme, layout  # noqa: E402
 from gui.layout import PAGES  # noqa: E402
 from gui import routes  # noqa: E402
 from gui.pages import home, data, selection, paper, settings, allocation, tools, timing, factors  # noqa: E402
@@ -42,17 +42,31 @@ OLD_ROUTES = {"/strategy": "strategy", "/backtest": "backtest", "/optimize": "ve
 
 def _old_route(step: str):
     def page():
-        ui.navigate.to(routes.timing(step))
+        routes.timing(step)
+        ROUTES["/timing"]()
     return page
+
+
+def _sub_routes() -> dict:
+    """ui.sub_pages 路由表：全部主页面 + 经典界面旧路由"""
+    table = {route: ROUTES[route] for route, _, _ in PAGES}
+    for route, step in OLD_ROUTES.items():
+        table[route] = _old_route(step)
+    return table
+
+
+def _spa_page():
+    """单页外框入口：所有路由共用同一个壳子，右侧主内容区由 ui.sub_pages 局部替换"""
+    layout.spa_shell(_sub_routes())
 
 
 def register():
     """注册全部路由（显式调用而不用装饰器，界面测试重置 NiceGUI 后可以重新注册）"""
     theme.install()
     for route, _, _ in PAGES:
-        ui.page(route)(ROUTES[route])
-    for route, step in OLD_ROUTES.items():
-        ui.page(route)(_old_route(step))
+        ui.page(route)(_spa_page)
+    for route in OLD_ROUTES:
+        ui.page(route)(_spa_page)
 
 
 def _start_update_check():

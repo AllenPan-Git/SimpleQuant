@@ -94,12 +94,22 @@ html {{ background: var(--sq-page); }}
 body {{ background: var(--sq-page); color: var(--sq-text); font-size: 14.5px; -webkit-font-smoothing: antialiased;
   font-variant-numeric: tabular-nums; }}
 
-/* 仅在点击深浅色切换按钮时启用 450ms 护眼渐变（平时切页 0 过渡，不闪白） */
-html.sq-theme-anim, html.sq-theme-anim body, html.sq-theme-anim .q-page-container,
-html.sq-theme-anim .sq-side, html.sq-theme-anim .q-card, html.sq-theme-anim .q-expansion-item,
-html.sq-theme-anim .sq-note, html.sq-theme-anim .q-uploader, html.sq-theme-anim .q-uploader__header {{
-  transition: background-color 450ms ease, color 450ms ease, border-color 450ms ease !important;
+/* 仅在点击深浅色切换按钮时启用 1200ms 护眼慢渐变，让眼睛有充足时间适应明暗变化（平时 0 过渡，不拖慢交互） */
+html.sq-theme-anim, html.sq-theme-anim *, html.sq-theme-anim *::before, html.sq-theme-anim *::after {{
+  transition: background-color 1200ms cubic-bezier(0.4, 0, 0.2, 1),
+              color 1200ms cubic-bezier(0.4, 0, 0.2, 1),
+              border-color 1200ms cubic-bezier(0.4, 0, 0.2, 1),
+              box-shadow 1200ms cubic-bezier(0.4, 0, 0.2, 1),
+              fill 1200ms cubic-bezier(0.4, 0, 0.2, 1),
+              stroke 1200ms cubic-bezier(0.4, 0, 0.2, 1) !important;
 }}
+/* 单页路由切换入场动画：仅用合成层属性（opacity + 6px 轻移），结束时 transform 归为 none，不影响子元素 position: sticky */
+@keyframes sq-page-in {{
+  from {{ opacity: 0; transform: translateY(6px); }}
+  to {{ opacity: 1; transform: none; }}
+}}
+.sq-sub-pages {{ width: 100%; }}
+.sq-page-view {{ animation: sq-page-in 240ms cubic-bezier(0.22, 1, 0.36, 1); }}
 /* 上传组件（数据包导入）：覆盖 Quasar 默认 primary 背景 + 白字，适配深浅色纸张主题 */
 .q-uploader {{ background: var(--sq-card) !important; border-color: var(--sq-border) !important; border-radius: 2px; }}
 .q-uploader__header {{ background: var(--sq-sunk) !important; color: var(--sq-text) !important;
@@ -107,7 +117,11 @@ html.sq-theme-anim .sq-note, html.sq-theme-anim .q-uploader, html.sq-theme-anim 
 .q-uploader__header .q-btn, .q-uploader__header .q-icon {{ color: var(--sq-text) !important; }}
 .q-uploader__subtitle {{ color: var(--sq-muted) !important; }}
 @media (prefers-reduced-motion: reduce) {{
-  html.sq-theme-anim, html.sq-theme-anim * {{ transition: none !important; }}
+  html.sq-theme-anim, html.sq-theme-anim *, html.sq-theme-anim *::before, html.sq-theme-anim *::after {{
+    transition: none !important;
+  }}
+  .sq-page-view {{ animation: none !important; }}
+  .sq-new .q-drawer, .sq-new .q-page-container, .sq-new .sq-side-item {{ transition: none !important; }}
 }}
 /* Quasar 深色模式把文字写死成纯白（body.body--dark、.q-dark、输入框、列表等，选择器比上面的 body 更具体），
    纯白在深色纸面上刺眼：一律改回米色墨（--sq-text） */
@@ -237,10 +251,11 @@ code, pre {{ font-family: var(--sq-mono); }}
    都会让吸顶失效。容器改 clip（同样裁掉切换动画，但不算滚动容器）；.q-panel 高度随内容，本来就不出滚动条，改 visible */
 .q-panel-parent:has(.sq-setup-actions) {{ overflow: clip; }}
 .q-panel-parent:has(.sq-setup-actions) > .q-panel {{ overflow: visible; }}
-/* 择时工作台：设置展开时按钮竖排成一列，给表单多留宽度；收起时横排，与摘要条同高（竖排会比摘要条高出一截）；
+/* 择时与选股设置区：设置展开时按钮竖排成紧凑一列，给左侧表单留足宽度；收起时紧凑横排，与摘要条同高；
    内容区变窄、按钮移到上方时也横排（_NARROW_1150） */
-.sq-setup-btns {{ display: flex; flex-direction: column; align-items: stretch; gap: 8px; }}
-.sq-setup-row:has(> .sq-setup.q-expansion-item--collapsed) .sq-setup-btns {{ flex-direction: row; }}
+.sq-setup-btns {{ display: flex; flex-direction: column; align-items: stretch; gap: 6px; min-width: 112px; }}
+.sq-setup-row:has(> .sq-setup.q-expansion-item--collapsed) .sq-setup-btns {{ flex-direction: row; min-width: 0; }}
+.sq-setup-btns > .q-btn {{ padding: 5px 12px; min-height: 34px; }}
 .sq-setup-btns > .q-btn .q-btn__content {{ justify-content: flex-start; }}
 /* 择时工作台的「回测报告 / 验证」标签与验证标签：左列检验方法（选中的浅红底 + 左侧红条，同 .sq-next-rec），右边是选中的一项 */
 .sq-bench-tabs {{ border-bottom: 1px solid var(--sq-border); }}
@@ -262,7 +277,9 @@ code, pre {{ font-family: var(--sq-mono); }}
    用户在窄窗口点「展开侧栏」后 body 加 sq-side-open，恢复原宽度，内容区跟着让开 */
 /* 像报纸的目录：与正文同一张纸（不用深一档的底色），标志下一条墨线；
    宽窗口不显示图标、栏目名用宋体；当前栏目墨色加粗 + 左侧朱红细条，不填色块；待执行笔数是朱红 Georgia 数字 */
-.sq-new .q-drawer {{ background: var(--sq-page); border-color: var(--sq-border) !important; }}
+.sq-new .q-drawer {{ background: var(--sq-page); border-color: var(--sq-border) !important;
+  transition: width 220ms cubic-bezier(0.22, 1, 0.36, 1); }}
+.sq-new .q-page-container {{ transition: padding-left 220ms cubic-bezier(0.22, 1, 0.36, 1); }}
 .sq-new .sq-side {{ background: var(--sq-page); padding: 26px 18px 12px; overflow-x: hidden; align-items: stretch; }}
 .sq-new .sq-side .sq-logo {{ padding: 0 0 12px; font-size: 22px; border-bottom: 1px solid var(--sq-text); }}
 .sq-new .sq-side-date {{ padding: 7px 0 8px; margin-bottom: 10px; border-bottom: 1px solid var(--sq-border);
@@ -271,7 +288,7 @@ code, pre {{ font-family: var(--sq-mono); }}
 .sq-new .sq-side-nav {{ flex: 1 0 auto; display: flex; flex-direction: column; }}
 .sq-new .sq-side-item {{ display: flex; align-items: center; gap: 12px; min-height: 40px; padding: 0 0 0 14px; white-space: nowrap;
   font-family: var(--sq-serif); font-size: 15.5px; font-weight: 500; color: var(--sq-text2); text-decoration: none;
-  border-left: 2px solid transparent; }}
+  border-left: 2px solid transparent; transition: color 180ms ease, border-left-color 220ms ease; }}
 .sq-new .sq-side-item > .q-icon {{ display: none; }}
 .sq-new .sq-side-item:hover {{ color: var(--sq-text); }}
 .sq-new .sq-side-item:hover .sq-side-label {{ text-decoration: underline; text-decoration-color: var(--sq-red);
@@ -404,13 +421,19 @@ body.body--dark .q-btn.bg-primary, body.body--dark .q-btn.bg-primary .q-btn__con
 .sq-note-error .q-icon {{ color: var(--sq-red) !important; }}
 .q-notification {{ border-radius: 2px; }}
 
-/* plotly：深色模式下把墨色 / 朱红 / 绿色线条和点换成深色版（Python 端在「跟随系统」时不知道明暗，统一靠这几条规则） */
+/* plotly：深色/浅色模式下跟随主题即时切换线条、文字与网格（原地切深浅主题时无需重画图表，随 1200ms 过渡同步渐变） */
 .body--dark .js-plotly-plot [style*="stroke: rgb(29, 27, 24)"] {{ stroke: {INK_DARK} !important; }}
 .body--dark .js-plotly-plot [style*="fill: rgb(29, 27, 24)"] {{ fill: {INK_DARK} !important; }}
 .body--dark .js-plotly-plot [style*="stroke: rgb(180, 35, 24)"] {{ stroke: {RED_DARK} !important; }}
 .body--dark .js-plotly-plot [style*="fill: rgb(180, 35, 24)"] {{ fill: {RED_DARK} !important; }}
 .body--dark .js-plotly-plot [style*="stroke: rgb(30, 122, 76)"] {{ stroke: {GREEN_DARK} !important; }}
 .body--dark .js-plotly-plot [style*="fill: rgb(30, 122, 76)"] {{ fill: {GREEN_DARK} !important; }}
+.body--dark .js-plotly-plot .xtick text, .body--dark .js-plotly-plot .ytick text,
+.body--dark .js-plotly-plot .gtitle, .body--dark .js-plotly-plot .legendtext {{ fill: var(--sq-text2) !important; }}
+.body--light .js-plotly-plot .xtick text, .body--light .js-plotly-plot .ytick text,
+.body--light .js-plotly-plot .gtitle, .body--light .js-plotly-plot .legendtext {{ fill: var(--sq-text2) !important; }}
+.body--dark .js-plotly-plot .gridlayer path {{ stroke: rgba(216, 208, 194, .10) !important; }}
+.body--light .js-plotly-plot .gridlayer path {{ stroke: rgba(29, 27, 24, .08) !important; }}
 .js-plotly-plot .modebar-btn path {{ fill: var(--sq-faint) !important; }}
 
 /* ---------------- 窗口变窄 ---------------- */

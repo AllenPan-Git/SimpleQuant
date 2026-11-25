@@ -441,7 +441,8 @@ def _open_single(BT: dict, name: str | None):
     S.pop("bt_range", None)
     spec = {"name": BT.get("name") or "", **BT["spec"]}
     BT.clear()
-    ui.navigate.to(routes.timing("backtest", spec=spec))
+    from gui.layout import navigate
+    navigate(routes.timing("backtest", spec=spec), refresh_same=True)
 
 
 def _remember(BT: dict, by_id: dict, pick, strat: dict):

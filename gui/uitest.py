@@ -76,6 +76,18 @@ class Driver:
         raise StepFailed(f"no window connected to {path or 'any page'}")
 
     async def goto(self, path: str, timeout: float = 60) -> Client:
+        if getattr(self.client, "_sq_spa", False):
+            with self.client:
+                ui.navigate.to(path)
+            target = (path or "/").split("?", 1)[0].split("#", 1)[0].rstrip("/") or "/"
+            deadline = time.time() + timeout
+            while time.time() < deadline:
+                cur = (self.client.sub_pages_router.current_path or "/").split("?", 1)[0].split("#", 1)[0].rstrip("/") or "/"
+                if cur == target:
+                    await asyncio.sleep(0.8)          # 等子页面画完
+                    return self.client
+                await asyncio.sleep(0.2)
+            raise StepFailed(f"SPA did not navigate to {path}")
         old = {c.id for c in Client.instances.values()}
         with self.client:
             ui.navigate.to(path)

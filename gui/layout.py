@@ -39,6 +39,39 @@ NAV = [
 ]
 
 
+def _clean_path(path: str) -> str:
+    """去掉 query 和 fragment，归一化为标准路由路径"""
+    p = (path or "/").split("?", 1)[0].split("#", 1)[0].rstrip("/")
+    return p or "/"
+
+
+def navigate(path: str, refresh_same: bool = False):
+    """跳转路由；单页模式下若目标与当前路径相同且 refresh_same=True，原地重画子页面"""
+    client = ui.context.client
+    sp = getattr(client, "_sq_sub_pages", None)
+    if refresh_same and sp is not None:
+        cur = _clean_path(client.sub_pages_router.current_path)
+        if cur == _clean_path(path):
+            sp.refresh()
+            return
+    ui.navigate.to(path)
+
+
+def spa_shell(routes_map: dict):
+    """单页外框：左侧栏、主题、模拟盘全局监听只建一次，右侧主内容区由 ui.sub_pages 无白闪局部替换"""
+    client = ui.context.client
+    client._sq_spa = True  # noqa: SLF001
+    initial = _clean_path(client.sub_pages_router.current_path)
+    dm = theme.apply(dark())
+    paper_job.watch(paper_job.notify_done)      # 模拟盘更新在哪个页面结束，就在哪个页面弹结果
+    # 侧栏界面的样式写在 body.sq-new 下（两套界面并存时留下的类名）；sq-side-open：窄窗口下侧栏保持展开
+    ui.query("body").classes("sq-new" + (" sq-side-open" if side_open() else ""))
+    sync_nav = _sidebar(initial, dm)
+    sp = ui.sub_pages(routes_map, show_404=False).classes("w-full sq-sub-pages")
+    client._sq_sub_pages = sp  # noqa: SLF001
+    client.sub_pages_router.on_path_changed(lambda p: sync_nav(_clean_path(p)))
+
+
 @contextmanager
 def frame(route: str):
     """用法：with frame("/data"): ...页面内容..."""
@@ -46,13 +79,13 @@ def frame(route: str):
     telemetry.count(f"page:{route}")
     if route == "/factors":
         telemetry.milestone("factor_lab")
-    dm = theme.apply(dark())
-    paper_job.watch(paper_job.notify_done)      # 模拟盘更新在哪个页面结束，就在哪个页面弹结果
-    # 侧栏界面的样式写在 body.sq-new 下（两套界面并存时留下的类名）；sq-side-open：窄窗口下侧栏保持展开
-    ui.query("body").classes("sq-new" + (" sq-side-open" if side_open() else ""))
-    _sidebar(route, dm)
+    if not getattr(ui.context.client, "_sq_spa", False):
+        dm = theme.apply(dark())
+        paper_job.watch(paper_job.notify_done)
+        ui.query("body").classes("sq-new" + (" sq-side-open" if side_open() else ""))
+        _sidebar(route, dm)
 
-    with ui.column().classes("sq-main w-full max-w-[1200px] mx-auto px-8 pt-8 pb-24 gap-5"):
+    with ui.column().classes("sq-main sq-page-view w-full max-w-[1200px] mx-auto px-8 pt-8 pb-24 gap-5"):
         update.banner(route)     # 新版本提示、上次更新的结果
         yield
 
@@ -82,7 +115,7 @@ def _theme_button(dm):
         ui.run_javascript(
             "document.documentElement.classList.add('sq-theme-anim');"
             "clearTimeout(window._sqThemeT);"
-            "window._sqThemeT=setTimeout(()=>document.documentElement.classList.remove('sq-theme-anim'),520);"
+            "window._sqThemeT=setTimeout(()=>document.documentElement.classList.remove('sq-theme-anim'),1350);"
         )
         dm.set_value(val)
         btn.props(f"icon={icon}")
@@ -126,9 +159,11 @@ def _paper_pending() -> int:
 
 def _sidebar(route: str, dm):
     """左侧栏。窗口窄于 theme.SIDE_MINI_BELOW 时折成图标列、悬停显示名称（纯 CSS，见 theme.py 的说明）；
-    窄窗口下点底部的箭头可以展开回原宽度，记在 app.storage.general["side_open"]"""
+    窄窗口下点底部的箭头可以展开回原宽度，记在 app.storage.general["side_open"]。
+    返回 sync_nav(new_route) 供单页路由切换时原地更新当前栏目高亮。"""
     pending = _paper_pending()
     cur = nav_section(route)
+    links: dict[str, tuple[ui.link, str]] = {}
     with ui.left_drawer(value=True, fixed=True, bordered=True).props(f"width={theme.SIDE_W} behavior=desktop") \
             .classes("sq-side column no-wrap").mark("sq_sidebar"):
         with ui.element("div").classes("sq-logo").on("click", lambda: ui.navigate.to("/")).mark("logo"):
@@ -136,6 +171,17 @@ def _sidebar(route: str, dm):
         ui.label(_masthead_date()).classes("sq-side-date").mark("side_date")
         nav = ui.element("nav").classes("sq-side-nav")
         nav.props["aria-label"] = t("side.nav")
+        # 点击侧栏栏目时前端立即切换选中高亮，不必等后端建完新页面往返（真实路由结果仍由 sync_nav 兜底同步）
+        nav.on("click", js_handler="""(e) => {
+            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+            const item = e.target.closest('a.sq-side-item');
+            if (!item) return;
+            e.currentTarget.querySelectorAll('a.sq-side-item.on').forEach(el => {
+                if (el !== item) { el.classList.remove('on'); el.removeAttribute('aria-current'); }
+            });
+            item.classList.add('on');
+            item.setAttribute('aria-current', 'page');
+        }""")
         with nav:
             for i, (r, key, icon, group, _) in enumerate(NAV):
                 if i and group != NAV[i - 1][3]:
@@ -145,11 +191,24 @@ def _sidebar(route: str, dm):
                     else:   # 分组名；图标列下 CSS 把它变回一条细线
                         with ui.element("div").classes("sq-side-sep"):
                             ui.label(t(f"side.group_{group}")).classes("sq-side-group")
-                _side_item(r, t(key), icon, on=key == cur, n=pending if r == "/paper" else 0)
+                links[key] = _side_item(r, t(key), icon, on=key == cur, n=pending if r == "/paper" else 0)
         with ui.element("div").classes("sq-side-foot"):
             _lang_switch()
             _theme_button(dm)
             _side_toggle()
+
+    def sync_nav(new_route: str):
+        sec = nav_section(new_route)
+        for key, link in links.items():
+            if key == sec:
+                link.classes(add="on")
+                link.props["aria-current"] = "page"
+            else:
+                link.classes(remove="on")
+                link.props.pop("aria-current", None)
+            link.update()
+
+    return sync_nav
 
 
 def _masthead_date(today=None) -> str:
@@ -176,6 +235,7 @@ def _side_item(route: str, name: str, icon: str, on: bool, n: int = 0):
             paper_job.side_indicator(hide=badge)
         # 只在图标列下显示（宽窗口、窄窗口展开时由 CSS 隐藏）
         ui.tooltip(label).classes("sq-tip sq-side-tip").props('anchor="center right" self="center left" :offset="[8, 0]"')
+    return link
 
 
 def _side_toggle():

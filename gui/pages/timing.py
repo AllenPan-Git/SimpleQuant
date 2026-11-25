@@ -15,7 +15,7 @@ from gui import state, run_log, cloud_ui
 from gui.common import t, lang
 from gui.components import strategy_progress, credibility_box
 from gui.missing_data import market_bar
-from gui.layout import frame, page_title
+from gui.layout import frame, page_title, navigate
 from gui.plan_io import import_button
 from gui.pages.strategy import Ctx, strategy_editor, editor_spec, code_ok, saved_strategies, load_spec
 from gui.pages.backtest import setup_bar, report
@@ -42,7 +42,7 @@ def _data_or_download() -> dict | None:
     metas = library.list_datasets()
     if metas:
         return {m.id: m for m in metas}
-    market_bar(on_done=lambda: ui.navigate.to("/timing"))
+    market_bar(on_done=lambda: navigate("/timing", refresh_same=True))
     return None
 
 

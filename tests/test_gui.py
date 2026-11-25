@@ -1045,6 +1045,8 @@ async def test_site_hints(user: User, lib_dir, paper_dir):
     user.find(marker="data_src_hint_toggle").click()
     await settle()
     assert text.text == SOURCES["akshare"].description["zh"]
+    user.find(marker="data_tabs").elements.pop().set_value("rates")
+    await settle()
     assert user.find(marker="rates_hint_text").elements.pop().text == t("rates.note_short")
 
 
@@ -1191,7 +1193,7 @@ async def test_selection_risk_screen_needs_data(user: User):
     assert await _wait(lambda: user.find(marker="sp_with_risk").elements, n=600)
     user.find(marker="sp_with_risk").elements.pop().set_value(True)
     await settle()
-    await user.should_see("排雷数据还需约")
+    await user.should_see("排雷数据还需约", retries=40)
 
 
 @needs_stocks
@@ -2824,15 +2826,19 @@ async def test_new_ui_data_center(user: User, monkeypatch):
     await user.should_see(t("data.lib_count", n=len(data_globals["library"].list_datasets())))
     for tab in ("stocks", "cb", "rates"):
         await user.should_see(t(f"data.tab_{tab}"))
-    await user.should_see(marker="rates_update")             # 利率标签
+    panels().set_value("rates")
+    await settle()
+    await user.should_see(marker="rates_update")             # 利率标签（按需渲染）
+    panels().set_value("stocks")
+    await settle()
     await user.should_see(marker="sp_download")               # 选股数据标签
-    await user.should_see(marker="cb_download")               # 可转债标签
     assert user.find(marker="data_uni").elements.pop().value == "hs300"
     user.find(marker="data_uni").elements.pop().set_value("zz500")
     await settle()
     assert state.STATE["data_uni"] == "zz500" and sp_state()["universe"] == "hs300"
     panels().set_value("cb")
     await settle()
+    await user.should_see(marker="cb_download")               # 可转债标签
     assert state.STATE["data_tab"] == "cb"
     await user.open("/data")
     assert panels().value == "cb"                            # 记住标签
@@ -3571,3 +3577,51 @@ async def test_cloud_dialog_go_settings(user: User, lib_dir):
     await user.should_see(marker="cloud_dialog")
     user.find(marker="cloud_go_settings").click()
     await user.should_see(marker="llm_preset")
+
+
+async def test_spa_navigation_keeps_client_and_syncs_sidebar(user: User):
+    """单页路由（待办 67）：切页不重建客户端与侧栏，原地更新当前栏目高亮"""
+    await user.open("/")
+    cid = user.client.id
+    home_link = user.find(marker="nav:/").elements.pop()
+    assert "on" in home_link._classes
+    user.find(marker="nav:/data").click()
+    await user.should_see("在线下载")
+    assert user.client.id == cid
+    assert "on" not in user.find(marker="nav:/").elements.pop()._classes
+    assert "on" in user.find(marker="nav:/data").elements.pop()._classes
+
+
+def test_theme_and_page_transition_css():
+    """深浅主题 1200ms 护眼慢渐变 + 单页切页合成层入场动画（待办 67）"""
+    from gui import theme
+    assert "1200ms cubic-bezier" in theme.CSS
+    assert "@keyframes sq-page-in" in theme.CSS
+    assert ".sq-page-view" in theme.CSS
+    assert ".sq-setup-btns" in theme.CSS
+
+
+async def test_data_and_allocation_lazy_render_on_switch(user: User, lib_dir, monkeypatch):
+    """数据页与资产配置页切页优化：未激活标签与折叠区不提前加载重控件/Parquet，展开或切换时再按需构建"""
+    from simplequant import allocation as A
+    library.save(make_prices(n=40), library.DatasetMeta(id="x_510300", name="510300 沪深300ETF", symbol="510300",
+                                                        source="akshare", freq="1d", adjust="hfq"))
+    loads = []
+    real_load = library.load
+    monkeypatch.setattr(library, "load", lambda did, *a, **kw: (loads.append(did), real_load(did, *a, **kw))[1])
+
+    await user.open("/data")
+    assert loads == []                                        # 预览折叠区收起时不读 Parquet、不绘 K 线图
+    await user.should_not_see(marker="rates_update")          # 未打开的标签页尚未构建
+    user.find(marker="data_lib_preview").elements.pop().set_value(True)
+    assert await _wait(lambda: loads == ["x_510300"])         # 展开预览折叠区后才后台读取行情绘图
+
+    # 资产配置页：已有测评结果时问卷折叠区与添加候选折叠区默认不挂载内部表单控件，展开时按需挂载
+    A.save_profile(A.preset_profile(3))
+    await user.open("/allocation")
+    await user.should_see(marker="al_profile")
+    await user.should_not_see(marker="al_submit")
+    await user.should_not_see(marker="al_add_kind")
+    user.find(marker="al_quiz").elements.pop().set_value(True)
+    await settle()
+    await user.should_see(marker="al_submit")

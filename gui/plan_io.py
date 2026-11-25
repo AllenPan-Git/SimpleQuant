@@ -186,7 +186,8 @@ def apply(plan: dict, metas: list):
     S["bt_autorun"] = True
     S.pop("bt", None)
     from gui import routes
-    ui.navigate.to(routes.timing("backtest", spec={"name": name, **spec}))
+    from gui.layout import navigate
+    navigate(routes.timing("backtest", spec={"name": name, **spec}), refresh_same=True)
 
 
 # ---------------- 多因子选股方案 ----------------
@@ -336,4 +337,5 @@ def apply_selection(plan: dict):
     SP["plan_check"] = None
     SP["autorun"] = {"name": plan["name"], "result": plan.get("result")}
     state.STATE["sp_tab"] = "bt"
-    ui.navigate.to("/selection")
+    from gui.layout import navigate
+    navigate("/selection", refresh_same=True)

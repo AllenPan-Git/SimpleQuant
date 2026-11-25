@@ -426,7 +426,7 @@ def _backtest_form(SP, ctx, rebuild):
         with setup.add_slot("header"):
             chips = ui.row().classes("sq-chip-row sq-chip-row-wrap w-full items-stretch gap-0")
         with ui.column().classes("sq-setup-actions gap-2 pt-2"):
-            with ui.row().classes("items-center gap-2 no-wrap"):
+            with ui.element("div").classes("sq-setup-btns"):
                 run_btn = ui.button(t("bt.run"), icon="play_arrow", on_click=lambda: do_run()) \
                     .props("unelevated no-caps").mark("sp_run")
                 with ui.button(t("exp.menu"), icon="ios_share").props("outline no-caps") as exp_btn:

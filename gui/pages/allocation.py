@@ -9,7 +9,7 @@ from simplequant import allocation as A, llm, strategies, telemetry
 from simplequant.data import library
 from simplequant.strategies import TEMPLATES
 from gui import state, cloud_ui
-from gui.common import t, p, lang
+from gui.common import t, p, lang, dark
 from gui.components import credibility_box
 from gui.layout import frame, page_title
 from gui.widgets import section, plot, notice, hint
@@ -42,13 +42,22 @@ def page():
             ui.label(t("al.running")).classes("sq-muted text-sm")
         running.set_visibility(False)
 
+        # 已有结果时首帧先画标题、测评与配置候选以保证切页动画顺滑，下一帧再挂载双 Plotly 图表与权重表
+        res_ready = {"show": not bool(AL.get("result"))}
+
         @ui.refreshable
         def results():
-            if AL.get("result"):
+            if AL.get("result") and res_ready["show"]:
                 _results(AL, lambda w: rerun(w))
         results()
+        if not res_ready["show"]:
+            def _mount_initial_results():
+                res_ready["show"] = True
+                results.refresh()
+            ui.timer(0.02, _mount_initial_results, once=True)
 
         def redraw():
+            res_ready["show"] = True
             quiz.refresh()
             sleeves.refresh()
             results.refresh()
@@ -75,6 +84,7 @@ def page():
                 ui.notify(t("bt.failed", e=e), type="negative", multi_line=True)
             finally:
                 running.set_visibility(False)
+            res_ready["show"] = True
             results.refresh()
 
         async def rerun(weights: dict | None):
@@ -89,6 +99,7 @@ def page():
                     return
                 res = await run.io_bound(A.backtest, r["R"], weights, r["rebalance"])
                 r.update(weights=weights, res=res, shifted=0.0, manual=True)
+            res_ready["show"] = True
             results.refresh()
 
 
@@ -98,7 +109,8 @@ def _quiz(AL, redraw):
     answers = AL["answers"]
     if prof and not answers:
         answers.update(prof.answers)
-    with ui.expansion(t("al.quiz"), icon="assignment", value=prof is None or AL.get("quiz_open", False)) \
+    is_open = prof is None or AL.get("quiz_open", False)
+    with ui.expansion(t("al.quiz"), icon="assignment", value=is_open) \
             .classes("w-full q-card").mark("al_quiz") as exp:
         if prof:
             with exp.add_slot("header"):
@@ -106,27 +118,42 @@ def _quiz(AL, redraw):
                     ui.icon("assignment")
                     ui.label(t("al.quiz")).classes("font-medium")
                     ui.label(f"C{prof.level} {p(A.LEVELS[prof.level])}").classes("sq-muted text-sm")
-        exp.on_value_change(lambda e: AL.__setitem__("quiz_open", e.value))
-        with ui.column().classes("w-full gap-4 pt-2"):
-            ui.label(t("al.quiz_help", n=len(A.QUESTIONS))).classes("sq-muted text-sm")
-            for i, q in enumerate(A.QUESTIONS, 1):
-                with ui.column().classes("w-full gap-1"):
-                    ui.label(f"{i}. {p(q['text'])}").classes("font-medium")
-                    ui.radio({j: p(o["text"]) for j, o in enumerate(q["options"])}, value=answers.get(q["key"]),
-                             on_change=lambda e, k=q["key"]: answers.__setitem__(k, e.value)) \
-                        .props("inline dense").mark(f"al_q:{q['key']}")
+        body = ui.column().classes("w-full gap-4 pt-2")
+        drawn = {"ok": False}
 
-            def submit():
-                left = sum(1 for q in A.QUESTIONS if answers.get(q["key"]) is None)
-                if left:
-                    ui.notify(t("al.quiz_incomplete", n=left), type="warning")
-                    return
-                A.save_profile(A.evaluate(answers))
-                AL["quiz_open"] = False
-                AL.pop("result", None)
-                redraw()
-            ui.button(t("al.quiz_submit"), icon="check", on_click=submit).props("unelevated no-caps") \
-                .mark("al_submit")
+        def ensure_quiz_body():
+            if drawn["ok"] or body.is_deleted:
+                return
+            drawn["ok"] = True
+            with body:
+                ui.label(t("al.quiz_help", n=len(A.QUESTIONS))).classes("sq-muted text-sm")
+                for i, q in enumerate(A.QUESTIONS, 1):
+                    with ui.column().classes("w-full gap-1"):
+                        ui.label(f"{i}. {p(q['text'])}").classes("font-medium")
+                        ui.radio({j: p(o["text"]) for j, o in enumerate(q["options"])}, value=answers.get(q["key"]),
+                                 on_change=lambda e, k=q["key"]: answers.__setitem__(k, e.value)) \
+                            .props("inline dense").mark(f"al_q:{q['key']}")
+
+                def submit():
+                    left = sum(1 for q in A.QUESTIONS if answers.get(q["key"]) is None)
+                    if left:
+                        ui.notify(t("al.quiz_incomplete", n=left), type="warning")
+                        return
+                    A.save_profile(A.evaluate(answers))
+                    AL["quiz_open"] = False
+                    AL.pop("result", None)
+                    redraw()
+                ui.button(t("al.quiz_submit"), icon="check", on_click=submit).props("unelevated no-caps") \
+                    .mark("al_submit")
+
+        def on_quiz_toggle(e):
+            AL["quiz_open"] = e.value
+            if e.value:
+                ensure_quiz_body()
+
+        exp.on_value_change(on_quiz_toggle)
+        if is_open:
+            ensure_quiz_body()
     if prof:
         _profile_card(prof)
 
@@ -142,16 +169,17 @@ def _profile_card(prof):
 
 
 # ---------------- 配置候选 ----------------
-def _data_label(s: dict) -> str:
+def _data_label(s: dict, datasets: list | None = None) -> str:
     if s["kind"] in ("cash", "selection"):
         return t("al.data_none") if s["kind"] == "cash" else "—"
-    m = A.find_dataset(s["symbol"])
+    m = A.find_dataset(s["symbol"], datasets)
     return t("al.data_local", start=m.start, end=m.end) if m else t("al.data_missing")
 
 
 def _sleeves(AL, redraw, do_run):
     cfg = A.load_config()
     items = A.all_sleeves(cfg)
+    datasets = library.list_datasets()
     custom_ids = {s["id"] for s in cfg["custom"]}
     with section(t("al.sleeves"), "category"):
         hint(t("al.sleeves_help_short"), t("al.sleeves_help"), classes="sq-muted text-xs")
@@ -172,7 +200,7 @@ def _sleeves(AL, redraw, do_run):
                     ui.label(p(A.CLASSES[s["class"]])).classes("text-sm")
                     ui.label(p(A.KINDS[s["kind"]]) + (f" · {s['strategy']}" if s.get("strategy") else "")) \
                         .classes("text-sm")
-                    ui.label(_data_label(s)).classes("text-sm sq-num")
+                    ui.label(_data_label(s, datasets)).classes("text-sm sq-num")
                     if s["id"] in custom_ids:
                         def delete(sid=s["id"]):
                             c = A.load_config()
@@ -185,7 +213,7 @@ def _sleeves(AL, redraw, do_run):
                     else:
                         ui.label("")
 
-        missing = A.missing_data([s for s in items if s["id"] in cfg["enabled"]])
+        missing = A.missing_data([s for s in items if s["id"] in cfg["enabled"]], datasets)
         if missing:
             log = ui.column().classes("w-full gap-1")
 
@@ -225,10 +253,14 @@ def _sleeves(AL, redraw, do_run):
 
 def _add_form(redraw):
     F = {"kind": "hold", "class": "equity", "symbol": None, "strategy": None, "name": ""}
-    with ui.expansion(t("al.add"), icon="add").classes("w-full").mark("al_add"):
+    with ui.expansion(t("al.add"), icon="add").classes("w-full").mark("al_add") as exp:
         box = ui.column().classes("w-full gap-3")
+        drawn = {"ok": False}
 
         def draw():
+            if box.is_deleted:
+                return
+            drawn["ok"] = True
             box.clear()
             saved = strategies.list_strategies()
             with box:
@@ -283,10 +315,37 @@ def _add_form(redraw):
             c["enabled"].append(sleeve["id"])
             A.save_config(c)
             redraw()
-        draw()
+
+        exp.on_value_change(lambda e: draw() if e.value and not drawn["ok"] else None)
 
 
 # ---------------- 结果 ----------------
+def _result_view_cache(r: dict, names: dict, lg: str) -> dict:
+    """缓存与结果绑定的统计和 Plotly 图表字典，切回资产配置页时避免重复计算与构图"""
+    from gui import theme
+    dm = dark()
+    key = (id(r["res"]), r["manual"], lg, dm)
+    cached = r.get("_view_cache")
+    if cached and cached.get("key") == key:
+        return cached
+    prof, res, R = r["profile"], r["res"], r["R"]
+    bench_cagr = A.risk_stats(res.equity["benchmark"].pct_change().dropna())["cagr"]
+    checks_list = A.checks(prof.level, prof.max_dd, res, r["shifted"], names)
+    stats = {row["id"]: row for row in A.sleeve_table(R).to_dict("records")}
+    eq_fig = theme.style_fig(equity_chart(res.equity, lg, t("al.chart_bench"), t("al.chart_portfolio")), dm)
+    eq_h = eq_fig.layout.height or 450
+    corr = R.loc[:, R.std() > 1e-9].corr()
+    if corr.shape[0] > 1:
+        c_fig = theme.style_fig(corr_heatmap(corr, names, lg), dm)
+        corr_spec = (c_fig.to_dict(), c_fig.layout.height or 450)
+    else:
+        corr_spec = None
+    cached = dict(key=key, bench_cagr=bench_cagr, checks_list=checks_list, stats=stats,
+                  eq_spec=(eq_fig.to_dict(), eq_h), corr_spec=corr_spec)
+    r["_view_cache"] = cached
+    return cached
+
+
 def _results(AL, rerun):
     lg = lang()
     r = AL["result"]
@@ -295,15 +354,17 @@ def _results(AL, rerun):
     classes = {s["id"]: s["class"] for s in r["sleeves"]}
     m = res.metrics
     level = dict(c=f"C{prof.level}", name=p(A.LEVELS[prof.level]))
+    vc = _result_view_cache(r, names, lg)
 
     with ui.element("div").classes("sq-sec"):
         ui.label(t("al.result")).classes("sq-h2")
     ui.label(t("al.result_caption", **level, start=f"{R.index[0]:%Y-%m-%d}", end=f"{R.index[-1]:%Y-%m-%d}",
                reb=t(f"al.reb_{r['rebalance']}"))).classes("sq-muted text-sm")
-    for sid, e in r["errors"].items():
-        name = next((p(s["name"]) for s in A.all_sleeves(A.load_config()) if s["id"] == sid), sid)
-        notice(t("al.sleeve_failed", name=name, e=e), "warning", "warning")
-    bench_cagr = A.risk_stats(res.equity["benchmark"].pct_change().dropna())["cagr"]
+    if r["errors"]:
+        all_names = {s["id"]: p(s["name"]) for s in A.all_sleeves(A.load_config())}
+        for sid, e in r["errors"].items():
+            notice(t("al.sleeve_failed", name=all_names.get(sid, sid), e=e), "warning", "warning")
+    bench_cagr = vc["bench_cagr"]
     args = dict(cagr=pct(m["cagr"]), vol=pct(m["volatility"]), dd=pct(m["max_drawdown"]), limit=pct(-prof.max_dd, 0),
                 bench=pct(bench_cagr))
     ui.html(t("al.lede_manual", **args) if r["manual"] else t("al.lede", **level, **args)).classes("sq-lede my-3")
@@ -327,22 +388,23 @@ def _results(AL, rerun):
     ui.label(t("al.class_mix", mix=sep.join(f"{p(A.CLASSES[c])} {pct(v / tot, 0)}" for c, v in mix.items() if v > 0))) \
         .classes("text-sm pt-2")
 
-    checks_list = A.checks(prof.level, prof.max_dd, res, r["shifted"], names)
+    checks_list = vc["checks_list"]
     with ui.column().classes("w-full pt-4"):
         credibility_box(checks_list)
 
     _ai_alloc_box(r, names, {k: p(v) for k, v in A.CLASSES.items()}, level["name"], checks_list)
 
+    eq_dict, eq_h = vc["eq_spec"]
     with ui.column().classes("w-full gap-1 pt-4"):
-        plot(equity_chart(res.equity, lg, t("al.chart_bench"), t("al.chart_portfolio")))
+        ui.plotly(eq_dict).classes("w-full").style(f"height: {eq_h}px")
         ui.label(t("al.fig_caption")).classes("sq-caption")
 
-    _weights_table(r, names, rerun)
+    _weights_table(r, names, rerun, stats=vc["stats"])
 
-    corr = R.loc[:, R.std() > 1e-9].corr()
-    if corr.shape[0] > 1:
+    if vc["corr_spec"] is not None:
+        corr_dict, corr_h = vc["corr_spec"]
         ui.label(t("al.corr_title")).classes("font-semibold pt-4")
-        plot(corr_heatmap(corr, names, lg))
+        ui.plotly(corr_dict).classes("w-full").style(f"height: {corr_h}px")
 
     _paper_form(AL, r)
 
@@ -398,85 +460,98 @@ def _ai_alloc_box(r: dict, names: dict, class_labels: dict, level_label: str, ch
 
 
 def _paper_form(AL, r):
-    """以当前权重与再平衡方式开设组合模拟账户"""
+    """以当前权重与再平衡方式开设组合模拟账户（折叠区展开时再构建表单控件）"""
     import datetime as dt
-    from simplequant.paper import portfolio as PF, run_all, load_calendar, delete_account
-    from simplequant.paper.calendar import latest_expected_day
-    from simplequant.strategies.code_strategy import explain_error
 
     F = AL.setdefault("pf", {"name": "", "cash": 100_000, "mode": "now",
                              "past": str(dt.date.today() - dt.timedelta(days=180))})
-    with ui.expansion(t("pf.new"), icon="add_circle").classes("w-full q-card mt-4").mark("al_paper"):
-        with ui.column().classes("w-full gap-3"):
-            reb = t(f"al.reb_{r['rebalance']}")
-            hint(t("pf.new_help_short", reb=reb), t("pf.new_help", reb=reb), classes="sq-muted text-sm")
-            with ui.row().classes("w-full items-center gap-6"):
-                with ui.column().classes("gap-0"):
-                    ui.label(t("pp.start_mode")).classes("text-xs sq-muted")
+    with ui.expansion(t("pf.new"), icon="add_circle").classes("w-full q-card mt-4").mark("al_paper") as exp:
+        body = ui.column().classes("w-full gap-3")
+        drawn = {"ok": False}
 
-                    def on_mode(e):
-                        F["mode"] = e.value
-                        past.set_enabled(e.value == "past")
-                    ui.radio({m: t(f"pp.start_{m}") for m in ("now", "past")}, value=F["mode"], on_change=on_mode) \
-                        .props("inline dense").mark("al_pf_mode")
-                past = ui.input(t("pp.start_date"), value=F["past"], on_change=lambda e: F.__setitem__("past", e.value)) \
-                    .props("outlined dense type=date").classes("w-44").tooltip(t("pp.start_date_help")).mark("al_pf_past")
-                past.set_enabled(F["mode"] == "past")
-            with ui.row().classes("w-full items-end gap-3"):
-                ui.number(t("pf.cash"), value=F["cash"], min=1000, step=10000, format="%.0f",
-                          on_change=lambda e: F.__setitem__("cash", e.value or 0)) \
-                    .props("outlined dense").classes("w-44").mark("al_pf_cash")
-                name = ui.input(t("pp.name"), value=F["name"], placeholder=t("pf.name_ph")) \
-                    .props("outlined dense").classes("grow").mark("al_pf_name")
-                btn = ui.button(t("pp.create"), icon="add", on_click=lambda: create()).props("unelevated no-caps") \
-                    .mark("al_pf_create")
-                spin = ui.spinner(size="sm")
-                spin.set_visibility(False)
+        def ensure_paper_body():
+            if drawn["ok"] or body.is_deleted:
+                return
+            drawn["ok"] = True
+            from simplequant.paper import portfolio as PF, run_all, load_calendar, delete_account
+            from simplequant.paper.calendar import latest_expected_day
+            from simplequant.strategies.code_strategy import explain_error
 
-            def can():
-                btn.set_enabled(bool((name.value or "").strip()))
-            name.on_value_change(lambda e: (F.__setitem__("name", e.value or ""), can()))
-            can()
+            with body:
+                reb = t(f"al.reb_{r['rebalance']}")
+                hint(t("pf.new_help_short", reb=reb), t("pf.new_help", reb=reb), classes="sq-muted text-sm")
+                with ui.row().classes("w-full items-center gap-6"):
+                    with ui.column().classes("gap-0"):
+                        ui.label(t("pp.start_mode")).classes("text-xs sq-muted")
 
-    async def create():
-        if (F["cash"] or 0) < 1000:
-            ui.notify(t("pf.cash_min"), type="warning")
-            return
-        btn.disable()
-        spin.set_visibility(True)
-        acc = None
-        try:
-            cal = await run.io_bound(load_calendar)
-            start = F["past"] if F["mode"] == "past" else latest_expected_day(cal).date().isoformat()
-            acc = PF.create_account(F["name"].strip(), r["sleeves"], r["weights"], r["rebalance"], F["cash"], start)
-            # 只更新行情；选股成分直接用本机已有的股票池数据
-            await run.io_bound(PF.refresh_data, acc, None, None, cal, False)
-            if F["mode"] == "now":
-                last = await run.io_bound(PF.data_last, acc)
-                if last is not None and last.date().isoformat() < acc.start:
-                    acc.start = last.date().isoformat()
-                    acc.save()
-            results = await run.io_bound(run_all, [acc], refresh=False, log=lambda m: None)
-        except Exception as e:  # noqa: BLE001
-            if acc is not None:
-                delete_account(acc)
-            msg = explain_error(e, lang())
-            ui.notify(msg if msg != str(e) else f"{type(e).__name__}: {e}", type="negative", multi_line=True)
-            btn.enable()
-            spin.set_visibility(False)
-            return
-        if results.get(acc.id):
-            ui.notify(t("bt.failed", e=results[acc.id]), type="negative", multi_line=True)
-        else:
-            ui.notify(t("pf.created", name=acc.name), type="positive")
-        F["name"] = ""
-        state.STATE["pp_open"] = acc.id          # 模拟盘页打开这个账户
-        ui.navigate.to("/paper")
+                        def on_mode(e):
+                            F["mode"] = e.value
+                            past.set_enabled(e.value == "past")
+                        ui.radio({m: t(f"pp.start_{m}") for m in ("now", "past")}, value=F["mode"], on_change=on_mode) \
+                            .props("inline dense").mark("al_pf_mode")
+                    past = ui.input(t("pp.start_date"), value=F["past"],
+                                    on_change=lambda e: F.__setitem__("past", e.value)) \
+                        .props("outlined dense type=date").classes("w-44") \
+                        .tooltip(t("pp.start_date_help")).mark("al_pf_past")
+                    past.set_enabled(F["mode"] == "past")
+                with ui.row().classes("w-full items-end gap-3"):
+                    ui.number(t("pf.cash"), value=F["cash"], min=1000, step=10000, format="%.0f",
+                              on_change=lambda e: F.__setitem__("cash", e.value or 0)) \
+                        .props("outlined dense").classes("w-44").mark("al_pf_cash")
+                    name = ui.input(t("pp.name"), value=F["name"], placeholder=t("pf.name_ph")) \
+                        .props("outlined dense").classes("grow").mark("al_pf_name")
+                    btn = ui.button(t("pp.create"), icon="add", on_click=lambda: create()).props("unelevated no-caps") \
+                        .mark("al_pf_create")
+                    spin = ui.spinner(size="sm")
+                    spin.set_visibility(False)
+
+                def can():
+                    btn.set_enabled(bool((name.value or "").strip()))
+                name.on_value_change(lambda e: (F.__setitem__("name", e.value or ""), can()))
+                can()
+
+            async def create():
+                if (F["cash"] or 0) < 1000:
+                    ui.notify(t("pf.cash_min"), type="warning")
+                    return
+                btn.disable()
+                spin.set_visibility(True)
+                acc = None
+                try:
+                    cal = await run.io_bound(load_calendar)
+                    start = F["past"] if F["mode"] == "past" else latest_expected_day(cal).date().isoformat()
+                    acc = PF.create_account(F["name"].strip(), r["sleeves"], r["weights"], r["rebalance"], F["cash"],
+                                            start)
+                    # 只更新行情；选股成分直接用本机已有的股票池数据
+                    await run.io_bound(PF.refresh_data, acc, None, None, cal, False)
+                    if F["mode"] == "now":
+                        last = await run.io_bound(PF.data_last, acc)
+                        if last is not None and last.date().isoformat() < acc.start:
+                            acc.start = last.date().isoformat()
+                            acc.save()
+                    results = await run.io_bound(run_all, [acc], refresh=False, log=lambda m: None)
+                except Exception as e:  # noqa: BLE001
+                    if acc is not None:
+                        delete_account(acc)
+                    msg = explain_error(e, lang())
+                    ui.notify(msg if msg != str(e) else f"{type(e).__name__}: {e}", type="negative", multi_line=True)
+                    btn.enable()
+                    spin.set_visibility(False)
+                    return
+                if results.get(acc.id):
+                    ui.notify(t("bt.failed", e=results[acc.id]), type="negative", multi_line=True)
+                else:
+                    ui.notify(t("pf.created", name=acc.name), type="positive")
+                F["name"] = ""
+                state.STATE["pp_open"] = acc.id          # 模拟盘页打开这个账户
+                ui.navigate.to("/paper")
+
+        exp.on_value_change(lambda e: ensure_paper_body() if e.value else None)
 
 
-def _weights_table(r, names, rerun):
+def _weights_table(r, names, rerun, stats: dict | None = None):
     res, R = r["res"], r["R"]
-    stats = {row["id"]: row for row in A.sleeve_table(R).to_dict("records")}
+    stats = stats if stats is not None else {row["id"]: row for row in A.sleeve_table(R).to_dict("records")}
     contrib = {row["id"]: row for row in res.contrib.to_dict("records")}
     total = sum(r["weights"].values()) or 1
     edit = {sid: round(w / total * 100, 1) for sid, w in r["weights"].items()}

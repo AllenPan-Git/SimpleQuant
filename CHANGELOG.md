@@ -5,15 +5,17 @@
 
 Changes in each release. `tools/release.py` copies the matching section into the GitHub release notes.
 
-## 未发布
+## 3.7.1（2026-11-25）
 
 ### 更新内容
+- 修复：在「数据」或「资产配置」页下载期间切换页面时，后台下载可继续，且不会尝试更新已关闭页面的进度界面
 - 改进：重构为单页应用路由架构（`ui.sub_pages`），左侧导航栏、主题状态与连接常驻不重建，侧栏点击即时高亮，页面切换零白闪并加入合成层平滑入场动效
 - 改进：大幅优化「数据」页与「资产配置」页切页流畅度——数据中心按标签页懒加载、本地库预览折叠区按需读取 Parquet 绘图、统计信息按目录时间戳缓存且排雷请求数改为后台异步估算；资产配置页折叠区按需挂载控件、合并本地库元数据扫描，并缓存组合结果图表分帧挂载
 - 改进：深浅色主题切换过渡时间延长至 1200ms，全界面元素与 Plotly 图表文字、网格线协同柔和渐变，减轻明暗切换时的视觉刺激
 - 改进：多因子选股与择时回测设置区右侧操作按钮组统一为展开时紧凑竖排、收起时横排布局，为左侧设置表单释放更多横向阅读空间
 
 ### Changes
+- Fixed: downloads in Data Center and Asset Allocation can continue after navigating away without updating progress controls that have been removed
 - Improved: migrated page navigation to a single-page application shell (`ui.sub_pages`) keeping the sidebar, theme, and connection persistent with instant sidebar highlight feedback, flash-free transitions, and smooth GPU-composited entrance animations
 - Improved: significantly reduced page-switch latency on Data Center and Asset Allocation — lazy-rendered inactive data tabs and collapsed preview charts, cached dataset statistics by directory mtime with background risk-request estimation, deferred collapsed form controls and deduplicated dataset scans in Asset Allocation, and cached portfolio result charts across route switches
 - Improved: extended light/dark theme transition duration to 1200ms across all UI surfaces, borders, and Plotly chart labels/gridlines for a gentler visual transition

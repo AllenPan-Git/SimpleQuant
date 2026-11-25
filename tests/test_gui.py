@@ -3413,6 +3413,63 @@ async def test_data_download_fails_after_leaving_page(user: User, monkeypatch, t
     assert not errors, errors
 
 
+async def test_data_kline_download_after_leaving_page(user: User, lib_dir, monkeypatch):
+    """数据页下载 K 线途中离开页面：下载返回后 _status / results 不再报 RuntimeError（线上 3.5.1）"""
+    import threading
+    from nicegui import app
+    gate, done, errors = threading.Event(), [], []
+
+    def fake_fetch(src, sym, start, end, **kw):
+        gate.wait(10)
+        done.append(sym)
+        if sym == "159915":
+            raise ConnectionError("网络断开")
+        return library.save(make_prices(n=20), library.DatasetMeta(id=f"x_{sym}", name=kw["name"], symbol=sym,
+                                                                   source=src, freq="1d"))
+    patch_page(monkeypatch, "/data", "fetch_to_library", fake_fetch)
+    monkeypatch.setattr(app, "_exception_handlers", [*app._exception_handlers, errors.append])
+    await user.open("/data")
+    user.find("其他代码（6 位，以逗号分隔）").type("159915")
+    btn = user.find("下载至本地数据库").elements.pop()
+    user.find("下载至本地数据库").click()
+    await settle()
+    await user.open("/")
+    await _leave_for_good(btn)
+    del btn
+    gate.set()
+    assert await _wait(lambda: len(done) == 2)
+    await asyncio.sleep(0.2)
+    assert not errors, errors
+
+
+async def test_allocation_download_after_leaving_page(user: User, lib_dir, monkeypatch):
+    """资产配置页下载缺少行情途中离开页面：下载返回后不再报 RuntimeError（线上 3.6.0）"""
+    import threading
+    from nicegui import app
+    from simplequant import allocation as A
+    A.save_profile(A.preset_profile(3))
+    gate, done, errors = threading.Event(), [], []
+
+    def fake_dl(sym, end, name=""):
+        gate.wait(10)
+        done.append(sym)
+        if len(done) == 2:
+            raise ConnectionError("网络断开")
+    monkeypatch.setattr(A, "download", fake_dl)
+    monkeypatch.setattr(app, "_exception_handlers", [*app._exception_handlers, errors.append])
+    await user.open("/allocation")
+    btn = user.find(marker="al_download").elements.pop()
+    user.find(marker="al_download").click()
+    await settle()
+    await user.open("/")
+    await _leave_for_good(btn)
+    del btn
+    gate.set()
+    assert await _wait(lambda: len(done) >= 2)
+    await asyncio.sleep(0.2)
+    assert not errors, errors
+
+
 async def test_paper_progress_survives_leaving_page(user: User, paper_dir, monkeypatch):
     """模拟盘更新的进度不跟着页面走：换到别的页面时侧栏「模拟盘」旁显示百分比，回到模拟盘页仍有进度条、
     「更新」按钮变灰；更新在哪个页面结束，就在哪个页面弹结果"""

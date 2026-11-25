@@ -249,11 +249,13 @@ def _download_tab(on_change):
             adj = "" if key == "tdx_local" else adjust.value
             try:
                 for sym in symbols:
-                    with results:
-                        row = ui.row().classes("items-center gap-2")
-                        with row:
-                            ui.spinner(size="sm")
-                            ui.label(t("data.fetching", sym=sym))
+                    row = None
+                    if not results.is_deleted:
+                        with results:
+                            row = ui.row().classes("items-center gap-2")
+                            with row:
+                                ui.spinner(size="sm")
+                                ui.label(t("data.fetching", sym=sym))
                     name = f"{sym} {p(POPULAR[sym])}" if sym in POPULAR else sym
                     try:
                         meta = await run.io_bound(fetch_to_library, key, sym, start.value, end.value, freq=freq.value,
@@ -346,6 +348,8 @@ def _rates_card():
 
 
 def _status(row, icon: str, color: str, text: str, detail: str = "", detail_cls: str = "text-sm text-negative"):
+    if row is None or row.is_deleted:          # 下载途中离开了页面：不再画（3.5.1 线上报错 _status）
+        return
     row.clear()
     with row:
         ui.icon(icon).classes(color)

@@ -222,19 +222,26 @@ def _sleeves(AL, redraw, do_run):
                 end = pd.Timestamp.today().date().isoformat()
                 names = {s["symbol"]: p(s["name"]) for s in items if s.get("symbol")}
                 failed = False
-                for sym in missing:
-                    with log:
-                        row = ui.label(t("al.downloading", sym=sym)).classes("sq-muted text-sm")
-                    try:
-                        await run.io_bound(A.download, sym, end, name=f"{sym} {names.get(sym, '')}".strip())
-                        row.delete()
-                    except Exception as e:  # noqa: BLE001
-                        row.text = t("al.download_failed", sym=sym, e=e)
-                        row.classes(replace="text-negative text-sm")
-                        failed = True
-                btn.enable()
-                if not failed:
-                    redraw()
+                try:
+                    for sym in missing:
+                        row = None
+                        if not log.is_deleted:
+                            with log:
+                                row = ui.label(t("al.downloading", sym=sym)).classes("sq-muted text-sm")
+                        try:
+                            await run.io_bound(A.download, sym, end, name=f"{sym} {names.get(sym, '')}".strip())
+                            if row is not None and not row.is_deleted:
+                                row.delete()
+                        except Exception as e:  # noqa: BLE001
+                            if row is not None and not row.is_deleted:
+                                row.text = t("al.download_failed", sym=sym, e=e)
+                                row.classes(replace="text-negative text-sm")
+                            failed = True
+                finally:
+                    if not btn.is_deleted:      # 下载途中离开了页面或重绘：数据已存好，不再画（3.6.0 线上报错 download）
+                        btn.enable()
+                        if not failed:
+                            redraw()
             btn = ui.button(t("al.download", n=len(missing)), icon="download", on_click=download) \
                 .props("outline no-caps").classes("self-start").mark("al_download")
 

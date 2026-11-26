@@ -207,11 +207,13 @@ def _download_tab(on_change):
         with ui.row().classes("w-full items-start gap-4"):
             freq = ui.select({}, label=t("data.freq")).props("outlined dense").classes("w-40")
             adjust = ui.select({a: t(k) for a, k in ADJUST.items()}, label=t("data.adjust"), value="hfq") \
-                .props("outlined dense").classes("w-40").tooltip(t("data.adjust_help"))
+                .props("outlined dense").classes("w-40")
             start = ui.input(t("data.start"), value="2020-01-01").props("outlined dense type=date").classes("w-44")
             end = ui.input(t("data.end"), value=str(today)).props("outlined dense type=date").classes("w-44")
             asset = ui.select({a: p(v) for a, v in ASSET_TYPES.items()}, label=t("data.asset"),
                               value=next(iter(ASSET_TYPES))).props("outlined dense").classes("w-40")
+        adjustment_help = hint(t("data.adjust_short"), t("data.adjust_help"),
+                               classes="w-full text-sm sq-muted", mark="data_adjust_help")
         tdx_dir = ui.input(t("data.tdx_dir"), value=DEFAULT_TDX_DIR).props("outlined dense").classes("w-full")
         force = ui.checkbox(t("data.force"))
 
@@ -230,6 +232,7 @@ def _download_tab(on_change):
             asset.set_visibility(src_key.value == "akshare")
             tdx_dir.set_visibility(src_key.value == "tdx_local")
             adjust.set_enabled(src_key.value != "tdx_local")
+            adjustment_help.set_visibility(src_key.value != "tdx_local")
         src_key.on_value_change(on_source)
         on_source()
 

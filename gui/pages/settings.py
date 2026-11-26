@@ -85,6 +85,16 @@ def page():
                         quota_info.text = txt
                 quota_btn = ui.button(t("set.quota_btn"), icon="account_balance_wallet", on_click=check_quota) \
                     .props("outline dense no-caps").mark("llm_quota")
+                def _go_cloud_pack():
+                    from gui import state
+                    from gui.layout import navigate
+                    if not (F["api_key"] or "").strip():
+                        ui.notify(t("cloud.pack_need_code"), type="warning")
+                    state.STATE["data_tab"] = "stocks"
+                    state.STATE["open_pack"] = True
+                    navigate("/data", refresh_same=True)
+                ui.button(t("set.go_cloud_pack"), icon="cloud_download", on_click=_go_cloud_pack) \
+                    .props("outline dense no-caps").mark("set_go_cloud_pack")
                 ui.link(t("set.cloud_link"), "https://simplequant.org/#cloud", new_tab=True) \
                     .classes("text-xs sq-muted").mark("link:set.cloud_link")
                 quota_info = ui.label().classes("text-xs sq-muted").mark("llm_quota_info")

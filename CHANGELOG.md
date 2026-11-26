@@ -5,6 +5,22 @@
 
 Changes in each release. `tools/release.py` copies the matching section into the GitHub release notes.
 
+## 3.7.2（2026-11-27）
+
+### 更新内容
+- 改进：择时与多因子选股工作台顶部四步进度高亮随当前展开区、回测报告与验证标签实时同步；择时设置变更后自动隐藏不匹配的旧报告与验证结果并提示重新回测
+- 改进：选股历史记录完整保存策略、股票池、区间、预热起点及资金费率，从首页打开时自动恢复设置并定位至回测标签，内存中已有该次报告时直接展示
+- 改进：择时与选股回测报告支持直接进入模拟盘，自动展开新建模拟账户表单并预填策略、资金费率及标的或股票池；「从现在开始」新建择时模拟账户改为先保存再后台拉取首次行情，失败后可在原账户点击「重试初始化」
+- 改进：优化回测报告排版与界面层级——核心指标置顶展示、风险提示移至图表前、次要指标与交易明细默认折叠；统一选股与可转债设置区折叠命名；模拟盘账户列表下方直接展示自动运行状态；验证入口与行情下载区补充用途及复权说明，模拟盘「待执行信号」明确标注计划执行开盘日与数据截至收盘日
+- 改进：云端托管对话框新增选股与可转债离线数据包直达入口；数据页云端数据包输入框自动预填已保存的托管额度码，下载前自动核对云端版本以避免同版本重复下载
+
+### Changes
+- Improved: the 4-step progress indicator on Timing and Multi-Factor Selection workbenches now tracks the active section, report, or verification tab; changing timing settings automatically hides stale reports and verification results and prompts to re-run
+- Improved: selection history records now save full run settings (strategy, universe, date range, warmup start, and capital/fees) and restore them when opened from Home, displaying cached reports directly when still in memory
+- Improved: timing and selection backtest reports can jump directly into Paper Trading with the new-account form expanded and pre-filled; "Start from now" timing paper accounts now save first and fetch initial market data in the background, supporting in-place "Retry initialization" on failure
+- Improved: refined report density and UI clarity — key metrics lead the summary row, risk warnings appear before charts, secondary metrics and trade logs collapse by default, setup collapsible labels are unified, paper trading displays scheduled-run status under the account list, verification/data views include concise guidance, and "Pending signals" clearly labels planned execution open date and data close date
+- Improved: added quick links to stock and convertible-bond cloud data packs inside the Cloud Hosted Services dialog; data pack inputs auto-fill saved hosted voucher codes and check remote versions before downloading to avoid redundant re-downloads
+
 ## 3.7.1（2026-11-25）
 
 ### 更新内容

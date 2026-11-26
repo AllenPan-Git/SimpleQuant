@@ -6,6 +6,7 @@
 import datetime as dt
 import json
 import math
+from uuid import uuid4
 
 from nicegui import app
 
@@ -28,7 +29,8 @@ def add(kind: str, title: str, sub: str, metrics: dict, restore: dict | None = N
     telemetry.milestone("backtest")
     if kind == "sel":
         telemetry.milestone("selection")
-    entry = {"kind": kind, "title": title, "sub": sub, "time": dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
+    entry = {"id": uuid4().hex, "kind": kind, "title": title, "sub": sub,
+             "time": dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
              "ret": _clean(metrics.get("total_return")), "sharpe": _clean(metrics.get("sharpe")),
              "dd": _clean(metrics.get("max_drawdown")), **extra}
     if restore is not None:
@@ -40,9 +42,10 @@ def add(kind: str, title: str, sub: str, metrics: dict, restore: dict | None = N
     same = (kind, title, sub)
     items = [e for e in recent() if (e.get("kind"), e.get("title"), e.get("sub")) != same]
     app.storage.general["recent"] = [entry] + items[:MAX_ITEMS - 1]
+    return entry
 
 
-def mark_verify(kind: str, spec: dict, **done: bool):
+def mark_verify(kind: str, spec: dict, *, entry_id: str | None = None, **done: bool):
     """记下这个策略做过的检验（如 optimize=True），记在最近一条同类、同规则的报告上；
     首页「继续上次的工作」重启后据此显示进度的「验证」一步。没有对应的报告时不记"""
     for k in done:                       # 检验计数在这里记：参数优化、滚动优化、调仓日检验都走这一处
@@ -52,7 +55,7 @@ def mark_verify(kind: str, spec: dict, **done: bool):
     key, items = spec_key(spec), recent()
     for i, e in enumerate(items):
         rs = (e.get("restore") or {}).get("spec")
-        if e.get("kind") == kind and rs and spec_key(rs) == key:
+        if e.get("kind") == kind and rs and spec_key(rs) == key and (entry_id is None or e.get("id") == entry_id):
             items[i] = {**e, "verify": {**(e.get("verify") or {}), **done}}
             app.storage.general["recent"] = items
             return

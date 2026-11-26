@@ -4,6 +4,7 @@ import calendar
 import subprocess
 import sys
 import time
+from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
 
@@ -24,7 +25,7 @@ from simplequant.stocks.selection import (ic_history_short, skip_months, needs_f
 from simplequant.stocks.panel import STOCK_FILTERS, RISK_FILTERS
 from simplequant.bonds.panel import CB_FILTERS, CB_DEFAULT_FILTERS
 from simplequant.system import open_folder
-from gui import state, history, support, run_log, cloud_ui
+from gui import state, history, support, run_log, cloud_ui, routes
 from gui.common import t, p, lang
 from gui.missing_data import stock_bar
 from gui.components import broker_settings, metric_tiles, metric_tile, credibility_box, bench_label
@@ -260,14 +261,14 @@ def filter_editor(SP, panel, changed):
     draw()
 
 
-def advanced_box(SP, open_key: str, mark: str, items: list[str]):
-    """内层「高级设置」折叠区：标题后面用小字列出改过默认值的项；有改过的项时默认展开（导入方案后能看到）。
+def advanced_box(SP, open_key: str, mark: str, title: str, items: list[str]):
+    """内层设置折叠区：标题后面用小字列出改过默认值的项；有改过的项时默认展开（导入方案后能看到）。
     返回 (折叠区, 更新标题小字的函数)"""
     exp = ui.expansion(value=bool(items) or bool(SP.get(open_key))).props("dense") \
         .classes("w-full sq-adv").mark(mark)
     with exp.add_slot("header"), ui.row().classes("items-center gap-2 no-wrap min-w-0 py-1"):
         ui.icon("tune").classes("sq-muted")
-        ui.label(t("sp.advanced")).classes("whitespace-nowrap")
+        ui.label(title).classes("whitespace-nowrap")
         summary = ui.label().classes("sq-muted text-xs ellipsis").mark(f"{mark}_summary")
     exp.on_value_change(lambda e: SP.__setitem__(open_key, bool(e.value)))
 
@@ -439,6 +440,8 @@ def _backtest_form(SP, ctx, rebuild):
                 ui.label(t("sp.running")).classes("sq-muted text-sm")
             running.set_visibility(False)
 
+    ctx.setup = setup
+
     def on_setup(e):
         SP["setup_open"] = bool(e.value)
         draw_chips()
@@ -599,7 +602,7 @@ def _backtest_form(SP, ctx, rebuild):
                 return t("sp.factor_note") + ("" if SP["weighting"] == "manual" else " " + t("sp.ic_fallback_note"))
             factor_note = ui.label(note_text()).classes("sq-muted text-xs")
             factor_adv, factor_adv_update = advanced_box(SP, "factor_adv_open", "sp_factor_advanced",
-                                                         _adv_factor_items(SP))
+                                                         t("sp.factor_processing"), _adv_factor_items(SP))
             with factor_adv, ui.row().classes("items-center gap-6 pb-2"):
                 ni = ui.switch(t("sp.neutral_industry"), value=SP["ni"], on_change=lambda e: set_sp("ni", e.value)) \
                     .tooltip(t("sp.neutral_industry_help")).mark("sp_ni")
@@ -631,8 +634,9 @@ def _backtest_form(SP, ctx, rebuild):
                 ui.label(t("cb.coupon_note")).classes("sq-muted text-sm")
 
             # 次要选项：保留前 M 名、空仓月份、最短上市天数、买入资金比例、分红处理
+            rules_title = t("sp.holdings_settings" if panel.kind == "cb" else "sp.holdings_dividend_settings")
             rules_adv, rules_adv_update = advanced_box(SP, "rules_adv_open", "sp_advanced",
-                                                       _adv_rule_items(SP, panel.kind, lg))
+                                                       rules_title, _adv_rule_items(SP, panel.kind, lg))
             with rules_adv, ui.column().classes("w-full gap-3 pb-2"):
                 with ui.row().classes("w-full items-center gap-4"):
                     def on_keep(e):
@@ -817,7 +821,13 @@ def _backtest_form(SP, ctx, rebuild):
         ctx.changed()
 
     async def do_run():
-        spec, broker = current_spec(SP), make_broker()
+        if running.visible:
+            return
+        spec, broker = deepcopy(current_spec(SP)), make_broker()
+        start, end = ctx.start, ctx.end
+        title = SP["name"].strip() or t("sel.kind")
+        money = next(v for k, _, v in _chip_items(SP, panel.kind, lg) if k == "broker")
+        request = SP["run_request"] = object()
         plan_ctx = SP.pop("autorun", None)         # 刚导入的方案：回测后与其中记录的结果核对
         run_btn.disable()
         running.set_visibility(True)
@@ -825,34 +835,42 @@ def _backtest_form(SP, ctx, rebuild):
         try:
             t0 = time.time()
             run_panel, ps = await spec_panel(SP, ctx, spec)
-            res = await run.io_bound(run_selection, run_panel, spec, broker, start=ctx.start)
+            res = await run.io_bound(run_selection, run_panel, spec, broker, start=start)
+            if SP.get("run_request") is not request:
+                return
             SP["result"] = (res, spec, time.time() - t0)
             SP["explanation"] = None
-            SP["result_range"] = (ctx.start, ctx.end, ps)
+            SP["result_range"] = (start, end, ps)
             SP["result_broker"] = broker
             SP["result_panel"] = run_panel          # 调仓日检验要用同一份面板重跑
             SP["plan_check"] = (plan_mod.compare(plan_ctx.get("result"), res.metrics), plan_ctx) if plan_ctx else None
             uni = p(UNIVERSES[spec["universe"]]["label"])
-            title = SP["name"].strip() or t("sel.kind")
-            # restore 只记 spec（首页的策略进度用它比对已保存的策略、模拟账户）；选股重新打开不恢复设置
-            history.add("sel", title, f"{uni} · {ctx.start} ~ {ctx.end}", res.metrics, restore={"spec": spec},
+            entry = history.add("sel", title, f"{uni} · {start} ~ {end}", res.metrics,
+                        restore={"spec": spec, "range": [start, end], "warmup_start": ps, "broker": asdict(broker)},
                         data=uni, strategy=title,
                         verify={"credibility": True, "phase": False, "walkforward": False})   # 之后做了检验再补记
+            SP["history_id"], SP["result_name"] = entry["id"], title
+            SP.pop("history_notice", None)
             # 报告顶部「与上次相比」（区间、资金不在 spec 里，另记）
-            money = next(v for k, _, v in _chip_items(SP, panel.kind, lg) if k == "broker")
             SP["run_no"] = run_log.record("sel", title, spec, res.metrics,
-                                          {"range": f"{ctx.start} ~ {ctx.end}", "broker": money})
-            support.after_run()
+                                          {"range": f"{start} ~ {end}", "broker": money})
+            if not setup.is_deleted:
+                support.after_run()
             ok = True
         except Exception as ex:  # noqa: BLE001
-            SP["result"] = None
-            ui.notify(t("bt.failed", e=ex), type="negative", multi_line=True)
+            if SP.get("run_request") is request:
+                SP["result"] = None
+                if not setup.is_deleted:
+                    ui.notify(t("bt.failed", e=ex), type="negative", multi_line=True)
         finally:
-            run_btn.enable()
-            running.set_visibility(False)
-        ctx.changed()
+            if not setup.is_deleted:
+                run_btn.enable()
+                running.set_visibility(False)
         if setup.is_deleted:                # 回测期间表单被重画（换了股票池 / 载入了策略）
             return
+        ctx.changed()
+        if ctx.on_history:
+            ctx.on_history()
         setup.value = not ok                # 成功：收起设置看结果；出错：展开，方便改设置
         results.refresh()
         build_export_menu()                 # 导出方案时附带刚得到的结果
@@ -1005,6 +1023,7 @@ def _sel_checks(SP, base: list[dict], ctx=None):
     """可信度检查 + 调仓日检验（选股回测较慢，点按钮才做）。SP["phase"]：{res, prog, stop, found}；
     检验进行时每 0.5 秒重画一次"""
     res, rspec, _ = SP["result"]
+    entry_id = SP.get("history_id")
     ks = phase_keys(rspec)
     box = ui.column().classes("w-full gap-2")
 
@@ -1033,7 +1052,7 @@ def _sel_checks(SP, base: list[dict], ctx=None):
                                       lambda: ph["stop"])
             ph["found"] = check_phase(res.metrics, rows)
             if ph["found"]:
-                history.mark_verify("sel", rspec, phase=True)
+                history.mark_verify("sel", rspec, entry_id=entry_id, phase=True)
         except Exception as e:  # noqa: BLE001
             ph["found"] = [{"level": "note", "key": "cred.phase_failed", "args": {"e": str(e)}}]
         if not ph["found"] and SP.get("phase") is ph:      # 停得太早，相位不够下结论：恢复按钮
@@ -1053,20 +1072,17 @@ def _selection_results(SP, ctx, top=None):
         ui.label(t("bt.results")).classes("sq-h2")
     if top:
         top()
+    if (broker := SP.get("result_broker")) is not None:
+        name = SP["result_name"]
+        ui.button(t("bt.next_paper"), icon="account_balance_wallet",
+                  on_click=lambda: ui.navigate.to(routes.paper_from_backtest(rspec, broker, name))) \
+            .props("outline no-caps").classes("self-start").mark("next_paper")
     with ui.column().classes("gap-1"):
         ui.label(strategies.describe(rspec, lg).replace("\n", " · ") + " · " + t("sp.took", s=f"{secs:.1f}")) \
             .classes("sq-muted text-sm")
     if SP.get("plan_check") and SP["plan_check"][1]:
         plan_check_notice(*SP["plan_check"], res.metrics)
     metric_tiles(res.metrics)
-    with ui.grid().classes("w-full gap-3 grid-cols-2 md:grid-cols-5"):
-        metric_tile(t("m.turnover_annual"), f"{res.metrics['turnover_annual']:.1f}×", help_text=t("sp.turnover_help"))
-        metric_tile(t("sp.n_rebalances"), str(len(res.schedule.picks)))
-        if "dividend_cash" in res.metrics:
-            metric_tile(t("m.dividend_cash"), f"{res.metrics['dividend_cash']:,.0f}", help_text=t("sp.dividend_help"))
-            metric_tile(t("m.dividend_tax"), f"{res.metrics['dividend_tax']:,.0f}", help_text=t("sp.dividend_tax_help"))
-        if "cash_interest" in res.metrics:
-            metric_tile(t("m.cash_interest"), f"{res.metrics['cash_interest']:,.0f}", help_text=t("bt.cash_yield_help"))
     if res.div_missing:
         shown = "、".join(f"{res.names.get(c, c)}({c.split('.')[-1]})" for c in res.div_missing[:10])
         notice(t("sp.div_missing", n=len(res.div_missing), codes=shown + ("…" if len(res.div_missing) > 10 else "")),
@@ -1098,38 +1114,52 @@ def _selection_results(SP, ctx, top=None):
     if dca:
         ui.label(t("bt.fig1_caption_dca")).classes("sq-caption")
 
-    with ui.tabs().classes("w-full").props("align=left no-caps") as tabs:
-        tab_h = ui.tab("h", t("sp.tab_holdings"))
-        tab_o = ui.tab("o", t("bt.tab_orders"))
-        tab_l = ui.tab("l", t("bt.tab_logs"))
-    with ui.tab_panels(tabs, value=tab_h).classes("w-full bg-transparent"):
-        with ui.tab_panel(tab_h).classes("px-0"):
-            def industry_mix(codes):
-                counts = panel.industry.reindex(codes).fillna("—").map(
-                    lambda s: s[3:] if s[:1].isalpha() and s[1:3].isdigit() else s).value_counts()
-                return "、".join(f"{k}×{v}" if v > 1 else k for k, v in counts.items())
-            rows = [{t("col.time"): d.date(),
-                     t("sp.picked"): "、".join(f"{res.names.get(c, c)}({c.split('.')[-1]})" for c in codes)
-                     or t("sp.cash_period"),
-                     t("sp.industry_mix"): industry_mix(codes)}
-                    for d, codes in sorted(res.schedule.picks.items(), reverse=True)]
-            ui.label(t("sp.pick_hint")).classes("sq-muted text-xs")
-            tbl = df_table(pd.DataFrame(rows), rows_per_page=20).props("wrap-cells").classes("cursor-pointer")                 .mark("sp_holdings")
-            tbl.on("rowClick", lambda e: picks_dialog(SP, run_panel, rspec, res,
-                                                      pd.Timestamp(e.args[1][t("col.time")])))
-            if res.schedule.skipped:
-                ui.label(t("sp.skipped", n=len(res.schedule.skipped))).classes("sq-muted text-xs")
-        with ui.tab_panel(tab_o).classes("px-0"):
-            if not res.orders.empty:
-                o = res.orders.copy()
-                o["symbol"] = o["symbol"].map(lambda c: f"{res.names.get(c, c)}({c.split('.')[-1]})")
-                df_table(fmt_table(orders_table(o, lg), {t("col.price"): "{:.2f}", t("col.value"): "{:,.0f}",
-                                                         t("col.commission"): "{:.2f}"}), rows_per_page=30)
-        with ui.tab_panel(tab_l).classes("px-0"):
-            def named(kw):          # 日志里的代码换成「名称(代码)」，与成交记录一致
-                c = kw.get("name")
-                return {**kw, "name": f"{res.names.get(c, c)}({c.split('.')[-1]})"} if isinstance(c, str) else kw
-            df_table(logs_table([(d, k, named(kw)) for d, k, kw in res.logs], lg), rows_per_page=50)
+    with ui.expansion(t("bt.report_metrics"), icon="bar_chart").props("header-class=px-0") \
+            .classes("w-full sq-rule-bottom").mark("report_metrics"):
+        metric_tiles(res.metrics, details=True)
+        with ui.grid().classes("w-full gap-3 grid-cols-2 md:grid-cols-5 pt-4"):
+            metric_tile(t("m.turnover_annual"), f"{res.metrics['turnover_annual']:.1f}×", help_text=t("sp.turnover_help"))
+            metric_tile(t("sp.n_rebalances"), str(len(res.schedule.picks)))
+            if "dividend_cash" in res.metrics:
+                metric_tile(t("m.dividend_cash"), f"{res.metrics['dividend_cash']:,.0f}", help_text=t("sp.dividend_help"))
+                metric_tile(t("m.dividend_tax"), f"{res.metrics['dividend_tax']:,.0f}", help_text=t("sp.dividend_tax_help"))
+            if "cash_interest" in res.metrics:
+                metric_tile(t("m.cash_interest"), f"{res.metrics['cash_interest']:,.0f}", help_text=t("bt.cash_yield_help"))
+
+    with ui.expansion(t("sp.report_details"), icon="receipt_long").props("header-class=px-0") \
+            .classes("w-full sq-rule-bottom").mark("report_details"):
+        with ui.tabs().classes("w-full").props("align=left no-caps") as tabs:
+            tab_h = ui.tab("h", t("sp.tab_holdings"))
+            tab_o = ui.tab("o", t("bt.tab_orders"))
+            tab_l = ui.tab("l", t("bt.tab_logs"))
+        with ui.tab_panels(tabs, value=tab_h).classes("w-full bg-transparent"):
+            with ui.tab_panel(tab_h).classes("px-0"):
+                def industry_mix(codes):
+                    counts = panel.industry.reindex(codes).fillna("—").map(
+                        lambda s: s[3:] if s[:1].isalpha() and s[1:3].isdigit() else s).value_counts()
+                    return "、".join(f"{k}×{v}" if v > 1 else k for k, v in counts.items())
+                rows = [{t("col.time"): d.date(),
+                         t("sp.picked"): "、".join(f"{res.names.get(c, c)}({c.split('.')[-1]})" for c in codes)
+                         or t("sp.cash_period"),
+                         t("sp.industry_mix"): industry_mix(codes)}
+                        for d, codes in sorted(res.schedule.picks.items(), reverse=True)]
+                ui.label(t("sp.pick_hint")).classes("sq-muted text-xs")
+                tbl = df_table(pd.DataFrame(rows), rows_per_page=20).props("wrap-cells").classes("cursor-pointer")                 .mark("sp_holdings")
+                tbl.on("rowClick", lambda e: picks_dialog(SP, run_panel, rspec, res,
+                                                          pd.Timestamp(e.args[1][t("col.time")])))
+                if res.schedule.skipped:
+                    ui.label(t("sp.skipped", n=len(res.schedule.skipped))).classes("sq-muted text-xs")
+            with ui.tab_panel(tab_o).classes("px-0"):
+                if not res.orders.empty:
+                    o = res.orders.copy()
+                    o["symbol"] = o["symbol"].map(lambda c: f"{res.names.get(c, c)}({c.split('.')[-1]})")
+                    df_table(fmt_table(orders_table(o, lg), {t("col.price"): "{:.2f}", t("col.value"): "{:,.0f}",
+                                                             t("col.commission"): "{:.2f}"}), rows_per_page=30)
+            with ui.tab_panel(tab_l).classes("px-0"):
+                def named(kw):          # 日志里的代码换成「名称(代码)」，与成交记录一致
+                    c = kw.get("name")
+                    return {**kw, "name": f"{res.names.get(c, c)}({c.split('.')[-1]})"} if isinstance(c, str) else kw
+                df_table(logs_table([(d, k, named(kw)) for d, k, kw in res.logs], lg), rows_per_page=50)
 
 
 def _ml_form(SP, changed):

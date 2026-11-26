@@ -10,7 +10,7 @@ from simplequant.allocation import KINDS
 from simplequant.data import library
 from simplequant.engine.results import nav_of
 from simplequant.i18n import render
-from simplequant.paper import list_accounts, load_account, delete_account, create_account, run_all, load_calendar
+from simplequant.paper import list_accounts, delete_account, create_account, run_all, load_calendar
 from simplequant.paper import account as account_mod
 from simplequant.paper import runner, schedule
 from simplequant.paper.calendar import latest_expected_day
@@ -40,8 +40,20 @@ def page():
     opened = state.STATE.pop("pp_open", None)       # 资产配置页刚创建的组合账户，或首页账户一览点的那一行
     if opened:
         PP["account"] = opened
+    if handoff := state.STATE.pop("pp_handoff", None):
+        spec = handoff["spec"]
+        kind = "selection" if spec.get("kind") == "selection" else "single"
+        choice_key = "sel" if kind == "selection" else "strategy"
+        PP.update(kind=kind, mode="now", name=handoff["name"], draft=handoff,
+                  assets=list(dict.fromkeys(library.resolve(i) for i in handoff["ids"])),
+                  past=str(dt.date.today() - dt.timedelta(days=180)))
+        PP[choice_key] = "" if kind == "selection" else "backtest"
+        for key in ("pp_single_from", "pp_selection_from", "pp_selection_cb_from"):
+            PP.pop(key, None)
     with frame("/paper"):
         page_title("/paper", t("pp.intro_short"), t("pp.intro"))
+        accounts = list_accounts()
+        calendar = _display_calendar() if accounts else None
 
         def run_accounts(accounts, refresh=True):
             """在后台开始更新（见 gui/paper_job.py）：离开页面也照常做完，回到本页仍能看到进度；
@@ -53,6 +65,9 @@ def page():
             return True
 
         def redraw():
+            nonlocal accounts, calendar
+            accounts = list_accounts()
+            calendar = _display_calendar() if accounts else None
             overview.refresh()
             new_account.refresh()
             body.refresh()
@@ -65,25 +80,30 @@ def page():
         # ---------------- 全部账户 ----------------
         @ui.refreshable
         def overview():
-            _overview(PP, run_accounts, redraw, open_account)
+            _overview(PP, accounts, calendar, run_accounts, open_account)
         overview()
+        with ui.row().classes("items-center gap-2 sq-muted text-sm"):
+            ui.icon("schedule", size="16px")
+            task_status = ui.label(t("pp.task_checking")).mark("pp_task_status")
         paper_job.Panel(on_finish=lambda job: redraw())
 
         # ---------------- 新建账户 ----------------
         @ui.refreshable
         def new_account():
-            accounts = list_accounts()
-            with ui.expansion(t("pp.new"), icon="add_circle", value=not accounts).classes("w-full q-card"):
-                _new_account_form(PP, run_accounts, redraw)
+            exp = ui.expansion(t("pp.new"), icon="add_circle", value=not accounts or bool(PP.get("draft"))) \
+                .classes("w-full q-card").mark("pp_new")
+            _load_expansion(exp, lambda: _new_account_form(PP, run_accounts, redraw))
         new_account()
 
         # ---------------- 选中账户的详情 ----------------
         @ui.refreshable
         def body():
-            _account_view(PP, run_accounts, redraw)
+            acc = next((a for a in accounts if a.id == PP["account"]), None)
+            if acc is not None:
+                _account_view(acc, calendar, run_accounts, redraw)
         body()
 
-        _schedule_box(PP)
+        _schedule_box(PP, task_status)
 
 
 def _new_account_form(PP, run_accounts, redraw):
@@ -104,20 +124,32 @@ def _new_account_form(PP, run_accounts, redraw):
                     .mark("pp_go_allocation")
                 return
             spec, universe, assets, ok = None, "", [], True
+            draft = PP.get("draft")
             if PP["kind"] == "single":
                 opts = {f"saved:{n}": t("bt.opt_saved", name=n) for n, s in saved.items()
                         if strategies.runnable_on_single_assets(s)}
                 opts.update({f"tpl:{k}": t("bt.opt_template", name=p(v.label)) for k, v in TEMPLATES.items()})
+                if draft and strategies.runnable_on_single_assets(draft["spec"]):
+                    opts = {"backtest": t("pp.from_backtest"), **opts}
                 if PP["strategy"] not in opts:
                     PP["strategy"] = next(iter(opts))
                 choice = PP["strategy"]
-                spec = saved[choice[6:]] if choice.startswith("saved:") else \
-                    {"kind": "template", "template": choice[4:], "params": {}}
+                if choice == "backtest":
+                    spec = draft["spec"]
+                elif choice.startswith("saved:"):
+                    spec = saved[choice[6:]]
+                else:
+                    spec = {"kind": "template", "template": choice[4:], "params": {}}
                 ui.select(opts, label=t("bt.pick_strategy"), value=choice,
                           on_change=lambda e: (PP.__setitem__("strategy", e.value), draw())) \
                     .props(DENSE).classes("w-full").mark("pp_strategy")
                 metas = [m for m in library.list_datasets() if m.freq == "1d" and m.source in ("akshare", "baostock")]
                 by_id = {m.id: m for m in metas}
+                if choice == "backtest" and any(i not in by_id for i in PP["assets"]):
+                    PP["assets"] = []
+                    draft["reselect_assets"] = True
+                if choice == "backtest" and draft.get("reselect_assets"):
+                    notice(t("pp.confirm_assets"), "info", "warning")
                 PP["assets"] = [i for i in PP["assets"] if i in by_id]
                 ui.select({i: f"{m.name} · {m.source}" for i, m in by_id.items()}, label=t("pp.assets"),
                           value=PP["assets"], multiple=True,
@@ -131,24 +163,31 @@ def _new_account_form(PP, run_accounts, redraw):
                 ok = bool(assets) and len(assets) >= strategies.min_assets(spec)
             else:
                 sel = {n: s for n, s in saved.items() if s.get("kind") == "selection"}
-                if not sel:
+                opts = {n: n for n in sel}
+                if draft and draft["spec"].get("kind") == "selection":
+                    opts = {"": t("pp.from_backtest"), **opts}
+                if not opts:
                     notice(t("pp.no_selection"), "info")
                     ui.button(t("nav.go_selection"), on_click=lambda: ui.navigate.to("/selection")) \
                         .props("flat no-caps dense color=primary icon-right=arrow_forward").classes("self-start")
                     ok = False
                 else:
-                    if PP["sel"] not in sel:
-                        PP["sel"] = next(iter(sel))
-                    ui.select(list(sel), label=t("pp.selection_strategy"), value=PP["sel"],
+                    if PP["sel"] not in opts:
+                        PP["sel"] = next(iter(opts))
+                    ui.select(opts, label=t("pp.selection_strategy"), value=PP["sel"],
                               on_change=lambda e: (PP.__setitem__("sel", e.value), draw())) \
                         .props(DENSE).classes("w-full").mark("pp_sel")
-                    spec = sel[PP["sel"]]
+                    choice = PP["sel"]
+                    spec = draft["spec"] if choice == "" else sel[choice]
                     universe = spec["universe"]
                     if not U.ready(universe):
                         notice(t("pp.need_universe", name=p(UNIVERSES[universe]["label"])), "warning", "warning")
                         ok = False
+            from_backtest = spec is not None and choice == ("backtest" if PP["kind"] == "single" else "")
             if spec:
                 ui.label(strategies.describe(spec, lg)).classes("sq-code w-full")
+                if from_backtest:
+                    notice(t("pp.confirm_backtest"), "info")
 
             with ui.row().classes("w-full items-center gap-6"):
                 with ui.column().classes("gap-0"):
@@ -168,11 +207,14 @@ def _new_account_form(PP, run_accounts, redraw):
             bkey = "pp_" + PP["kind"] + ("_cb" if cb else "")
             preset0, cash0 = ("etf" if single else "bond" if cb else "stock"), (100_000 if single else 1_000_000)
             # 换到一个记有资金与费率的已保存策略时，先填上它的；之后手动改的保留到再换策略
-            chosen = PP["strategy"][6:] if single and PP["strategy"].startswith("saved:") else                 None if single else PP["sel"]
-            if chosen and PP.get(f"{bkey}_from") != chosen and chosen in brokers:
-                restore_broker(bkey, {"broker": brokers[chosen]},
+            choice = PP["strategy"] if single else PP["sel"]
+            chosen = (choice[6:] if choice.startswith("saved:") else None) if single else choice
+            if PP.get(f"{bkey}_from") != choice:
+                broker = draft["broker"] if from_backtest else brokers.get(chosen)
+                if broker:
+                    restore_broker(bkey, {"broker": broker},
                                {"cash": cash0, "preset": preset0, "t1": True, "slippage": 5.0, "custom": {}})
-            PP[f"{bkey}_from"] = chosen
+            PP[f"{bkey}_from"] = choice
             make_broker = broker_settings(bkey, default_preset=preset0, default_cash=cash0, show_t1=single,
                                           show_dividend=single,   # 选股账户的分红处理跟随选股策略
                                           show_contribution=True,
@@ -189,7 +231,13 @@ def _new_account_form(PP, run_accounts, redraw):
             can()
             info.update(spec=spec, universe=universe, assets=assets, make_broker=make_broker, btn=btn)
 
-    async def create():
+    def create():
+        name = PP["name"].strip()
+        if not name:
+            return
+        if paper_job.JOB.running:
+            ui.notify(t("pp.busy"), type="warning")
+            return
         spec, universe, assets = info["spec"], info["universe"], info["assets"]
         broker, kind, mode = info["make_broker"](), PP["kind"], PP["mode"]
         info["btn"].disable()
@@ -200,14 +248,12 @@ def _new_account_form(PP, run_accounts, redraw):
                 start = U.load_benchmark(universe).index[-1].date().isoformat()
             else:
                 start = dt.date.today().isoformat()   # 先占位：下载数据后改成最新数据日
-            acc = create_account(PP["name"].strip(), spec, broker, start, assets=assets, universe=universe)
-            if mode == "now" and kind == "single":
-                prices = await run.io_bound(runner.refresh_single_data, acc, today=dt.date.today().isoformat())
-                acc.start = max(df.index[-1] for df in prices.values()).date().isoformat()
-                acc.save()
+            acc = create_account(name, spec, broker, start, assets=assets, universe=universe,
+                                 start_on_latest=mode == "now" and kind == "single")
             PP["account"] = acc.id
             PP["name"] = ""
-            # 选股账户直接用本机已有的股票池数据；单标的"从现在开始"时刚下载过，不再重复下载
+            PP.pop("draft", None)
+            # 选股使用本地数据；「从现在开始」由运行器下载首次行情并确定起始日。
             if run_accounts([acc], refresh=kind == "single" and mode == "past"):
                 return          # 更新做完后进度区重画页面（这时才显示新账户）
         except Exception as e:  # noqa: BLE001
@@ -220,15 +266,43 @@ def _new_account_form(PP, run_accounts, redraw):
     draw()
 
 
-def _overview(PP, run_accounts, redraw, open_account):
-    """页面顶部：全部账户一览（点一行在下面显示该账户）和「更新全部账户」；没有账户时不显示"""
-    accounts = list_accounts()
-    if not accounts:
-        return
+def _display_calendar():
     try:
-        calendar = load_calendar(refresh_if_stale=False)
-    except Exception:  # noqa: BLE001 - 读不到交易日历时不判断数据是否过期
-        calendar = None
+        return load_calendar(refresh_if_stale=False)
+    except (OSError, ValueError):
+        return None
+
+
+def _load_expansion(exp, draw):
+    loaded = False
+
+    def ensure(opened):
+        nonlocal loaded
+        if opened and not loaded and not exp.is_deleted:
+            with exp:
+                draw()
+            loaded = True
+
+    exp.on_value_change(lambda e: ensure(e.value))
+    ensure(exp.value)
+
+
+def _load_tabs(panels, builders):
+    def ensure(e):
+        if e.value in builders and not panels.is_deleted:
+            panel, draw = builders[e.value]
+            with panel:
+                draw()
+            del builders[e.value]
+
+    panels.on_value_change(ensure)
+
+
+def _overview(PP, accounts, calendar, run_accounts, open_account):
+    """页面顶部：全部账户一览（点一行在下面显示该账户）和「更新全部账户」；没有账户时不显示"""
+    if not accounts:
+        PP["account"] = None
+        return
     rows = account_rows(accounts, calendar)
     if PP["account"] not in {r["id"] for r in rows}:
         PP["account"] = rows[0]["id"]      # 首次打开或刚删掉选中的账户：选最需要处理的那个
@@ -243,20 +317,11 @@ def _overview(PP, run_accounts, redraw, open_account):
     accounts_table(accounts, open_account, rows=rows, selected=PP["account"])
 
 
-def _account_view(PP, run_accounts, redraw):
+def _account_view(acc, calendar, run_accounts, redraw):
     lg = lang()
-    accounts = list_accounts()
-    if not accounts:
-        return
-    ids = [a.id for a in accounts]
-    if PP["account"] not in ids:          # 一般已由 _overview 选好
-        PP["account"] = ids[0]
-    acc = load_account(PP["account"])
     st = acc.state()
-    nav = acc.nav()
-    calendar = load_calendar(refresh_if_stale=False)
-    expected = latest_expected_day(calendar)
-    stale = not acc.data_through or pd.Timestamp(acc.data_through) < expected
+    expected = latest_expected_day(calendar) if calendar is not None else None
+    stale = expected is not None and (not acc.data_through or pd.Timestamp(acc.data_through) < expected)
     paused = acc.status != "active"
 
     def run_this():
@@ -279,7 +344,6 @@ def _account_view(PP, run_accounts, redraw):
             dlg.delete()
         if ok:
             delete_account(acc)
-            PP["account"] = None
             redraw()
 
     # 标题行：账户名 + 类型，右侧只放「更新并运行」；暂停 / 恢复、删除收进「⋯」菜单
@@ -289,7 +353,8 @@ def _account_view(PP, run_accounts, redraw):
             ui.label(t(f"pp.kind_{acc.kind}") + (" · " + t("pp.paused") if paused else "")) \
                 .classes("sq-muted text-sm")
         with ui.row().classes("items-center gap-2 no-wrap"):
-            b1 = ui.button(t("pp.run_this"), icon="refresh", on_click=run_this).props("unelevated no-caps") \
+            button_text = t("pp.retry_init") if acc.start_on_latest else t("pp.run_this")
+            b1 = ui.button(button_text, icon="refresh", on_click=run_this).props("unelevated no-caps") \
                 .mark("pp_run_this")
             if paused:
                 b1.disable()                             # 暂停的账户运行时会被跳过
@@ -305,7 +370,10 @@ def _account_view(PP, run_accounts, redraw):
         notice(t("pp.paused_note"), "pause_circle", "info").mark("pp_paused_note")
 
     err = acc.error()
-    if err:
+    if acc.start_on_latest and err:
+        notice(t("pp.init_failed", message=err.get("message", "").replace("`", "'")),
+               "error", "error").mark("pp_failed")
+    elif err:
         notice(t("pp.failed", time=err.get("time", ""), message=err.get("message", "").replace("`", "'")),
                "error", "error").mark("pp_failed")
     if stale:
@@ -313,10 +381,11 @@ def _account_view(PP, run_accounts, redraw):
     if st.get("divergence"):
         notice(t("pp.divergence"), "rule", "warning")
     if not st:
-        notice(t("pp.not_run"), "info")
+        notice(t("pp.init_pending") if acc.start_on_latest else t("pp.not_run"), "info")
         return
 
     # ---------------- 概况 ----------------
+    nav = acc.nav()
     cash0 = acc.broker["cash"]
     value = st["value"]
     m = st.get("metrics") or {}
@@ -361,10 +430,10 @@ def _account_view(PP, run_accounts, redraw):
         tab_pos = ui.tab("pos", t("pp.tab_positions"), icon="account_balance_wallet")
         tab_nav = ui.tab("nav", t("pp.tab_nav"), icon="show_chart")
         tab_fill = ui.tab("fill", t("pp.tab_fills"), icon="receipt_long")
-    with ui.tab_panels(tabs, value=tab_sig).classes("w-full bg-transparent"):
+    with ui.tab_panels(tabs, value=tab_sig).classes("w-full bg-transparent") as panels:
         with ui.tab_panel(tab_sig).classes("px-0 gap-2"):
             sig = st["signals"]
-            ui.label(t("pp.signals_title", date=st["execute_on"])).classes("font-semibold")
+            _signal_header(st)
             if not sig:
                 ui.label(t("pp.no_signals")).classes("sq-muted")
             else:
@@ -377,7 +446,9 @@ def _account_view(PP, run_accounts, redraw):
                 download_btn(t("pp.download_signals"), lambda: df.to_csv(index=False).encode("utf-8-sig"),
                              f"signals_{acc.name}_{st['execute_on']}.csv", "text/csv")
             hint(t("pp.signals_note_short"), t("pp.signals_note"), classes="sq-muted text-xs")
-        with ui.tab_panel(tab_pos).classes("px-0 gap-2"):
+        panel_pos = ui.tab_panel(tab_pos).classes("px-0 gap-2")
+
+        def draw_pos():
             pos = st["positions"]
             if not pos:
                 ui.label(t("pp.no_positions")).classes("sq-muted")
@@ -394,7 +465,10 @@ def _account_view(PP, run_accounts, redraw):
                 download_btn(t("pp.download_positions"), lambda: dfp.to_csv(index=False).encode("utf-8-sig"),
                              f"positions_{acc.name}_{st['as_of']}.csv", "text/csv")
             ui.label(t("pp.cash", cash=num(st["cash"], 0))).classes("sq-muted text-xs")
-        with ui.tab_panel(tab_nav).classes("px-0"):
+
+        panel_nav = ui.tab_panel(tab_nav).classes("px-0")
+
+        def draw_nav():
             if len(nav) >= 2:
                 eq = nav.copy()
                 unit = nav_of(eq)                     # 定投：回撤按扣除追加资金后的净值
@@ -406,7 +480,10 @@ def _account_view(PP, run_accounts, redraw):
                     plot(equity_chart(eq, lg, bench))
             else:
                 ui.label(t("pp.nav_soon")).classes("sq-muted")
-        with ui.tab_panel(tab_fill).classes("px-0"):
+
+        panel_fill = ui.tab_panel(tab_fill).classes("px-0")
+
+        def draw_fill():
             fills = acc.fills()
             if fills.empty:
                 ui.label(t("pp.no_fills")).classes("sq-muted")
@@ -417,6 +494,10 @@ def _account_view(PP, run_accounts, redraw):
                 f = f.rename(columns={c: t(f"col.{c}") for c in f.columns})
                 df_table(fmt_table(f, {t("col.price"): "{:.3f}", t("col.value"): "{:,.0f}",
                                        t("col.commission"): "{:.2f}"}), rows_per_page=30)
+
+    _load_tabs(panels, {"pos": (panel_pos, draw_pos),
+                        "nav": (panel_nav, draw_nav),
+                        "fill": (panel_fill, draw_fill)})
 
 
 def _contribution_due(st: dict, freq: str | None) -> bool:
@@ -444,12 +525,12 @@ def _portfolio_tabs(acc, st, nav, lg):
         tab_pos = ui.tab("pos", t("pp.tab_positions"), icon="account_balance_wallet")
         tab_nav = ui.tab("nav", t("pp.tab_nav"), icon="show_chart")
         tab_reb = ui.tab("reb", t("pf.tab_rebalances"), icon="receipt_long")
-    with ui.tab_panels(tabs, value=tab_sig).classes("w-full bg-transparent"):
+    with ui.tab_panels(tabs, value=tab_sig).classes("w-full bg-transparent") as panels:
         with ui.tab_panel(tab_sig).classes("px-0 gap-2"):
             # 折算后不足一手的调整无法下单，不列出
             sig = [s for s in st["signals"] if _lots(s["size"], s.get("lot", 100))]
             small = len(st["signals"]) - len(sig)
-            ui.label(t("pp.signals_title", date=st["execute_on"])).classes("font-semibold")
+            _signal_header(st)
             if not sig:
                 ui.label(t("pp.no_signals")).classes("sq-muted")
             else:
@@ -466,7 +547,9 @@ def _portfolio_tabs(acc, st, nav, lg):
             if small:
                 ui.label(t("pf.small_skipped", n=small)).classes("sq-muted text-xs").mark("pf_small")
             hint(t("pf.signals_note_short"), t("pf.signals_note"), classes="sq-muted text-xs")
-        with ui.tab_panel(tab_pos).classes("px-0 gap-2"):
+        panel_pos = ui.tab_panel(tab_pos).classes("px-0 gap-2")
+
+        def draw_pos():
             ui.label(t("pf.sleeves_title")).classes("font-semibold")
             dfs = pd.DataFrame([{
                 t("pf.col_sleeve"): p(x["name"]), t("pf.col_kind"): p(KINDS[x["kind"]]),
@@ -490,7 +573,10 @@ def _portfolio_tabs(acc, st, nav, lg):
                 download_btn(t("pp.download_positions"), lambda: dfp.to_csv(index=False).encode("utf-8-sig"),
                              f"positions_{acc.name}_{st['as_of']}.csv", "text/csv")
             ui.label(t("pp.cash", cash=num(st["cash"], 0))).classes("sq-muted text-xs")
-        with ui.tab_panel(tab_nav).classes("px-0"):
+
+        panel_nav = ui.tab_panel(tab_nav).classes("px-0")
+
+        def draw_nav():
             if len(nav) >= 2:
                 eq = nav.copy()
                 eq["drawdown"] = eq["value"] / eq["value"].cummax() - 1
@@ -498,7 +584,10 @@ def _portfolio_tabs(acc, st, nav, lg):
                     plot(equity_chart(eq, lg, t("pf.bench_label"), t("al.chart_portfolio")))
             else:
                 ui.label(t("pp.nav_soon")).classes("sq-muted")
-        with ui.tab_panel(tab_reb).classes("px-0"):
+
+        panel_reb = ui.tab_panel(tab_reb).classes("px-0")
+
+        def draw_reb():
             led = acc.rebalances()
             if led.empty:
                 ui.label(t("pf.no_rebalances")).classes("sq-muted")
@@ -510,38 +599,69 @@ def _portfolio_tabs(acc, st, nav, lg):
                 df_table(fmt_table(f, {t("pf.col_amount"): "{:+,.0f}", t("pf.col_cost"): "{:,.2f}"}),
                          rows_per_page=30)
 
+    _load_tabs(panels, {"pos": (panel_pos, draw_pos),
+                        "nav": (panel_nav, draw_nav),
+                        "reb": (panel_reb, draw_reb)})
 
-def _schedule_box(PP):
-    with ui.expansion(t("pp.schedule", tool=t(f"pp.sched.{schedule.backend()}")), icon="schedule") \
-            .classes("w-full q-card").mark("pp_schedule"):
+
+def _signal_header(st):
+    ui.label(t("pp.signals_title", date=st["execute_on"])).classes("font-semibold")
+    ui.label(t("pp.signals_data_through", date=st["as_of"])).classes("sq-muted text-xs")
+
+
+def _schedule_box(PP, task_status):
+    exp = ui.expansion(t("pp.schedule"), icon="schedule") \
+        .classes("w-full q-card").mark("pp_schedule")
+    exists = None
+    loaded = False
+
+    def show_status(value: bool):
+        nonlocal exists
+        exists = value
+        task_status.text = t("pp.task_on" if value else "pp.task_off")
+        if loaded:
+            box.refresh()
+
+    async def check_status():
+        value = await run.io_bound(schedule.task_exists)
+        if not task_status.is_deleted:
+            show_status(value)
+
+    @ui.refreshable
+    def box():
+        if exists is None:
+            return
+        with ui.row().classes("items-center gap-3"):
+            at = ui.input(t("pp.task_time"), value=PP["task_time"],
+                          on_change=lambda e: PP.__setitem__("task_time", e.value)) \
+                .props("outlined dense type=time").classes("w-36")
+
+            def create():
+                ok, msg = schedule.create_task(at.value or "19:00")
+                ui.notify(msg or t("pp.task_saved"), type="positive" if ok else "negative", multi_line=True)
+                show_status(schedule.task_exists())
+
+            def delete():
+                ok, msg = schedule.delete_task()
+                ui.notify(msg or t("pp.task_removed"), type="positive" if ok else "negative", multi_line=True)
+                show_status(schedule.task_exists())
+            ui.button(t("pp.task_create") if not exists else t("pp.task_update"), icon="alarm_add",
+                      on_click=create).props("outline no-caps").mark("pp_task_create")
+            if exists:
+                ui.button(t("pp.task_delete"), icon="alarm_off", on_click=delete).props("outline no-caps") \
+                    .mark("pp_task_delete")
+        ui.label(schedule.task_command()).classes("sq-code w-full")
+        log = account_mod.PAPER_ROOT / "daily.log"
+        if log.exists():
+            ui.label(t("pp.log")).classes("font-medium text-sm")
+            ui.label("\n".join(log.read_text(encoding="utf-8").splitlines()[-20:])).classes("sq-code w-full")
+
+    def draw():
+        nonlocal loaded
+        exp.props(f'caption="{t(f"pp.sched.{schedule.backend()}")}"')
         hint(t("pp.schedule_note_short"), t("pp.schedule_note"), classes="sq-muted text-sm")
-
-        @ui.refreshable
-        def box():
-            exists = schedule.task_exists()
-            ui.label(t("pp.task_on") if exists else t("pp.task_off")).classes("font-medium")
-            with ui.row().classes("items-center gap-3"):
-                at = ui.input(t("pp.task_time"), value=PP["task_time"],
-                              on_change=lambda e: PP.__setitem__("task_time", e.value)) \
-                    .props("outlined dense type=time").classes("w-36")
-
-                def create():
-                    ok, msg = schedule.create_task(at.value or "19:00")
-                    ui.notify(msg or t("pp.task_saved"), type="positive" if ok else "negative", multi_line=True)
-                    box.refresh()
-
-                def delete():
-                    ok, msg = schedule.delete_task()
-                    ui.notify(msg or t("pp.task_removed"), type="positive" if ok else "negative", multi_line=True)
-                    box.refresh()
-                ui.button(t("pp.task_create") if not exists else t("pp.task_update"), icon="alarm_add",
-                          on_click=create).props("outline no-caps").mark("pp_task_create")
-                if exists:
-                    ui.button(t("pp.task_delete"), icon="alarm_off", on_click=delete).props("outline no-caps") \
-                        .mark("pp_task_delete")
-            ui.label(schedule.task_command()).classes("sq-code w-full")
-            log = account_mod.PAPER_ROOT / "daily.log"
-            if log.exists():
-                ui.label(t("pp.log")).classes("font-medium text-sm")
-                ui.label("\n".join(log.read_text(encoding="utf-8").splitlines()[-20:])).classes("sq-code w-full")
         box()
+        loaded = True
+
+    _load_expansion(exp, draw)
+    ui.timer(0, check_status, once=True)

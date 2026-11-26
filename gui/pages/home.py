@@ -1,6 +1,7 @@
 """首页：继续上次的工作 / 第一次使用时的介绍 + 模拟账户 + 开始新的工作 + 最近的报告"""
 
 import datetime as dt
+from copy import deepcopy
 from html import escape
 
 from nicegui import app, run, ui
@@ -14,7 +15,7 @@ from gui.common import t, lang
 from gui.components import accounts_table, strategy_progress
 from gui.layout import frame
 from gui.widgets import notice, Progress
-from ui.shared import pct, num, account_rows, progress_steps, saved_name, paper_count, spec_key, timing_verify
+from ui.shared import pct, num, account_rows, progress_steps, saved_name, paper_count, timing_verify
 
 
 def page():
@@ -276,15 +277,15 @@ def _entry_verify(e: dict, spec: dict | None) -> dict | None:
         return None
     if e.get("kind") == "sel":
         sp = S.get("sp") or {}
-        res = sp.get("result")
-        if not res or spec_key(res[1]) != spec_key(spec):
+        if not sp.get("result") or not e.get("id") or sp.get("history_id") != e["id"]:
             return e.get("verify")
         return {"credibility": True, "phase": bool((sp.get("phase") or {}).get("found")),
                 "walkforward": bool(sp.get("wf"))}
     bt = S.get("bt") or {}
-    if bt.get("result") is None or bt.get("time") != e["time"]:
+    if bt.get("result") is None or not e.get("id") or bt.get("history_id") != e["id"]:
         return e.get("verify")
-    return timing_verify(spec, bt, S.get("opt") or {})
+    from gui.pages.optimize import matching_results
+    return timing_verify(spec, bt, matching_results(spec, bt["sig"][1]))
 
 
 def _open_step(e: dict, key: str):
@@ -292,11 +293,6 @@ def _open_step(e: dict, key: str):
     选股：回测 / 滚动优化标签；模拟盘 → 模拟盘页"""
     if key == "paper":
         ui.navigate.to("/paper")
-    elif e.get("kind") == "sel":
-        state.STATE["sp_tab"] = "verify" if key == "verify" else "bt"
-        if key == "verify":
-            state.STATE["sp_vf"] = "walkforward"
-        ui.navigate.to("/selection")
     else:
         reopen(e, step={"setup": "strategy", "verify": "verify"}.get(key, "backtest"))
 
@@ -305,20 +301,67 @@ def reopen(e: dict, go: bool = True, step: str = "backtest"):
     """恢复这份报告的设置，去择时策略的 step 一步（routes.timing：工作台的设置区、报告或验证标签）；
     回测会自动重新运行（通常不到 1 秒），只有「编辑策略」一步不运行（运行完设置区会收起）"""
     r = e.get("restore")
-    if e.get("kind") == "sel" or not r:
+    if e.get("kind") == "sel":
+        _restore_selection(e, step)
         if go:
-            ui.navigate.to("/selection" if e.get("kind") == "sel" else routes.timing(step))
+            ui.navigate.to("/selection")
+        return
+    if not r:
+        if go:
+            ui.navigate.to(routes.timing(step))
         return
     S = state.STATE
-    same = S.get("bt", {}).get("time") == e["time"]
+    same = e.get("id") and S.get("bt", {}).get("history_id") == e["id"]
     S["bt_ids"] = list(r["ids"])
     S["bt_range"] = tuple(dt.date.fromisoformat(x) for x in r["range"])
-    S["bt_broker"] = dict(r["broker"])
+    S["bt_broker"] = deepcopy(r["broker"])
+    S["bt_mode"] = "portfolio"
+    S.pop("bt_autorun", None)
     if not same and step != "strategy":
         S["bt_autorun"] = e["time"]
     target = routes.timing(step, spec=r["spec"])          # 策略放进工作台的编辑器
     if go:
         ui.navigate.to(target)
+
+
+def _restore_selection(e: dict, step: str):
+    from gui.pages.selection import sp_state, apply_spec, current_spec, broker_key, broker_default
+    from gui.plan_io import restore_broker
+    from simplequant.stocks import UNIVERSES, universe as U
+
+    SP = sp_state()
+    r = e.get("restore") or {}
+    spec = _entry_spec(e)
+    same = e.get("id") and SP.get("history_id") == e["id"] and SP.get("result") is not None
+    SP.pop("run_request", None)
+    SP.pop("autorun", None)
+    SP.pop("plan_warm", None)
+    SP.pop("history_range", None)
+    SP["history_notice"] = "sp.history_incomplete"
+    if spec and spec.get("kind") == "selection" and spec.get("universe") in UNIVERSES:
+        apply_spec(SP, deepcopy(spec), e.get("strategy") or e["title"])
+        universe = spec["universe"]
+        if r.get("range") and r.get("broker"):
+            start, end = r["range"]
+            SP["ranges"][universe] = tuple(dt.date.fromisoformat(d) for d in (start, end))
+            SP["history_range"] = (start, end)
+            if r.get("warmup_start"):
+                SP["plan_warm"] = (universe, start, r["warmup_start"])
+            kind = U.kind(universe)
+            restore_broker(broker_key(kind), r, broker_default(kind))
+            if current_spec(SP) == spec:
+                SP["history_notice"] = None if same else "sp.history_rerun"
+            else:
+                same = False
+                SP["history_notice"] = "sp.history_adjusted"
+    if not same:
+        for key in ("result", "history_id", "phase", "wf", "plan_check", "run_no", "explanation",
+                    "result_panel", "result_range", "result_broker", "result_name"):
+            SP.pop(key, None)
+    SP["setup_open"] = step == "strategy" or not same
+    state.STATE["sp_tab"] = "verify" if step == "verify" else "bt"
+    if step == "verify":
+        state.STATE["sp_vf"] = "walkforward"
 
 
 # ---------------- 模拟账户 ----------------

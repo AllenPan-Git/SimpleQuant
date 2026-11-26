@@ -161,6 +161,8 @@ async def spec_panel(SP, ctx, spec: dict):
 class Ctx:
     """页面内共享：当前面板、区间、各标签页的重画函数"""
     panel = None
+    setup = None            # 选股回测当前表单的设置折叠区
+    on_history = None
     start = end = panel_start = None
     lo = hi = None
     on_progress = None      # 新版界面：设置、回测结果、检验有变化时重画顶部进度与「验证」标签的状态

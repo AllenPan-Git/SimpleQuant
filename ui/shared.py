@@ -266,12 +266,12 @@ def paper_count(spec: dict, accounts: list) -> int:
 
 
 def progress_steps(lg: str, saved: str | None, dirty: bool, ret: float | None,
-                   verify: dict[str, bool] | None, paper: int) -> list[dict]:
+                   verify: dict[str, bool] | None, paper: int, current: str | None = None) -> list[dict]:
     """
     四步进度：每步 {"key", "done", "next", "k"（上方小字）, "v"（状态）, "title"（悬停全文）, "tone"（"up" / "down" / ""，收益着色）}。
     saved：已保存时的策略名；dirty：有改动未保存；ret：回测总收益（没有结果为 None）；
     verify：本策略适用的各项检验 → 是否已做（不知道时为 None）；paper：用这个策略开的模拟账户数。
-    「建议下一步」是第一个没完成的步骤
+    工作台传入当前步骤；首页没有当前步骤，推荐第一个没完成的步骤。
     """
     names = {k: tr(f"prog.{k}", lg) for k in PROGRESS_STEPS}
     vals = {
@@ -283,7 +283,7 @@ def progress_steps(lg: str, saved: str | None, dirty: bool, ret: float | None,
                    tr("prog.verify_n", lg, n=sum(map(bool, verify.values())), of=len(verify)) if verify else "—", ""),
         "paper": (paper > 0, tr("prog.paper_n", lg, n=paper) if paper else "—", ""),
     }
-    nxt = next((k for k in PROGRESS_STEPS if not vals[k][0]), None)
+    nxt = next((k for k in PROGRESS_STEPS if not vals[k][0]), None) if current is None else None
     out = []
     for i, k in enumerate(PROGRESS_STEPS, 1):
         done, v, extra = vals[k]
@@ -291,7 +291,8 @@ def progress_steps(lg: str, saved: str | None, dirty: bool, ret: float | None,
         value = names[k] if k == nxt else v
         title = " · ".join(x for x in (f"{i:02d} {names[k]}", v, extra) if x and x != "—")
         tone = ("up" if ret >= 0 else "down") if k == "backtest" and ret is not None and k != nxt else ""
-        out.append({"key": k, "done": done, "next": k == nxt, "k": label, "v": value, "title": title, "tone": tone})
+        out.append({"key": k, "done": done, "next": k == nxt, "current": k == current,
+                    "k": label, "v": value, "title": title, "tone": tone})
     return out
 
 

@@ -1,5 +1,8 @@
 """择时策略各步、选股数据下载去哪一页（界面重构计划 4.2.3 / 4.4.1；经典界面已在 4.8 移除）"""
 
+from copy import deepcopy
+from dataclasses import asdict
+
 from gui import state
 
 
@@ -30,3 +33,8 @@ def download(universe: str | None = None) -> str:
     else:
         S["data_tab"], S["data_uni"] = "stocks", u
     return "/data"
+
+
+def paper_from_backtest(spec: dict, broker, name: str, ids=()) -> str:
+    state.STATE["pp_handoff"] = {"spec": deepcopy(spec), "broker": asdict(broker), "name": name, "ids": list(ids)}
+    return "/paper"

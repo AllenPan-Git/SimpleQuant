@@ -11,6 +11,7 @@ from gui.common import t
 from gui.components import strategy_progress
 from gui.layout import frame, page_title
 from gui.plan_io import import_button
+from gui.widgets import notice
 from .common import Ctx, sp_state, prune_factors
 from .universe_bar import universe_bar, panel_loader
 from .backtest import _backtest
@@ -42,16 +43,25 @@ def page():
         if msg:
             ui.notify(msg[0], type=msg[1])
         accounts = _accounts()
+        progress_box = ui.column().classes("w-full gap-0")
 
         @ui.refreshable
         def progress():
-            strategy_progress(progress_steps(SP, ctx, accounts), on_click=lambda k: go_step(k), mark="prog")
-        progress()
+            setup_open = ctx.setup is None or ctx.setup.is_deleted or ctx.setup.value
+            current = "verify" if panels.value == "verify" else ("setup" if setup_open else "backtest")
+            strategy_progress(progress_steps(SP, ctx, accounts, current), on_click=go_step, mark="prog")
 
         # ---------------- 股票池与区间 ----------------
         bar = universe_bar(SP, ctx, lambda: reload_all())
 
         # ---------------- 标签页 ----------------
+        @ui.refreshable
+        def history_notice():
+            if key := SP.get("history_notice"):
+                notice(t(key), "info", "warning").mark("sp_history_notice")
+        history_notice()
+        ctx.on_history = history_notice.refresh
+
         boxes = {}
         with ui.tabs().classes("w-full").props("align=left no-caps") as tabs:
             tab_els = {k: ui.tab(k, t(key), icon=icon) for k, key, icon in TABS}
@@ -64,6 +74,7 @@ def page():
 
         def on_tab(e):
             state.STATE["sp_tab"] = e.value
+            progress.refresh()
             if e.value == "verify":     # 滚动优化总是用选股回测标签页里的最新设置
                 reload_wf()
         panels.on_value_change(on_tab)
@@ -87,9 +98,8 @@ def page():
             if k == "paper":
                 ui.navigate.to("/paper")
                 return
-            if k == "setup" and SP.get("result") and not SP.get("setup_open", True) and ctx.panel is not None:
-                SP["setup_open"] = True
-                ctx.rebuild_bt()
+            if k in ("setup", "backtest") and ctx.setup is not None and not ctx.setup.is_deleted:
+                ctx.setup.value = k == "setup"
             tabs.set_value("verify" if k == "verify" else "bt")
 
         def factors_changed():
@@ -111,8 +121,14 @@ def page():
         load_panel = panel_loader(SP, ctx, lambda: pairs, on_empty)
 
         def reload_all():
-            bar.sync()
+            have_data = bar.sync()
+            if (dates := SP.pop("history_range", None)) and (not have_data or dates != (ctx.start, ctx.end)):
+                SP["result"] = None
+                SP["history_notice"] = "sp.history_adjusted"
+                history_notice.refresh()
             background_tasks.create(load_panel(), name="sp load panel")
         ctx.reload_all = reload_all
 
+        with progress_box:
+            progress()
         reload_all()

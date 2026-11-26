@@ -19,7 +19,7 @@ from gui.layout import frame, page_title, navigate
 from gui.plan_io import import_button
 from gui.pages.strategy import Ctx, strategy_editor, editor_spec, code_ok, saved_strategies, load_spec
 from gui.pages.backtest import setup_bar, report
-from gui.pages.optimize import optimize_panel, opt_state
+from gui.pages.optimize import optimize_panel, matching_results
 from gui.widgets import notice
 from ui.shared import progress_steps, saved_name, paper_count, spec_key, timing_verify
 
@@ -57,28 +57,42 @@ def _workbench(S, by_id: dict):
     BT = state.STATE.setdefault("bt", {})
     ctx = Ctx()
     accounts = _accounts()
-    seen = {"ai": S.get("ai_result"), "spec": None, "stale": False}   # 已处理过的 AI 结果；验证面板上次的策略
+    seen = {"ai": S.get("ai_result"), "spec": None, "stale": False, "match": None}
 
-    @ui.refreshable
-    def progress():
-        strategy_progress(_steps(S, BT, accounts), on_click=lambda k: go_step(k), mark="prog")
-    progress()
+    progress_box = ui.column().classes("w-full gap-0")
 
     def part(on_change, on_broker):
         return _strategy_part(S, ctx, on_change, on_broker)
-    bar = setup_bar(by_id, BT, part, sticky=True, open_=True if state.STATE.pop("timing_open", None) else None)
+    cur = "verify" if state.STATE.get("timing_tab") == "verify" else "report"
+    open_setup = state.STATE.pop("timing_open", None)
+    if cur == "verify":
+        open_setup = False
+    bar = setup_bar(by_id, BT, part, sticky=True, open_=open_setup)
 
     # ---------------- 标签：回测报告 / 验证 ----------------
     def on_tab(e):
         state.STATE["timing_tab"] = e.value
+        progress.refresh()
         if e.value == "verify":
+            bar.setup.value = False
             refresh_panel()
 
-    cur = state.STATE.get("timing_tab") if state.STATE.get("timing_tab") in ("report", "verify") else "report"
     with ui.tabs(value=cur).props("align=left no-caps").classes("w-full sq-bench-tabs").mark("timing_tabs") as tabs:
         ui.tab("report", t("timing.tab_report")).mark("tab:report")
         ui.tab("verify", t("timing.tab_verify")).mark("tab:verify")
     panels = ui.tab_panels(tabs, value=cur, on_change=on_tab).classes("w-full bg-transparent").mark("timing_panels")
+
+    @ui.refreshable
+    def progress():
+        current = "verify" if panels.value == "verify" else ("setup" if bar.setup.value else "backtest")
+        strategy_progress(_steps(S, BT, accounts, current, bar), on_click=go_step, mark="prog")
+
+    def on_setup(e):
+        if e.value:
+            tabs.set_value("report")
+        progress.refresh()
+
+    bar.setup.on_value_change(on_setup)
 
     def apply_iterated(res):
         """AI 诊断迭代草案：回填规则编辑器、展开设置区，便于核对后重新回测"""
@@ -90,13 +104,18 @@ def _workbench(S, by_id: dict):
 
     @ui.refreshable
     def results():
+        if _same_result(BT, bar):
+            report(BT, bar.exp_menu, to_verify=lambda: show_verify("optimize"), on_iterate=apply_iterated)
+            return
         if BT.get("result") is None and BT.get("batch") is None:
             ui.label(t("timing.no_report")).classes("sq-muted text-sm py-4")
-        report(BT, bar.exp_menu, to_verify=lambda: show_verify("optimize"), on_iterate=apply_iterated)
+        else:
+            notice(t("timing.stale_report"), "info", "warning").mark("timing_stale")
 
     @ui.refreshable
     def compare():
-        run_log.compare("timing", BT.get("run_no"))
+        if _same_result(BT, bar):
+            run_log.compare("timing", BT.get("run_no"))
 
     with panels:
         with ui.tab_panel("report").classes("px-0 pt-4"):
@@ -104,9 +123,10 @@ def _workbench(S, by_id: dict):
                 compare()
                 results()
         with ui.tab_panel("verify").classes("px-0 pt-4"):
-            vf = _verify_tab(S, BT, by_id, bar, lambda spec, tuned: use_best(spec, tuned))
+            vf = _verify_tab(BT, by_id, bar, lambda spec, tuned: use_best(spec, tuned))
 
     def redraw_report():
+        seen["match"] = _same_result(BT, bar)
         compare.refresh()
         results.refresh()
     bar.report = redraw_report
@@ -159,6 +179,8 @@ def _workbench(S, by_id: dict):
         key = spec_key(bar.strat["spec"])
         if key != seen["spec"]:
             seen["spec"], seen["stale"] = key, True
+        if _same_result(BT, bar) != seen["match"]:
+            redraw_report()
         if tabs.value == "verify":
             refresh_panel()
         refresh_all()
@@ -166,7 +188,7 @@ def _workbench(S, by_id: dict):
     def on_ran(ok: bool):
         if BT.get("result") is not None:       # 分别回测没有单一的指标，不记
             BT["run_no"] = run_log.record("timing", BT.get("name") or BT["title"][0], BT["spec"],
-                                          BT["result"].metrics, _run_setup(bar))
+                                          BT["result"].metrics, BT["run_setup"])
         if bar.setup.is_deleted:
             return
         compare.refresh()
@@ -182,11 +204,13 @@ def _workbench(S, by_id: dict):
     async def go_step(key: str):
         """点进度的一步：设置 → 展开设置区；回测 → 已有结果时看报告，否则运行；验证 → 验证标签；模拟盘 → 模拟盘页"""
         if key == "setup":
+            tabs.set_value("report")
             bar.setup.value = True
             _scroll_into_view(bar.setup_row)
         elif key == "backtest":
             tabs.set_value("report")
-            if _same_result(S, BT):
+            if _same_result(BT, bar):
+                bar.setup.value = False
                 _scroll_into_view(report_box)
             elif bar.ready():
                 await bar.run()
@@ -195,6 +219,8 @@ def _workbench(S, by_id: dict):
         else:
             ui.navigate.to("/paper")
 
+    with progress_box:
+        progress()
     ctx.changed()          # 画出预览，并按编辑器的内容检查设置（提示、按钮、摘要条）
     # 从首页「最近的报告」、导入方案等打开：设置已恢复，自动重新运行
     if state.STATE.pop("bt_autorun", None) and bar.ready():
@@ -206,17 +232,16 @@ VF_ITEMS = ("credibility", "random", "phase", "optimize", "walkforward")
 VF_AUTO_PREFIX = {"random": "cred.random", "phase": "cred.phase"}
 
 
-def _vf_status(k: str, S, BT: dict, O: dict) -> tuple[bool, str]:
-    """(是否已完成, 状态小字)；随回测完成的三项只看与编辑器当前规则相同的那次回测"""
-    spec = editor_spec(S)[0]
+def _vf_status(k: str, BT: dict, O: dict, bar) -> tuple[bool, str]:
+    """返回当前设置下的验证状态和说明。"""
     if k in ("optimize", "walkforward"):
         if k == "optimize":
             res = O.get("result")
-            ok = bool(res) and spec_key(spec) in (spec_key(res.get("spec")), spec_key(res.get("best_spec")))
+            ok = bool(res)
             return ok, t("vf.st_grid", n=int(res.get("tried", 0))) if ok else t("vf.st_not_run")
-        ok = bool(O.get("wf")) and O.get("wf_spec") is not None and spec_key(O["wf_spec"]) == spec_key(spec)
+        ok = bool(O.get("wf"))
         return ok, t("vf.st_wf", n=len(O["wf"][0].windows)) if ok else t("vf.st_not_run")
-    if not _same_result(S, BT):
+    if not _same_result(BT, bar) or BT.get("result") is None:
         return False, t("vf.st_need_run")
     keys = [c.get("key", "") for c in BT.get("checks", [])]
     if k == "credibility":
@@ -229,10 +254,9 @@ def _vf_status(k: str, S, BT: dict, O: dict) -> tuple[bool, str]:
     return (True, t("vf.st_done")) if any(x.startswith("cred.phase") for x in keys) else (False, t("vf.st_na"))
 
 
-def _verify_tab(S, BT: dict, by_id: dict, bar, on_use_best) -> SimpleNamespace:
+def _verify_tab(BT: dict, by_id: dict, bar, on_use_best) -> SimpleNamespace:
     """左边是各项检验及状态，右边是选中的那一项：随回测完成的三项显示结果，参数优化 / 滚动优化是优化面板
     （用设置区的数据、策略与资金）。选中的一项记在 state.STATE["timing_vf"]"""
-    O = opt_state()
     sel = {"k": state.STATE.get("timing_vf") if state.STATE.get("timing_vf") in VF_ITEMS else "optimize"}
     with ui.element("div").classes("sq-verify w-full grid gap-8"):
         methods = ui.column().classes("gap-0 min-w-0").mark("vf_methods")
@@ -253,15 +277,18 @@ def _verify_tab(S, BT: dict, by_id: dict, bar, on_use_best) -> SimpleNamespace:
         if methods.is_deleted:
             return
         k = sel["k"]
+        O = matching_results(bar.strat["spec"], bar.pick.signature(bar.make_broker()))
         methods.clear()
         with methods:
             ui.label(t("vf.methods")).classes("sq-muted text-xs sq-vf-head")
             for item in VF_ITEMS:
-                done, sub = _vf_status(item, S, BT, O)
+                done, sub = _vf_status(item, BT, O, bar)
                 with ui.element("div").classes("sq-vf-item" + (" on" if item == k else "")) \
-                        .on("click", lambda item=item: select(item)).mark(f"vf:{item}"):
+                        .on("click", lambda item=item: select(item)).mark(f"vf:{item}") as entry:
                     ui.label(t(f"vf.{item}")).classes("sq-vf-name")
                     ui.label(sub).classes("sq-vf-sub" + (" ok" if done else ""))
+                if item in ("phase", "walkforward"):
+                    entry.tooltip(t(f"vf.{item}_purpose"))
         head.clear()
         with head:
             ui.label(t(f"vf.{k}")).classes("sq-serif text-xl")
@@ -272,7 +299,7 @@ def _verify_tab(S, BT: dict, by_id: dict, bar, on_use_best) -> SimpleNamespace:
         auto_box.clear()
         if auto:
             with auto_box:
-                _vf_auto(k, S, BT, bar)
+                _vf_auto(k, BT, bar, O)
 
     if sel["k"] in ("optimize", "walkforward"):
         panel.set_mode("grid" if sel["k"] == "optimize" else "wf")
@@ -280,9 +307,9 @@ def _verify_tab(S, BT: dict, by_id: dict, bar, on_use_best) -> SimpleNamespace:
     return SimpleNamespace(panel=panel, refresh=draw, select=select)
 
 
-def _vf_auto(k: str, S, BT: dict, bar):
+def _vf_auto(k: str, BT: dict, bar, O: dict):
     """随回测完成的一项：没有回测时提示并给出「开始回测」；有结果时列出这一项的检查结果"""
-    if not _same_result(S, BT):
+    if not _same_result(BT, bar) or BT.get("result") is None:
         notice(t("vf.need_run"), "info")
         ui.button(t("bt.run"), icon="play_arrow", on_click=bar.run).props("unelevated no-caps") \
             .classes("self-start").mark("vf_run")
@@ -296,7 +323,7 @@ def _vf_auto(k: str, S, BT: dict, bar):
     else:
         notice(t("vf.skipped" if k == "random" else "vf.na"), "info")
     if k == "credibility":
-        _ai_cred_review(BT, opt_state())
+        _ai_cred_review(BT, O)
 
 
 def _ai_cred_review(BT: dict, O: dict):
@@ -431,11 +458,6 @@ def _editor_only(S):
     ctx.changed()
 
 
-def _run_setup(bar) -> dict:
-    """记进「最近几次运行」的设置：摘要条里策略以外的几格（数据 · 区间 · 资金）"""
-    return {k: v for k, v in bar.chip_items() if k != "strategy"}
-
-
 def _accounts() -> list:
     """全部模拟账户（进度的「模拟盘」一步用）；读不出时为空"""
     try:
@@ -445,14 +467,13 @@ def _accounts() -> list:
         return []
 
 
-def _same_result(S, BT: dict) -> bool:
-    """报告里的回测与编辑器当前的策略规则相同"""
-    return BT.get("result") is not None and spec_key(BT.get("spec")) == spec_key(editor_spec(S)[0])
+def _same_result(BT: dict, bar) -> bool:
+    return bar.ready() and BT.get("sig") == bar.signature()
 
 
-def _steps(S, BT: dict, accounts: list) -> list:
+def _steps(S, BT: dict, accounts: list, current: str, bar) -> list:
     """工作台顶部的四步进度：已保存（与某个已保存策略规则相同）/ 有改动未保存（名称是已保存的策略，规则改过）；
-    回测、验证只算与当前规则相同的那一次"""
+    回测、验证按当前规则、标的、区间及资金费率核对"""
     spec, errors = editor_spec(S)
     name = S["name"].strip()
     try:
@@ -461,15 +482,18 @@ def _steps(S, BT: dict, accounts: list) -> list:
         saved_all = {}
     saved = None if errors else saved_name({"name": name, **spec}, saved_all)
     dirty = saved is None and name in saved_all
-    ret = BT["result"].metrics.get("total_return") if _same_result(S, BT) else None
-    verify = timing_verify(spec, BT, state.STATE.get("opt") or {})
-    return progress_steps(lang(), saved, dirty, ret, verify, paper_count(spec, accounts))
+    active = BT if _same_result(BT, bar) else {}
+    res = active.get("result")
+    ret = res.metrics.get("total_return") if res is not None else None
+    O = matching_results(spec, bar.pick.signature(bar.make_broker())) if not errors else {}
+    verify = timing_verify(spec, active, O)
+    return progress_steps(lang(), saved, dirty, ret, verify, paper_count(spec, accounts), current=current)
 
 
 def _scroll_into_view(el, away_only: bool = False):
     """等折叠动画（0.3 秒）结束后滚到 el；away_only：el 已在窗口上半部分时不滚"""
     cond = "if (top >= 0 && top < window.innerHeight * 0.5) return;" if away_only else ""
-    ui.run_javascript(f"""setTimeout(() => {{
+    el.client.run_javascript(f"""setTimeout(() => {{
         const el = getHtmlElement({el.id});
         if (!el) return;
         const top = el.getBoundingClientRect().top;

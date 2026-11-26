@@ -63,7 +63,7 @@ def verify_map(SP, ctx) -> dict | None:
     return v
 
 
-def progress(SP, ctx, accounts) -> list[dict]:
+def progress(SP, ctx, accounts, current: str) -> list[dict]:
     """顶部四步进度：已保存 = 与某个已保存的选股策略同规则；有改动未保存 = 名称是已保存的策略但规则改过"""
     spec = current_spec(SP)
     name = (SP.get("name") or "").strip()
@@ -74,7 +74,7 @@ def progress(SP, ctx, accounts) -> list[dict]:
     saved = saved_name({**spec, "name": name}, saved_all)
     dirty = bool(name) and name in saved_all and spec_key(saved_all[name]) != spec_key(spec)
     ret = SP["result"][0].metrics["total_return"] if same_result(SP, ctx) else None
-    return progress_steps(lang(), saved, dirty, ret, verify_map(SP, ctx), paper_count(spec, accounts))
+    return progress_steps(lang(), saved, dirty, ret, verify_map(SP, ctx), paper_count(spec, accounts), current=current)
 
 
 def verify_tab(SP, ctx, go_backtest) -> SimpleNamespace:
@@ -102,9 +102,11 @@ def verify_tab(SP, ctx, go_backtest) -> SimpleNamespace:
             for item in VF_ITEMS:
                 done, sub = vf_status(item, SP, ctx)
                 with ui.element("div").classes("sq-vf-item" + (" on" if item == k else "")) \
-                        .on("click", lambda item=item: select(item)).mark(f"vf:{item}"):
+                        .on("click", lambda item=item: select(item)).mark(f"vf:{item}") as entry:
                     ui.label(t(f"vf.{item}")).classes("sq-vf-name")
                     ui.label(sub).classes("sq-vf-sub" + (" ok" if done else ""))
+                if item in ("phase", "walkforward"):
+                    entry.tooltip(t(f"vf.{item}_purpose"))
         if not force and shown["k"] == (k, _body_key(k)):
             return
         shown["k"] = (k, _body_key(k))

@@ -234,6 +234,17 @@ def test_single_refresh_drops_unfinished_intraday_bar(monkeypatch):
     assert runner.load_single_data(acc)["X"].index[-1] == pd.Timestamp("2026-09-28")
 
 
+def test_display_calendar_without_cache_does_not_fetch(monkeypatch, tmp_path):
+    from simplequant.paper import calendar
+
+    def unexpected_fetch(path):
+        pytest.fail("display-only calendar tried to fetch")
+
+    monkeypatch.setattr(calendar, "refresh_calendar", unexpected_fetch)
+    days = calendar.load_calendar(tmp_path / "calendar.parquet", refresh_if_stale=False)
+    assert len(days) and all(days.dayofweek < 5)
+
+
 def test_latest_expected_day():
     import datetime as dt
     from simplequant.paper.calendar import latest_expected_day

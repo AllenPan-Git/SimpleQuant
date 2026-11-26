@@ -2,6 +2,7 @@
 由择时工作台（gui/pages/timing.py）拼成一页"""
 
 import datetime as dt
+from copy import deepcopy
 from contextlib import nullcontext
 from dataclasses import asdict
 from types import SimpleNamespace
@@ -70,7 +71,7 @@ def setup_bar(by_id: dict, BT: dict, strategy_part, sticky: bool = False, open_:
             else ui.row().classes("items-center gap-2 no-wrap pt-2")
         with actions:
             with ui.element("div").classes("sq-setup-btns") if sticky else nullcontext():
-                run_btn = ui.button(t("bt.run"), icon="play_arrow", on_click=lambda: do_run()) \
+                run_btn = ui.button(t("bt.run"), icon="play_arrow", on_click=lambda: run_in_setup()) \
                     .props("unelevated no-caps").mark("run")
                 with ui.button(t("exp.menu"), icon="ios_share").props("outline no-caps") as exp_btn:
                     exp_menu = ui.menu().props("auto-close")
@@ -89,7 +90,7 @@ def setup_bar(by_id: dict, BT: dict, strategy_part, sticky: bool = False, open_:
                 ui.icon("help_outline").classes("sq-muted").tooltip(t("bt.mode_help"))
             strat = strategy_part(lambda: (save_name.set_value(strat.get("name", "")), check()),
                                   lambda b: make_broker.load(b))
-            make_broker = broker_settings("bt", show_dividend=True, show_contribution=True)
+            make_broker = broker_settings("bt", show_dividend=True, show_contribution=True, on_change=lambda: check())
             with ui.row().classes("w-full items-end gap-3"):
                 save_name = ui.input(t("bt.save_name"), value=strat.get("name", ""))                     .props("outlined dense").classes("grow").mark("bt_save_name")
                 ui.button(t("bt.save_strategy"), icon="save", on_click=lambda: save_strategy())                     .props("outline no-caps").tooltip(t("bt.save_strategy_help")).mark("bt_save")
@@ -181,7 +182,7 @@ def setup_bar(by_id: dict, BT: dict, strategy_part, sticky: bool = False, open_:
             for w, kind in percentile_warnings(by_id, pick, strat["spec"]):
                 notice(w, kind, kind)
         ok = ready()
-        run_btn.set_enabled(ok)
+        run_btn.set_enabled(ok and not running.visible)
         exp_btn.set_enabled(ok)
         build_export_menu()
         draw_chips()
@@ -229,8 +230,7 @@ def setup_bar(by_id: dict, BT: dict, strategy_part, sticky: bool = False, open_:
                 item.tooltip(why or t(f"exp.help_{key}"))
 
     def signature():
-        """当前设置；导出方案时，回测结果与当前设置一致才附带结果"""
-        return (strat["spec"], tuple(pick.ids), pick.date_range, make_broker())
+        return (spec_key(strat["spec"]), pick.signature(make_broker()), batch())
 
     def export_plan():
         name = strat.get("name") or strat["label"].split("：")[-1].split(": ")[-1]
@@ -246,49 +246,64 @@ def setup_bar(by_id: dict, BT: dict, strategy_part, sticky: bool = False, open_:
         if result is None:
             ui.notify(t("plan.exported_no_result"), multi_line=True)
 
-    def sources():
-        return {n: data_source_text(by_id[i], lang()) for i, n in asset_names(by_id, pick.ids, lang()).items()}
+    def sources(data):
+        return {n: data_source_text(by_id[i], lang()) for i, n in asset_names(by_id, data.ids, lang()).items()}
 
     async def do_run():
-        if not ready() or not full_check():
+        if running.visible or not ready() or not full_check():
             return
-        spec, broker = strat["spec"], make_broker()
+        spec, broker = deepcopy(strat["spec"]), make_broker()
+        data = pick.snapshot()
+        name, label = strat.get("name", ""), strat["label"]
+        saved_broker = deepcopy(state.STATE.get("bt_broker", {}))
+        run_setup = {k: v for k, v in chip_items() if k != "strategy"}
         plan_ctx = state.STATE.pop("bt_plan", None)        # 刚导入的方案：回测后与其中记录的结果核对
         sig = signature()
-        warm = warm_start(pick, spec)                      # 用到估值百分位：区间前的数据只预热
+        warm = warm_start(data, spec)                      # 用到估值百分位：区间前的数据只预热
+        request = state.STATE["bt_request"] = object()
         run_btn.disable()
         running.set_visibility(True)
         BT.clear()                       # 先清掉上一份报告，免得新结果出来前又露出来
         bar.report()
-        if batch():
-            await do_batch(spec, broker, warm)
+        if sig[2]:
+            await do_batch(spec, broker, warm, data, name or label, sig, request)
             return
         try:
-            prices, skipped, patched = await run.io_bound(prepare_prices, by_id, pick, broker, spec)
+            prices, skipped, patched = await run.io_bound(prepare_prices, by_id, data, broker, spec)
             cls, params = strategies.resolve(spec)
             res = await run.io_bound(run_backtest, prices, cls, params, broker, trade_start=warm,
                                      with_panels=True)
+            if not current_request(request):
+                return
             tuned = state.STATE.get("tuned") or {}          # 参数优化页「用最优参数回测」带过来的
             tried = tuned["n"] if tuned.get("spec") and spec_key(tuned["spec"]) == spec_key(spec) else 0
             BT.clear()
-            BT.update(result=res, title=(strat["label"], list(prices), next(iter(pick.freqs))), spec=spec,
-                      broker=broker, name=strat.get("name", ""), div_notes=(skipped, patched),
+            BT.update(result=res, title=(label, list(prices), next(iter(data.freqs))), spec=spec,
+                      broker=broker, name=name, div_notes=(skipped, patched),
                       checks=check_backtest(res.metrics, res.trades, tried, res.positions, res.prices), sig=sig,
-                      sources=sources())
+                      sources=sources(data), run_setup=run_setup)
             if plan_ctx:
                 BT["plan_check"] = (plan_mod.compare(plan_ctx.get("result"), res.metrics), plan_ctx)
-            _remember(BT, by_id, pick, strat)
-            setup.value = False
+            _remember(BT, by_id, data, saved_broker)
+            if not setup.is_deleted:
+                support.after_run()
+                if signature() == sig:
+                    setup.value = False
         except Exception as e:  # noqa: BLE001
+            if not current_request(request):
+                return
             BT.clear()
-            ui.notify(t("bt.failed", e=explain_error(e, lang())), type="negative", multi_line=True)
+            if not setup.is_deleted:
+                ui.notify(t("bt.failed", e=explain_error(e, lang())), type="negative", multi_line=True)
         finally:
-            run_btn.enable()
-            running.set_visibility(False)
+            if not setup.is_deleted:
+                running.set_visibility(False)
+                run_btn.set_enabled(ready())
         phased = BT.get("result") is not None and len(prices) > 1 and timing_cycle(spec) > 1
         if phased:
             BT["phase_pending"] = {"n": 0, "of": len(phases(timing_cycle(spec)))}
-        bar.report()
+        if not setup.is_deleted:
+            bar.report()
         bar.on_ran(BT.get("result") is not None)
         if phased:
             await phase_check(BT["result"], prices, spec, broker, warm)
@@ -304,37 +319,54 @@ def setup_bar(by_id: dict, BT: dict, strategy_part, sticky: bool = False, open_:
         if BT.get("result") is res:          # 期间没有重新回测
             BT["checks"] = BT.get("checks", []) + found
             BT.pop("phase_pending", None)
-            history.mark_verify("bt", spec, phase=True)
-            bar.on_phase()
+            history.mark_verify("bt", spec, entry_id=BT["history_id"], phase=True)
+            if not setup.is_deleted:
+                bar.on_phase()
 
-    async def do_batch(spec, broker, warm):
-        done = {"n": 0, "of": len(pick.ids)}
+    def current_request(request):
+        return state.STATE.get("bt_request") is request
+
+    async def do_batch(spec, broker, warm, data, name, sig, request):
+        done = {"n": 0, "of": len(data.ids)}
         tick = ui.timer(0.3, lambda: running_text.set_text(t("bt.batch_running", n=done["n"], of=done["of"])))
         try:
-            prices, skipped, patched = await run.io_bound(prepare_prices, by_id, pick, broker, spec)
+            prices, skipped, patched = await run.io_bound(prepare_prices, by_id, data, broker, spec)
             df = await run.io_bound(run_batch, prices, spec, broker, None,
                                     lambda n, of: done.update(n=n, of=of), warm)
+            if not current_request(request):
+                return
             BT.clear()
             BT.update(batch=df, summary=summarize(df), spec=spec, broker=broker,
-                      name=strat.get("name", "") or strat["label"], freq=next(iter(pick.freqs)),
-                      range=(pick.start, pick.end), div_notes=(skipped, patched),
-                      ids={n: i for i, n in asset_names(by_id, pick.ids, lang()).items()}, sources=sources(),
+                      name=name, freq=next(iter(data.freqs)), sig=sig,
+                      range=(data.start, data.end), div_notes=(skipped, patched),
+                      ids={n: i for i, n in asset_names(by_id, data.ids, lang()).items()}, sources=sources(data),
                       time=dt.datetime.now().strftime("%Y-%m-%d %H:%M"))
-            setup.value = False
+            if not setup.is_deleted and signature() == sig:
+                setup.value = False
         except Exception as e:  # noqa: BLE001
+            if not current_request(request):
+                return
             BT.clear()
-            ui.notify(t("bt.failed", e=explain_error(e, lang())), type="negative", multi_line=True)
+            if not setup.is_deleted:
+                ui.notify(t("bt.failed", e=explain_error(e, lang())), type="negative", multi_line=True)
         finally:
             tick.cancel()
-            running_text.set_text(t("bt.running"))
-            run_btn.enable()
-            running.set_visibility(False)
-        bar.report()
+            if not setup.is_deleted:
+                running_text.set_text(t("bt.running"))
+                running.set_visibility(False)
+                run_btn.set_enabled(ready())
+        if not setup.is_deleted:
+            bar.report()
         bar.on_ran(BT.get("batch") is not None)
 
+    async def run_in_setup():
+        # 「以最优参数回测」会重画发起操作的验证结果，运行期间使用常驻设置区的界面上下文。
+        with setup_row:
+            await do_run()
+
     bar.__dict__.update(pick=pick, strat=strat, make_broker=make_broker, setup=setup, setup_row=setup_row,
-                        save_name=save_name, exp_menu=exp_menu, check=check, ready=ready, run=do_run,
-                        chip_items=chip_items)
+                        save_name=save_name, exp_menu=exp_menu, check=check, ready=ready, run=run_in_setup,
+                        chip_items=chip_items, signature=signature)
     return bar
 
 
@@ -445,19 +477,20 @@ def _open_single(BT: dict, name: str | None):
     navigate(routes.timing("backtest", spec=spec), refresh_same=True)
 
 
-def _remember(BT: dict, by_id: dict, pick, strat: dict):
+def _remember(BT: dict, by_id: dict, pick, saved_broker: dict):
     """记入首页「最近的报告」（只存摘要和重新运行所需的设置）"""
+    from gui.pages.optimize import matching_results
     res = BT["result"]
-    name = strat.get("name") or strat["label"]
+    name = BT["name"] or BT["title"][0]
     data = " · ".join(asset_names(by_id, pick.ids, lang()).values())
     freq = next(iter(pick.freqs))
-    history.add("bt", name, f"{data} · {freq_label(freq, lang())} · {pick.start} ~ {pick.end}", res.metrics,
-                restore={"spec": {"name": name, **strat["spec"]}, "ids": list(pick.ids),
+    entry = history.add("bt", name, f"{data} · {freq_label(freq, lang())} · {pick.start} ~ {pick.end}", res.metrics,
+                restore={"spec": {"name": name, **BT["spec"]}, "ids": list(pick.ids),
                          "range": [str(pick.start), str(pick.end)],
-                         "broker": dict(state.STATE.get("bt_broker", {}))},
-                data=data, strategy=name, verify=timing_verify(strat["spec"], BT, state.STATE.get("opt") or {}))
-    BT["time"] = history.recent()[0]["time"]
-    support.after_run()
+                         "broker": saved_broker},
+                data=data, strategy=name,
+                verify=timing_verify(BT["spec"], BT, matching_results(BT["spec"], BT["sig"][1])))
+    BT["time"], BT["history_id"] = entry["time"], entry["id"]
 
 
 def _span(index) -> str:
@@ -523,6 +556,7 @@ def _results(BT: dict, exp_menu, to_verify, on_iterate=None):
     lg = lang()
     res = BT["result"]
     label, names, freq = BT["title"]
+    paper_setup = BT["spec"], BT["broker"], BT["name"] or label, BT["sig"][1][0]
     symbols = list(res.prices)
     with ui.element("div").classes("sq-report w-full grid gap-12 pt-2").style("grid-template-columns: minmax(0, 1fr) 280px"):
         # ---------------- 报告正文 ----------------
@@ -535,16 +569,6 @@ def _results(BT: dict, exp_menu, to_verify, on_iterate=None):
                 ui.label(src).classes("sq-muted text-xs").mark("bt_sources")
             ui.html(lede(res)).classes("sq-lede my-5")
             metric_tiles(res.metrics)
-            if "dividend_cash" in res.metrics or "cash_interest" in res.metrics:
-                with ui.row().classes("w-full gap-3 pt-4"):
-                    if "dividend_cash" in res.metrics:
-                        metric_tile(t("m.dividend_cash"), f"{res.metrics['dividend_cash']:,.0f}",
-                                    help_text=t("bt.dividend_help"))
-                        metric_tile(t("m.dividend_tax"), f"{res.metrics['dividend_tax']:,.0f}",
-                                    help_text=t("sp.dividend_tax_help"))
-                    if "cash_interest" in res.metrics:
-                        metric_tile(t("m.cash_interest"), f"{res.metrics['cash_interest']:,.0f}",
-                                    help_text=t("bt.cash_yield_help"))
             if any(BT.get("div_notes", ({}, {}))):
                 with ui.column().classes("w-full pt-4 gap-2"):
                     dividend_notices(*BT["div_notes"])
@@ -570,6 +594,20 @@ def _results(BT: dict, exp_menu, to_verify, on_iterate=None):
                 plot(equity_chart(res.equity, lg, t("bt.bench_dca") if dca else None))
                 ui.html(f"<b>{t('bt.fig1')}</b>{t('bt.fig1_caption_dca' if dca else 'bt.fig1_caption')}")                     .classes("sq-caption")
 
+            with ui.expansion(t("bt.report_metrics"), icon="bar_chart").props("header-class=px-0") \
+                    .classes("w-full sq-rule-bottom mt-4").mark("report_metrics"):
+                metric_tiles(res.metrics, details=True)
+                if "dividend_cash" in res.metrics or "cash_interest" in res.metrics:
+                    with ui.row().classes("w-full gap-3 pt-4"):
+                        if "dividend_cash" in res.metrics:
+                            metric_tile(t("m.dividend_cash"), f"{res.metrics['dividend_cash']:,.0f}",
+                                        help_text=t("bt.dividend_help"))
+                            metric_tile(t("m.dividend_tax"), f"{res.metrics['dividend_tax']:,.0f}",
+                                        help_text=t("sp.dividend_tax_help"))
+                        if "cash_interest" in res.metrics:
+                            metric_tile(t("m.cash_interest"), f"{res.metrics['cash_interest']:,.0f}",
+                                        help_text=t("bt.cash_yield_help"))
+
             with ui.column().classes("w-full gap-1 pt-8"):
                 chart_box = ui.column().classes("w-full")
 
@@ -585,51 +623,40 @@ def _results(BT: dict, exp_menu, to_verify, on_iterate=None):
                 ui.html(f"<b>{t('bt.fig2')}</b>{t('bt.fig2_caption')} {t('bt.strategy_chart_note')}") \
                     .classes("sq-caption")
 
-        # ---------------- 右侧：下一步 + 最近平仓 ----------------
+        # ---------------- 右侧：下一步 ----------------
         with ui.column().classes("gap-0 min-w-0"):
             _rule_title(t("bt.next"))
             # 编号与工作台顶部的四步进度一致（03 验证、04 模拟盘）
             _next("03", t("bt.next_verify"), t("bt.next_verify_body"), to_verify, rec=True).mark("next_opt")
-            _next("04", t("bt.next_paper"), t("bt.next_paper_body"), lambda: ui.navigate.to("/paper"))
+            _next("04", t("bt.next_paper"), t("bt.next_paper_body"),
+                  lambda: ui.navigate.to(routes.paper_from_backtest(*paper_setup))) \
+                .mark("next_paper")
             _next("↗", t("bt.next_export"), t("bt.next_export_body"), exp_menu.open)
             _explain(BT, explain_out, on_iterate=on_iterate)
-
-            _rule_title(t("bt.recent_trades"), top=True)
-            if res.trades.empty:
-                ui.label(t("bt.no_closed")).classes("sq-muted text-sm py-2")
-            for r in res.trades.sort_values("close_time", ascending=False).head(6).itertuples():
-                with ui.row().classes("w-full justify-between py-2 no-wrap") \
-                        .style("border-bottom: 1px solid var(--sq-border2)"):
-                    ui.label(t("bt.trade_line", d=f"{pd.Timestamp(r.close_time):%Y-%m-%d}")
-                             + (f" · {r.symbol}" if len(symbols) > 1 else "")).classes("text-sm")
-                    ui.label(("+" if r.pnl_net >= 0 else "") + num(r.pnl_net, 0)) \
-                        .classes("sq-num text-sm " + ("sq-up" if r.pnl_net >= 0 else "sq-down"))
-
-    # ---------------- 明细 ----------------
-    with ui.element("div").classes("sq-sec"):
-        ui.label(t("bt.details")).classes("sq-h2")
-    with ui.tabs().classes("w-full").props("align=left no-caps") as tabs:
-        tab_o = ui.tab("o", t("bt.tab_orders"))
-        tab_t = ui.tab("t", t("bt.tab_trades"))
-        tab_l = ui.tab("l", t("bt.tab_logs"))
-        tab_n = ui.tab("n", t("nat.tab")).mark("native_tab")
-    with ui.tab_panels(tabs, value=tab_o).classes("w-full bg-transparent"):
-        with ui.tab_panel(tab_o).classes("px-0 gap-2"):
-            if res.orders.empty:
-                ui.label(t("bt.no_orders")).classes("sq-muted")
-            else:
-                tbl = orders_table(real_orders(res.orders, res.prices), lg)
-                df_table(fmt_table(tbl, {t("col.price"): "{:.3f}", t("col.value"): "{:,.2f}",
-                                         t("col.commission"): "{:.2f}"}), rows_per_page=20)
-                download_btn(t("bt.download_orders"), lambda: tbl.to_csv(index=False).encode("utf-8-sig"),
-                             "orders.csv", "text/csv")
-        with ui.tab_panel(tab_t).classes("px-0"):
-            df_table(fmt_table(trades_table(res.trades, lg), {t("col.pnl"): "{:,.2f}", t("col.pnl_net"): "{:,.2f}"}),
-                     rows_per_page=20)
-        with ui.tab_panel(tab_l).classes("px-0"):
-            df_table(logs_table(res.logs, lg), rows_per_page=50)
-        with ui.tab_panel(tab_n).classes("px-0 gap-3"):
-            _native(BT)
+    with ui.expansion(t("bt.details"), icon="receipt_long").props("header-class=px-0") \
+            .classes("w-full sq-rule-bottom mt-6").mark("report_details"):
+        with ui.tabs().classes("w-full").props("align=left no-caps") as tabs:
+            tab_o = ui.tab("o", t("bt.tab_orders"))
+            tab_t = ui.tab("t", t("bt.tab_trades"))
+            tab_l = ui.tab("l", t("bt.tab_logs"))
+            tab_n = ui.tab("n", t("nat.tab")).mark("native_tab")
+        with ui.tab_panels(tabs, value=tab_o).classes("w-full bg-transparent"):
+            with ui.tab_panel(tab_o).classes("px-0 gap-2"):
+                if res.orders.empty:
+                    ui.label(t("bt.no_orders")).classes("sq-muted")
+                else:
+                    tbl = orders_table(real_orders(res.orders, res.prices), lg)
+                    df_table(fmt_table(tbl, {t("col.price"): "{:.3f}", t("col.value"): "{:,.2f}",
+                                             t("col.commission"): "{:.2f}"}), rows_per_page=20)
+                    download_btn(t("bt.download_orders"), lambda: tbl.to_csv(index=False).encode("utf-8-sig"),
+                                 "orders.csv", "text/csv")
+            with ui.tab_panel(tab_t).classes("px-0"):
+                df_table(fmt_table(trades_table(res.trades, lg), {t("col.pnl"): "{:,.2f}", t("col.pnl_net"): "{:,.2f}"}),
+                         rows_per_page=20)
+            with ui.tab_panel(tab_l).classes("px-0"):
+                df_table(logs_table(res.logs, lg), rows_per_page=50)
+            with ui.tab_panel(tab_n).classes("px-0 gap-3"):
+                _native(BT)
 
 
 def _next(no: str, title: str, body: str, on_click, rec: bool = False):

@@ -46,6 +46,7 @@ class PaperAccount:
     # ratio：AKShare 股票 / ETF 用等比复权，复权数据附上不复权收盘价、按真实股价凑整手。
     # 改为等比之前开设的账户没有这个字段，保持加法复权、按复权价凑整手（不改写已有的成交）
     adjust_method: str = "additive"
+    start_on_latest: bool = False   # 首次下载成功后，以最新完整行情日作为起点
 
     def fetch_kwargs(self, asset: str = "", source: str = "akshare") -> dict:
         """模拟盘取行情时给数据源的额外参数"""

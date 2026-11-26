@@ -335,6 +335,8 @@ def apply_selection(plan: dict):
     restore_broker(broker_key(kind), plan, broker_default(kind))
     SP["result"] = None
     SP["plan_check"] = None
+    SP.pop("history_notice", None)
+    SP.pop("run_request", None)
     SP["autorun"] = {"name": plan["name"], "result": plan.get("result")}
     state.STATE["sp_tab"] = "bt"
     from gui.layout import navigate

@@ -1,6 +1,7 @@
 """参数优化面板 optimize_panel（网格搜索 / 滚动优化），放在择时工作台的「验证」标签里"""
 
 import inspect
+from copy import deepcopy
 from dataclasses import asdict
 from types import SimpleNamespace
 
@@ -21,7 +22,7 @@ from gui.components import (load_prices, prepare_prices, metric_tile, walkforwar
                             unadjusted_warning, fallback_warning, percentile_warnings, warm_start, credibility_box)
 from gui.widgets import section, df_table, plot, notice, Progress
 from ui.charts import heatmap, param_curve
-from ui.shared import default_range, fmt_metric
+from ui.shared import default_range, fmt_metric, spec_key
 
 DENSE = "outlined dense options-dense"
 
@@ -31,6 +32,24 @@ def opt_state() -> dict:
     return state.STATE.setdefault("opt", {"mode": "grid", "chosen": {}, "ranges": {}, "metric": TARGET_METRICS[0],
                                           "oos": 30, "workers": default_workers(), "train": 24, "test": 6,
                                           "window": "rolling", "stitch": next(iter(STITCH_MODES))})
+
+
+def matching_results(spec: dict, setup: tuple) -> dict:
+    O = opt_state()
+    key = spec_key(spec)
+    matched = {}
+    result = O.get("result")
+    if result and result.get("setup") == setup and key in (spec_key(result["spec"]), spec_key(result["best_spec"])):
+        matched["result"] = result
+    if O.get("wf") and O.get("wf_setup") == setup and key == spec_key(O.get("wf_spec")):
+        matched.update(wf=O["wf"], wf_spec=O["wf_spec"])
+    return matched
+
+
+def _mark_history(spec: dict, setup: tuple, **done: bool):
+    bt = state.STATE.get("bt") or {}
+    entry_id = bt.get("history_id", "") if bt.get("sig") == (spec_key(spec), setup, False) else ""
+    history.mark_verify("bt", spec, entry_id=entry_id, **done)
 
 
 def optimize_panel(by_id: dict, pick, strat: dict, make_broker, fixed_mode: bool = False,
@@ -221,18 +240,20 @@ def optimize_panel(by_id: dict, pick, strat: dict, make_broker, fixed_mode: bool
                 wf_msg.text, color, wf_ok = t("wf.estimate", w=n_windows, n=total), "sq-muted", True
             wf_msg.classes(replace=f"text-sm {color}")
         wf_btn.set_enabled(wf_ok)
+        results.refresh()
 
     async def do_run():
-        spec, broker = strat["spec"], make_broker()
+        spec, broker = deepcopy(strat["spec"]), make_broker()
+        data = pick.snapshot()
         ax, is_int, labels = axes()
         oos = O["oos"] / 100
         n = len(build_grid(spec, ax))
-        warm = warm_start(pick, spec)                      # 用到估值百分位：区间前的数据只预热
+        warm = warm_start(data, spec)                      # 用到估值百分位：区间前的数据只预热
         run_btn.disable()
         prog.start(t("opt.progress", done=0, n=n))
 
         def work():
-            prices, skipped, patched = prepare_prices(by_id, pick, broker, spec)
+            prices, skipped, patched = prepare_prices(by_id, data, broker, spec)
             ins, outs, cut = split_prices(prices, oos, warm) if oos > 0 else (prices, None, None)
             df = optimize(ins, spec, ax, broker, workers=int(O["workers"]),
                           progress=lambda d, n_: prog.set(d / n_, t("opt.progress", done=d, n=n_)),
@@ -257,10 +278,10 @@ def optimize_panel(by_id: dict, pick, strat: dict, make_broker, fixed_mode: bool
                         start=is_res.equity.index[0] if warm is not None
                         else min(d.index[0] for d in prices.values()),
                         end=max(d.index[-1] for d in prices.values()), div_notes=(skipped, patched),
-                        checks=checks, tried=int(ok), years=years, broker=asdict(broker))
+                        checks=checks, tried=int(ok), years=years, broker=asdict(broker), setup=data.signature(broker))
         try:
             O["result"] = await run.io_bound(work)
-            history.mark_verify("bt", spec, optimize=True)
+            _mark_history(spec, data.signature(broker), optimize=True)
         except Exception as e:  # noqa: BLE001
             O.pop("result", None)
             ui.notify(t("bt.failed", e=explain_error(e, lang())), type="negative", multi_line=True)
@@ -271,23 +292,24 @@ def optimize_panel(by_id: dict, pick, strat: dict, make_broker, fixed_mode: bool
         panel.on_done()
 
     async def do_wf():
-        spec, broker = strat["spec"], make_broker()
+        spec, broker = deepcopy(strat["spec"]), make_broker()
+        data = pick.snapshot()
         ax, is_int, labels = axes()
-        warm = warm_start(pick, spec)
+        warm = warm_start(data, spec)
         wf_btn.disable()
         prog.start(t("wf.progress", w=0, n="…"))
 
         def progress(w, n, d, m):
             prog.set(((w - 1) + d / m) / n, t("wf.progress", w=w, n=n))
         try:
-            prices, skipped, patched = await run.io_bound(prepare_prices, by_id, pick, broker, spec)
+            prices, skipped, patched = await run.io_bound(prepare_prices, by_id, data, broker, spec)
             res = await run.io_bound(walk_forward, prices, spec, ax, is_int, broker, O["metric"], int(O["train"]),
                                      int(O["test"]), O["window"] == "anchored", int(O["workers"]), progress,
                                      O["stitch"], warm)
             O["wf"] = (res, labels, O["metric"], O["stitch"])
-            O["wf_spec"] = spec               # 进度的「验证」按策略规则比对
+            O["wf_spec"], O["wf_setup"] = spec, data.signature(broker)
             O["wf_div_notes"] = (skipped, patched)
-            history.mark_verify("bt", spec, walkforward=True)
+            _mark_history(spec, data.signature(broker), walkforward=True)
         except Exception as e:  # noqa: BLE001
             O.pop("wf", None)
             ui.notify(t("bt.failed", e=explain_error(e, lang())), type="negative", multi_line=True)
@@ -299,13 +321,17 @@ def optimize_panel(by_id: dict, pick, strat: dict, make_broker, fixed_mode: bool
 
     @ui.refreshable
     def results():
-        if O["mode"] == "wf":
-            if O.get("wf"):
-                res, labels, metric, stitch = O["wf"]
-                dividend_notices(*O.get("wf_div_notes", ({}, {})))
-                walkforward_results(res, labels, metric, t(f"wf.stitch_{stitch}"), t(f"wf.note_{stitch}"))
-        elif O.get("result"):
-            _grid_results(O["result"], on_use_best)
+        matched = matching_results(strat["spec"], pick.signature(make_broker())) if not strat.get("errors") else {}
+        key = "wf" if O["mode"] == "wf" else "result"
+        if key not in matched:
+            if O.get(key):
+                notice(t("vf.stale_result"), "info", "warning")
+        elif key == "wf":
+            res, labels, metric, stitch = matched["wf"]
+            dividend_notices(*O.get("wf_div_notes", ({}, {})))
+            walkforward_results(res, labels, metric, t(f"wf.stitch_{stitch}"), t(f"wf.note_{stitch}"))
+        else:
+            _grid_results(matched["result"], on_use_best)
 
     def set_mode_to(m: str):
         if O["mode"] != m:

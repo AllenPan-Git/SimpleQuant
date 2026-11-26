@@ -173,6 +173,11 @@ def test_progress_steps():
     en = {x["key"]: x for x in shared.progress_steps("en", None, False, None, None, 0)}
     assert en["setup"]["k"] == "Suggested next · 01" and en["backtest"]["k"] == "02 Backtest"
 
+    s = run(saved=None, current="verify", verify={"credibility": True, "optimize": True})
+    assert [k for k, item in s.items() if item["current"]] == ["verify"]
+    assert s["verify"]["done"] and s["verify"]["v"] == "2 / 2 项"
+    assert not any(item["next"] for item in s.values())
+
 
 # ---------------- 两次运行对比 ----------------
 def _run(spec, **metrics):

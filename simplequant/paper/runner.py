@@ -32,10 +32,11 @@ PANEL_WARMUP_DAYS = 400   # 选股：同上（机器学习、IC 回看期超过 
 
 # ---------------- 开户 ----------------
 def create_account(name: str, spec: dict, broker: BrokerConfig, start: str, assets: list | None = None,
-                   universe: str = "") -> PaperAccount:
+                   universe: str = "", *, start_on_latest: bool = False) -> PaperAccount:
     kind = "selection" if spec.get("kind") == "selection" else "single"
     acc = PaperAccount(id=new_id(name), name=name, kind=kind, spec=spec, broker=asdict(broker), start=start,
-                       assets=assets or [], universe=universe or spec.get("universe", ""), adjust_method="ratio")
+                       assets=assets or [], universe=universe or spec.get("universe", ""), adjust_method="ratio",
+                       start_on_latest=start_on_latest)
     acc.save()
     telemetry.count(f"btn:paper_{kind}")
     telemetry.milestone("paper")
@@ -379,8 +380,9 @@ def run_all(accounts: list[PaperAccount], store=None, refresh: bool = True, log=
     on_wait = (lambda: progress(0, 0, "", "wait", 0, 0)) if progress else None
     try:
         with run_lock(log, on_wait) as waited:
-            if waited:        # 另一处刚更新完：数据已是最新，这次只需几秒；账户以文件里的为准
-                accounts = [a for a in map(_reload, accounts) if a is not None]
+            # 等待过的账户和正在初始化的账户以锁内读到的配置为准。
+            accounts = [latest for acc in accounts
+                        if (latest := (_reload(acc) if waited or acc.start_on_latest else acc)) is not None]
             results = _run_all(accounts, store, refresh, log, progress)
             if refresh and not waited:      # 顺便更新本地数据库（设置页可关）；等过另一处时它已经更新过
                 n = sum(a.status == "active" for a in accounts)
@@ -395,7 +397,7 @@ def run_all(accounts: list[PaperAccount], store=None, refresh: bool = True, log=
 def _run_all(accounts: list[PaperAccount], store, refresh: bool, log, progress=None) -> dict:
     from ..stocks import StockStore
     store = store or StockStore()
-    calendar = load_calendar()
+    calendar = None
     done, results = set(), {}
     active = [a for a in accounts if a.status == "active"]
     for k, acc in enumerate(active):
@@ -405,9 +407,11 @@ def _run_all(accounts: list[PaperAccount], store, refresh: bool, log, progress=N
         kw = {"progress": inner} if inner else {}       # 不要进度时照旧调用（测试里替换的函数不必接这个参数）
         ran = (lambda: inner(1, "run", 0, 0)) if inner else (lambda: None)
         try:
+            if calendar is None:
+                calendar = load_calendar()
             log(f"[{acc.name}] updating data…")
             if inner:
-                inner(0, "prices", 0, 0) if refresh else ran()
+                inner(0, "prices", 0, 0) if refresh or acc.start_on_latest else ran()
             if acc.kind == "portfolio":
                 from . import portfolio
                 if refresh:
@@ -420,7 +424,13 @@ def _run_all(accounts: list[PaperAccount], store, refresh: bool, log, progress=N
                 ran()
                 state = run_account(acc, calendar, panel=load_selection_panel(acc, store))
             else:
-                prices = refresh_single_data(acc, **kw) if refresh else load_single_data(acc)
+                prices = refresh_single_data(acc, **kw) if refresh or acc.start_on_latest else load_single_data(acc)
+                if acc.start_on_latest:
+                    if not prices or any(df.empty or pd.isna(df.index[-1]) for df in prices.values()):
+                        raise ValueError("No complete daily prices / 未取得完整的日线行情")
+                    acc.start = max(df.index[-1] for df in prices.values()).date().isoformat()
+                    acc.start_on_latest = False
+                    acc.save()
                 ran()
                 state = run_account(acc, calendar, prices=with_rates(acc, prices, refresh))
             log(f"[{acc.name}] data through {state['as_of']}, value {state['value']:,.0f}, "

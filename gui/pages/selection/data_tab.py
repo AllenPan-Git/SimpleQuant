@@ -224,12 +224,25 @@ def _data_tab(SP, ctx, reload_all, universe: str | None = None):
 
 def _pack_section(SP, st, pack_name: str, reload_all, default_open: bool = False):
     """云端数据包一键下载导入 + 本地 zip 导入（股票 / 可转债共用）"""
-    with ui.expansion(t("sp.pack"), icon="folder_zip", value=default_open) \
+    from gui import cloud_ui, state
+
+    cfg = llm.load_config()
+    saved_code = ""
+    if cfg:
+        saved_code = (cfg.preset_keys or {}).get("hosted", "") or (cfg.api_key if cfg.preset == "hosted" else "")
+    local_rec = llm.get_imported_cloud_pack(pack_name)
+    force_open = bool(state.STATE.pop("open_pack", False))
+    exp_open = default_open or bool(saved_code) or force_open
+
+    with ui.expansion(t("sp.pack"), icon="folder_zip", value=exp_open) \
             .classes("w-full q-card").mark(f"pack_exp_{pack_name}"):
         ui.label(t("sp.cloud_pack_title")).classes("font-medium text-sm")
         ui.label(t("sp.cloud_pack_note")).classes("sq-muted text-sm")
+        if local_rec and (local_rec.get("uploaded") or local_rec.get("imported_at")):
+            ver_date = str(local_rec.get("uploaded") or local_rec.get("imported_at"))[:10]
+            ui.label(t("sp.cloud_pack_local_ver", date=ver_date)).classes("sq-muted text-xs")
         with ui.row().classes("w-full items-center gap-3 flex-wrap"):
-            code_in = ui.input(t("sp.cloud_pack_code"), value="", placeholder="sq-...") \
+            code_in = ui.input(t("sp.cloud_pack_code"), value=saved_code, placeholder="sq-...") \
                 .props("outlined dense").classes("w-64").mark(f"cloud_pack_code_{pack_name}")
             c_btn = ui.button(t("sp.cloud_pack_btn"), icon="cloud_download").props("unelevated no-caps") \
                 .mark(f"cloud_pack_btn_{pack_name}")
@@ -238,10 +251,17 @@ def _pack_section(SP, st, pack_name: str, reload_all, default_open: bool = False
         c_prog = Progress()
         c_out = ui.column().classes("w-full")
 
-        async def download_cloud():
+        async def download_cloud(force: bool = False):
             code = (code_in.value or "").strip()
-            c_btn.disable()
             c_out.clear()
+            if not code:
+                msg = t("sp.cloud_pack_need_code")
+                ui.notify(msg, type="warning")
+                with c_out:
+                    notice(msg, "warning", "warning")
+                code_in.run_method("focus")
+                return
+            c_btn.disable()
             c_prog.start()
 
             def on_prog(done, total):
@@ -251,20 +271,63 @@ def _pack_section(SP, st, pack_name: str, reload_all, default_open: bool = False
                 else:
                     c_prog.set(0, t("sp.cloud_pack_downloading_unknown", done=f"{done / 1e6:.1f}"))
 
+            # 先核对云端版本：若本机已导入同一版本且非强制重下，直接提示无需重复下载
+            remote_info: dict = {}
+            try:
+                packs = await run.io_bound(llm.list_cloud_packs, 8.0, lang())
+                if isinstance(packs, dict) and isinstance(packs.get(pack_name), dict):
+                    remote_info = packs[pack_name]
+            except Exception:  # noqa: BLE001 - 版本查询失败不阻断实际下载
+                remote_info = {}
+
+            local_now = llm.get_imported_cloud_pack(pack_name) or {}
+            local_ver = (local_now.get("version") or "").strip()
+            remote_ver = (remote_info.get("version") or "").strip()
+            remote_uploaded = (remote_info.get("uploaded") or "").strip()
+
+            if not force and local_ver and remote_ver and local_ver == remote_ver:
+                c_prog.stop()
+                if not c_btn.is_deleted:
+                    c_btn.enable()
+                if not c_out.is_deleted:
+                    date_str = remote_uploaded[:10] if remote_uploaded else ""
+                    info_txt = (t("sp.cloud_pack_uptodate", date=date_str) if date_str
+                                else t("sp.cloud_pack_uptodate_nodate"))
+                    with c_out:
+                        notice(info_txt, "info", "info")
+                        ui.button(t("sp.cloud_pack_redl_btn"), icon="refresh",
+                                  on_click=lambda: download_cloud(force=True)) \
+                            .props("outline dense no-caps").classes("mt-1 self-start") \
+                            .mark(f"cloud_pack_redl_{pack_name}")
+                return
+
+            meta: dict = {}
+
             def work():
                 with tempfile.TemporaryDirectory(prefix="sq_pack_") as td:
                     zpath = Path(td) / f"{pack_name}.zip"
-                    _, left = llm.download_cloud_pack(code, pack_name, zpath, on_progress=on_prog, lang=lang())
+                    _, left = llm.download_cloud_pack(
+                        code, pack_name, zpath, on_progress=on_prog, lang=lang(), meta_out=meta
+                    )
                     c_prog.set(1.0, t("sp.cloud_pack_importing"))
                     n = st.import_zip(zpath)
+                    ver = meta.get("version") or remote_ver
+                    if ver or remote_uploaded:
+                        llm.record_imported_cloud_pack(pack_name, version=ver, uploaded=remote_uploaded)
                     return n, left
 
             try:
                 n, left = await run.io_bound(work)
+                cloud_ui.invalidate_quota()
                 if c_out.is_deleted:
                     return
-                msg = (t("sp.cloud_pack_done_left", n=n, left=left) if left is not None
-                       else t("sp.cloud_pack_done", n=n))
+                deducted = meta.get("deducted", True)
+                if left is not None and not deducted:
+                    msg = t("sp.cloud_pack_done_redl", n=n, left=left)
+                elif left is not None:
+                    msg = t("sp.cloud_pack_done_left", n=n, left=left)
+                else:
+                    msg = t("sp.cloud_pack_done", n=n)
                 ui.notify(msg, type="positive")
             except llm.HostedError as ex:
                 if c_out.is_deleted:
@@ -284,7 +347,7 @@ def _pack_section(SP, st, pack_name: str, reload_all, default_open: bool = False
                     c_btn.enable()
             reload_all()
 
-        c_btn.on_click(download_cloud)
+        c_btn.on_click(lambda: download_cloud(force=False))
 
         ui.separator().classes("q-my-sm")
         with ui.column().classes("gap-2 w-full"):

@@ -203,6 +203,9 @@ async def test_data_download_uses_selected_options(user: User, lib_dir, monkeypa
     patch_page(monkeypatch, "/data", "fetch_to_library", fake_fetch)
 
     await user.open("/data")
+    await user.should_see("复权用于消除分红、送转等造成的价格跳变")
+    user.find(marker="data_adjust_help_toggle").click()
+    await user.should_see("不复权保留原始报价")
     user.find("其他代码（6 位，以逗号分隔）").type("159915，510300")
     user.find("下载至本地数据库").click()
     await user.should_see("159915：20 根 K 线")
@@ -598,6 +601,46 @@ async def test_backtest_needs_data(user: User, lib_dir):
     await user.should_not_see(marker="run")
 
 
+async def _check_report_metrics(user: User, *, dca: bool = False):
+    def labels(row):
+        return [label.text for cell in row.default_slot.children
+                for label in cell.default_slot.children if "k" in label.classes]
+
+    await user.should_see(marker="report_metrics_summary")
+    summary = user.find(marker="report_metrics_summary").elements.pop()
+    assert labels(summary) == (
+        ["总收益率", "年化收益率（XIRR）", "相对基准收益", "最大回撤"] if dca else
+        ["总收益率", "年化收益率", "相对基准收益", "最大回撤", "夏普比率"]
+    )
+    metrics = user.find(marker="report_metrics").elements.pop()
+    assert metrics.value is False
+    metrics.set_value(True)
+    await settle()
+    assert metrics.value is True
+    first = user.find(marker="report_metrics_row:0").elements.pop()
+    second = user.find(marker="report_metrics_row:1").elements.pop()
+    columns = 4 if dca else 3
+    assert first.style["grid-template-columns"] == second.style["grid-template-columns"] == (
+        f"repeat({columns}, minmax(0, 1fr))"
+    )
+    assert labels(first) + labels(second) == (
+        ["累计投入", "最终资产", "基准收益率", "基准年化收益率（XIRR）", "时间加权收益率", "夏普比率", "累计盈亏"]
+        if dca else ["最终资产", "基准收益率", "年化波动率", "交易次数", "胜率", "盈亏比"]
+    )
+    assert len(labels(first)) == columns and len(labels(second)) == 3
+    metrics.set_value(False)
+    assert metrics.value is False
+
+
+async def _open_report_details(user: User):
+    details = user.find(marker="report_details").elements.pop()
+    assert details.value is False
+    details.set_value(True)
+    await settle()
+    assert details.value is True
+    await user.should_see("成交记录")
+
+
 async def test_backtest_run_and_results(user: User, lib_dir):
     _save_prices()
     await _open_timing(user, "sma_cross")
@@ -606,8 +649,8 @@ async def test_backtest_run_and_results(user: User, lib_dir):
         if state.STATE.get("bt", {}).get("result") is not None:
             break
         await asyncio.sleep(0.05)
-    await user.should_see("总收益率")
-    await user.should_see("成交记录")
+    await _check_report_metrics(user)
+    await _open_report_details(user)
     await user.should_see("可信度检查")
     res = state.STATE["bt"]["result"]
     assert not res.orders.empty
@@ -797,6 +840,7 @@ async def test_backtest_dca(user: User, lib_dir):
     assert await _wait(lambda: state.STATE.get("bt", {}).get("result") is not None)
     res = state.STATE["bt"]["result"]
     assert res.metrics["contributions"] > 0 and "invested" in res.equity
+    await _check_report_metrics(user, dca=True)
     await user.should_see("累计投入")
     await user.should_see("资金加权年化")
     await user.should_see("每月追加 2,000 元")
@@ -859,6 +903,99 @@ async def test_backtest_recorded_and_reopened_from_home(user: User, lib_dir):
     await _wait(lambda: state.STATE.get("bt", {}).get("result") is not None)
     assert state.STATE["bt"]["result"].metrics["total_return"] == pytest.approx(first)
     assert len(history.recent()) == 1                    # 同一份报告不重复记录
+
+
+async def test_timing_report_tracks_data_range_and_broker(user: User, lib_dir):
+    meta = _save_prices()
+    other = _save_prices("510880", name="红利ETF")
+    state.STATE["bt_ids"] = [meta.id]
+    await _open_timing(user, "sma_cross")
+    user.find(marker="run").click()
+    await user.should_see(marker="next_paper")
+    assert state.STATE["bt"]["sig"][1][0] == (meta.id,)
+
+    selector = user.find(marker="bt_ids").elements.pop()
+    selector.set_value([other.id])
+    await user.should_see(marker="timing_stale")
+    await user.should_not_see(marker="next_paper")
+    selector.set_value([meta.id])
+    await user.should_see(marker="next_paper")
+
+    start = user.find(marker="bt_start").elements.pop()
+    date = start.value
+    start.set_value(str(pd.Timestamp(date).date() + pd.Timedelta(days=30)))
+    assert str(state.STATE["bt_range"][0]) == start.value
+    await user.should_see(marker="timing_stale")
+    start.set_value(date)
+    await user.should_see(marker="next_paper")
+    start.set_value("")
+    await user.should_see(marker="timing_stale")
+    assert not user.find(marker="run").elements.pop().enabled
+    start.set_value(date)
+    await user.should_see(marker="next_paper")
+
+    user.find(marker="bt_cash_yield").elements.pop().set_value(2)
+    await user.should_see(marker="timing_stale")
+    assert "ok" not in user.find(marker="prog:backtest").elements.pop().classes
+    user.find(marker="prog:verify").click()
+    user.find(marker="vf:credibility").click()
+    await user.should_see(marker="vf_run")
+
+
+async def test_selection_history_restores_settings(user: User, lib_dir, paper_dir, monkeypatch):
+    from gui import history
+    from gui.pages.selection import sp_state, current_spec
+    from simplequant.stocks import universe as U
+    from test_stocks import make_panel
+    from types import SimpleNamespace
+
+    history.clear()
+    panel = make_panel(n=16, days=130)
+    g = routes()["/selection"].__globals__
+    monkeypatch.setitem(g["universe_bar"].__globals__, "universe_ready", lambda u: True)
+    monkeypatch.setitem(g["panel_loader"].__globals__, "get_panel", lambda *a: panel)
+    monkeypatch.setattr(U, "load_benchmark", lambda *a: panel.benchmark)
+    monkeypatch.setattr(U, "ready", lambda *a: True)
+    start, end = (d.date().isoformat() for d in (panel.calendar[10], panel.calendar[-1]))
+    SP = sp_state()
+    SP["universe"], SP["top_n"] = "zz500", 5
+    SP["ranges"]["zz500"] = tuple(pd.Timestamp(d).date() for d in (start, end))
+    state.STATE["sp_broker"] = {"cash": 230_000, "preset": "stock", "t1": True, "slippage": 5.0, "custom": {}}
+    spec = current_spec(SP)
+    await user.open("/selection")
+    await user.should_see(marker="sp_run")
+    user.find(marker="sp_run").click()
+    assert await _wait(lambda: bool(history.recent()))
+    entry = history.recent()[0]
+    assert entry["restore"]["broker"]["cash"] == 230_000
+    assert entry["restore"]["range"] == [start, end]
+
+    await user.open("/")
+    user.find(marker="open_report").click()
+    await user.should_see(marker="next_paper")
+    await user.should_not_see(marker="sp_history_notice")
+    await _check_report_metrics(user)
+    await _open_report_details(user)
+    user.find(marker="next_paper").click()
+    await user.should_see(marker="pp_create")
+    assert _expanded(user, "pp_new")
+    assert state.STATE["pp"]["draft"]["spec"] == spec
+    assert state.STATE["pp_selection_broker"]["cash"] == 230_000
+
+    state.reset()
+    state.STATE["sp_tab"] = "verify"
+    sp_state()["result"] = (SimpleNamespace(), {"kind": "selection"}, 0)
+    await user.open("/")
+    user.find(marker="open_report").click()
+    await user.should_see(marker="sp_history_notice")
+    await user.should_see(marker="sp_run")
+    restored = sp_state()
+    assert restored.get("result") is None and current_spec(restored) == spec
+    assert user.find(marker="sp_tabs").elements.pop().value == "bt"
+    assert user.find(marker="sp_universe").elements.pop().value == "zz500"
+    assert user.find(marker="sp_start").elements.pop().value == start
+    assert user.find(marker="sp_end").elements.pop().value == end
+    assert state.STATE["sp_broker"]["cash"] == 230_000
 
 
 async def test_backtest_export_menu(user: User, lib_dir):
@@ -1274,6 +1411,8 @@ async def test_selection_advanced_settings(user: User):
     adv = user.find(marker="sp_advanced").elements.pop()
     fadv = user.find(marker="sp_factor_advanced").elements.pop()
     assert adv.value is False and fadv.value is False
+    await user.should_see("因子处理")
+    await user.should_see("仓位、持仓与分红")
     assert user.find(marker="sp_advanced_summary").elements.pop().text == ""
 
     spec = {**current_spec(SP), "skip_months": [1, 4], "keep_n": 15, "position_pct": 80,
@@ -1943,6 +2082,7 @@ async def test_new_ui_timing_workbench(user: User, lib_dir):
     await user.should_see(marker="timing_strategy")
     assert "on" in user.find(marker="nav:/timing").elements.pop().classes
     assert _expanded(user, "bt_setup")                       # 还没有结果：设置展开
+    assert "current" in cell("setup").classes
     user.find(marker="mode").elements.pop().set_value("rule")
     await settle()
     user.find(marker="add:buy").click()                      # 多加一条买入条件（写到一半）
@@ -1957,11 +2097,16 @@ async def test_new_ui_timing_workbench(user: User, lib_dir):
     await user.should_not_see("参数优化 →")
     assert BT()["spec"]["kind"] == "rule" and len(BT()["spec"]["rule"]["buy"]["conditions"]) == n
     assert not strategies.list_strategies()                  # 运行不自动保存
-    assert "ok" in cell("backtest").classes and "next" in cell("setup").classes
+    assert {"ok", "current"} <= set(cell("backtest").classes)
+
+    user.find(marker="prog:verify").click()
+    await settle()
+    assert "current" in cell("verify").classes
 
     user.find(marker="prog:setup").click()
     await settle()
     assert _expanded(user, "bt_setup")
+    assert "current" in cell("setup").classes and "current" not in cell("verify").classes
     cid = S["rule"]["buy"]["conditions"][-1]["_id"]
     assert len(S["rule"]["buy"]["conditions"]) == n and user.find(marker=f"del:{cid}").elements
 
@@ -2431,6 +2576,53 @@ async def test_paper_single_account_flow(user: User, lib_dir, paper_dir, monkeyp
     assert await _wait(lambda: not list_accounts())
 
 
+async def test_paper_backtest_prefill_and_retry_initialization(user: User, lib_dir, paper_dir, monkeypatch):
+    from simplequant.engine import BrokerConfig
+    from simplequant.paper import create_account, runner, list_accounts
+
+    meta = _save_prices()
+    prices = library.load(meta.id)
+    calendar = pd.bdate_range(prices.index[0], periods=len(prices) + 20)
+    monkeypatch.setattr(runner, "load_calendar", lambda: calendar)
+    monkeypatch.setattr(runner, "latest_expected_day", lambda c: prices.index[-1])
+    attempts = []
+
+    def fetch(acc, **kwargs):
+        attempts.append(acc.id)
+        if len(attempts) == 1:
+            raise OSError("initial download unavailable")
+        return {acc.assets[0]["name"]: prices}
+
+    monkeypatch.setattr(runner, "refresh_single_data", fetch)
+    spec = {"kind": "template", "template": "sma_cross", "params": {"fast": 12, "slow": 36}}
+    create_account("已有模拟账户", spec, BrokerConfig(), meta.start)
+    state.STATE["bt_broker"] = {"cash": 180_000, "preset": "etf", "t1": True, "slippage": 5.0, "custom": {}}
+    await _open_timing(user, {"name": "报告策略", **spec})
+    user.find(marker="run").click()
+    await user.should_see(marker="next_paper")
+    report_spec = state.STATE["bt"]["spec"]
+    user.find(marker="next_paper").click()
+    await user.should_see(marker="pp_create")
+    assert _expanded(user, "pp_new")
+    assert user.find(marker="pp_assets").elements.pop().value == [meta.id]
+    assert user.find(marker="pp_name").elements.pop().value == "报告策略"
+    assert state.STATE["pp_single_broker"]["cash"] == 180_000
+    assert not strategies.list_strategies()
+
+    user.find(marker="pp_create").click()
+    await user.should_see("首次行情下载失败", retries=200)
+    failed = next(a for a in list_accounts() if a.name == "报告策略")
+    assert failed.start_on_latest and failed.error()
+    user.find(marker="pp_run_this").click()
+    assert await _wait(lambda: any(a.id == failed.id and a.data_through for a in list_accounts()), n=600)
+    accounts = list_accounts()
+    account = next(a for a in accounts if a.id == failed.id)
+    assert len(accounts) == 2 and attempts == [failed.id, failed.id]
+    assert not account.start_on_latest and not account.error()
+    assert account.start == prices.index[-1].date().isoformat() and account.broker["cash"] == 180_000
+    assert account.spec == report_spec
+
+
 async def test_home_paper_warnings(user: User, paper_dir, monkeypatch):
     """首页模拟账户卡片：没有定时任务、上次运行失败、多日未更新时提示；模拟盘页显示失败原因"""
     from simplequant.engine import BrokerConfig
@@ -2516,6 +2708,38 @@ async def test_home_accounts_table(user: User, paper_dir, monkeypatch):
     await user.should_see(marker="pp_detail_name")
     assert user.find(marker="pp_detail_name").elements.pop().text == "没有信号"
     assert state.STATE["pp"]["account"] == quiet.id
+
+
+async def test_paper_schedule_status(user: User, paper_dir, monkeypatch):
+    from simplequant.paper import schedule
+
+    scheduled = False
+
+    def create(at):
+        nonlocal scheduled
+        assert at == "19:00"
+        scheduled = True
+        return True, ""
+
+    def delete():
+        nonlocal scheduled
+        scheduled = False
+        return True, ""
+
+    monkeypatch.setattr(schedule, "task_exists", lambda: scheduled)
+    monkeypatch.setattr(schedule, "create_task", create)
+    monkeypatch.setattr(schedule, "delete_task", delete)
+    await user.open("/paper")
+    await user.should_see("尚未设置自动运行")
+    await user.should_not_see(marker="pp_task_create")
+    user.find(marker="pp_schedule").elements.pop().open()
+    await user.should_see(marker="pp_task_create")
+    user.find(marker="pp_task_create").click()
+    await user.should_see("已设置每日自动运行")
+    await user.should_see(marker="pp_task_delete")
+    user.find(marker="pp_task_delete").click()
+    await user.should_see("尚未设置自动运行")
+    await user.should_not_see(marker="pp_task_delete")
 
 
 async def test_paper_accounts_overview(user: User, paper_dir, monkeypatch):
@@ -2732,8 +2956,19 @@ async def test_allocation_to_portfolio_paper_account(user: User, lib_dir, paper_
     await user.open("/paper")
     await user.should_see("资产配置组合")
     await user.should_see("再平衡方式：每季度")
-    await user.should_see("开盘待执行交易")
+    await user.should_see("待执行信号")
+    await user.should_see(f"{st['execute_on']} 开盘待执行交易")
+    await user.should_see(f"数据截至 {st['as_of']} 收盘")
+    await user.should_not_see(marker="pf_sleeves")
+    user.find(kind=ui.tabs).elements.pop().set_value("pos")
+    await user.should_see(marker="pf_sleeves")
+    await user.should_not_see(marker="pp_task_create")
+    user.find(marker="pp_schedule").elements.pop().open()
+    await user.should_see(marker="pp_task_create")
     # 新建账户选「资产配置组合」时引导到资产配置页
+    await user.should_not_see(marker="pp_kind")
+    user.find(marker="pp_new").elements.pop().open()
+    await user.should_see(marker="pp_kind")
     user.find(marker="pp_kind").elements.pop().set_value("portfolio")
     await user.should_see(marker="pp_go_allocation")
 
@@ -2953,7 +3188,7 @@ async def test_new_ui_selection_workbench(user: User):
 
     def cell(k):            # 进度的一格：是否打勾、状态
         el = user.find(marker=f"prog:{k}").elements.pop()
-        return {"done": "ok" in el.classes, "v": el.default_slot.children[1].text}
+        return {"done": "ok" in el.classes, "current": "current" in el.classes, "v": el.default_slot.children[1].text}
 
     def status(k):          # 左列某一项的状态小字
         return user.find(marker=f"vf:{k}").elements.pop().default_slot.children[1].text
@@ -2961,14 +3196,17 @@ async def test_new_ui_selection_workbench(user: User):
     assert tab() == "bt"
     await user.should_not_see(marker="sp_res_factor")
     assert not cell("backtest")["done"]
+    assert cell("setup")["current"]
 
     user.find(marker="sp_run").click()
     assert await _wait(lambda: SP.get("result"), n=1200)
     await settle()
     assert cell("backtest")["done"] and cell("backtest")["v"].endswith("%")     # 回测一步完成，显示收益
+    assert cell("backtest")["current"]
     user.find(marker="prog:verify").click()
     await settle()
     assert tab() == "verify"
+    assert cell("verify")["current"]
     assert status("credibility").startswith("✓")
     assert status("phase") == t("vf.st_not_run") and status("walkforward") == t("vf.st_not_run")
     await user.should_see(marker="credibility")
@@ -2979,6 +3217,10 @@ async def test_new_ui_selection_workbench(user: User):
     await settle()
     await user.should_see(marker="spwf_run")
     assert state.STATE["sp_vf"] == "walkforward"
+
+    user.find(marker="prog:setup").click()
+    await settle()
+    assert tab() == "bt" and cell("setup")["current"] and not cell("verify")["current"]
 
     # 改了设置：回测结果不再算数，可信度一项要求先回测
     SP["top_n"] = SP["top_n"] + 5
@@ -3381,34 +3623,38 @@ async def _leave_for_good(element):
 async def test_data_download_fails_after_leaving_page(user: User, monkeypatch, tab, mark, method):
     """数据中心「选股数据 / 可转债」下载途中离开了页面，之后下载失败：失败提示画不出来（页面已不在），
     不再报错（线上 3.2.0 的 RuntimeError @ gui.widgets.notice）"""
-    import sys
     import threading
     from nicegui import app
-    routes()
-    gate, errors = threading.Event(), []
+    from gui import sel_panel
+    from simplequant import bonds
+    entered, gate, errors = threading.Event(), threading.Event(), []
 
     class Store:
         def __getattr__(self, name):
             def call(*a, **kw):
                 if name == method:
+                    entered.set()
                     gate.wait(10)
                     raise ConnectionError("网络接收错误")
                 raise AssertionError(name)
             return call
-    monkeypatch.setitem(sys.modules["gui.sel_panel"].__dict__, "universe_ready", lambda u: False)
+    monkeypatch.setattr(sel_panel, "universe_ready", lambda u: False)
+    if tab == "stocks":
+        monkeypatch.setattr(sel_panel, "store", Store)
+    else:
+        monkeypatch.setattr(bonds, "CBStore", Store)
     monkeypatch.setattr(app, "_exception_handlers", [*app._exception_handlers, errors.append])
     state.STATE["data_tab"] = tab
     await user.open("/data")
-    import gui.pages.selection.data_tab  # noqa: F401  页面打开后才导入
-    monkeypatch.setitem(sys.modules["gui.pages.selection.data_tab"].__dict__, "store", Store)
-    await user.open("/data")
     btn = user.find(marker=mark).elements.pop()
-    user.find(marker=mark).click()
-    await settle()
-    await user.open("/")
-    await _leave_for_good(btn)
-    del btn
-    gate.set()
+    try:
+        user.find(marker=mark).click()
+        assert await _wait(entered.is_set), "下载未调用测试数据源"
+        await user.open("/")
+        await _leave_for_good(btn)
+        del btn
+    finally:
+        gate.set()
     await asyncio.sleep(0.5)
     assert not errors, errors
 
@@ -3599,9 +3845,13 @@ async def test_data_cloud_pack_download_and_import(user: User, monkeypatch, tmp_
     monkeypatch.setattr(sel_panel, "store", lambda: dst)
     monkeypatch.setattr(llm, "load_config", lambda: llm.LLMConfig.from_preset("hosted", api_key="sq-PREFILL1"))
 
+    monkeypatch.setattr(llm, "list_cloud_packs", lambda timeout=10.0, lang="zh": {})
+    monkeypatch.setattr(llm, "get_imported_cloud_pack", lambda pack, cache_dir=None: None)
+    monkeypatch.setattr(llm, "record_imported_cloud_pack", lambda *a, **kw: None)
+
     seen = []
 
-    def fake_dl(code, pack, dest, on_progress=None, timeout=120.0, lang="zh"):
+    def fake_dl(code, pack, dest, on_progress=None, timeout=120.0, lang="zh", meta_out=None):
         seen.append((code, pack))
         if code == "sq-BADCODE":
             raise llm.HostedError("额度码无效，请核对后重试。", status=401, code="invalid_voucher")
@@ -3614,8 +3864,8 @@ async def test_data_cloud_pack_download_and_import(user: User, monkeypatch, tmp_
 
     await user.open("/data?tab=stocks")
     await settle()
-    # 独立的数据包下载码输入（不强绑定设置页 AI 码），且无数据时默认展开
-    assert user.find(marker="cloud_pack_code_stocks").elements.pop().value == ""
+    # 自动预填已保存的托管额度码，且支持手动改为其他数据包下载码
+    assert user.find(marker="cloud_pack_code_stocks").elements.pop().value == "sq-PREFILL1"
     user.find(marker="cloud_pack_code_stocks").elements.pop().set_value("sq-PACK1111")
     user.find(marker="cloud_pack_btn_stocks").click()
     await user.should_see("已导入云端数据包，共 1 只标的（该额度码剩余数据包下载次数：2）", retries=20)

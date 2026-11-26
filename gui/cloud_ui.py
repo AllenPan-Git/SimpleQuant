@@ -89,9 +89,16 @@ def open_cloud_dialog(on_saved=None):
                     ui.label(t("cloud.feat_ai_body")).classes("sq-muted text-xs leading-relaxed")
             with ui.row().classes("items-start gap-2 no-wrap mt-1"):
                 ui.icon("cloud_download", size="18px").classes("sq-red mt-0.5")
-                with ui.column().classes("gap-0"):
+                with ui.column().classes("gap-1"):
                     ui.label(t("cloud.feat_pack_title")).classes("text-sm font-semibold")
                     ui.label(t("cloud.feat_pack_body")).classes("sq-muted text-xs leading-relaxed")
+                    with ui.row().classes("items-center gap-2 flex-wrap mt-0.5"):
+                        ui.button(t("cloud.go_pack_stocks"), icon="download",
+                                  on_click=lambda: _go_pack("stocks")) \
+                            .props("outline dense no-caps").classes("text-xs").mark("cloud_go_pack_stocks")
+                        ui.button(t("cloud.go_pack_cb"), icon="download",
+                                  on_click=lambda: _go_pack("cb")) \
+                            .props("outline dense no-caps").classes("text-xs").mark("cloud_go_pack_cb")
 
         # 额度码输入与查询
         code_in = ui.input(
@@ -101,6 +108,22 @@ def open_cloud_dialog(on_saved=None):
         status = ui.label(
             format_quota(cached_quota(cfg)) if cached_quota(cfg) is not None else t("cloud.status_hint")
         ).classes("text-xs sq-muted mt-1 mb-3").mark("cloud_quota_status")
+
+        def _go_pack(tab: str):
+            key = (code_in.value or "").strip()
+            if not key:
+                msg = t("cloud.pack_need_code")
+                if not status.is_deleted:
+                    status.text = msg
+                ui.notify(msg, type="warning")
+                code_in.run_method("focus")
+                return
+            from gui import state
+            from gui.layout import navigate
+            state.STATE["data_tab"] = tab
+            state.STATE["open_pack"] = True
+            dlg.close()
+            navigate("/data", refresh_same=True)
 
         async def _refresh_quota(key: str):
             status.text = t("set.quota_checking")

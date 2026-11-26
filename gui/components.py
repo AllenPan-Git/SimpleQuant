@@ -38,6 +38,13 @@ class DataPick:
     def date_range(self):
         return (self.start, self.end) if self.ids and not self.error and self.start and self.end else None
 
+    def snapshot(self):
+        return DataPick(ids=list(self.ids), start=self.start, end=self.end, error=self.error,
+                        freqs=set(self.freqs), union=self.union)
+
+    def signature(self, broker: BrokerConfig) -> tuple:
+        return (tuple(self.ids), self.date_range, broker)
+
 
 def data_selector(by_id: dict, key: str, on_change) -> DataPick:
     """选数据 + 日期区间；key 区分页面（其他页面可在 state.STATE[f"{key}_ids"] 预选数据）"""
@@ -50,8 +57,8 @@ def data_selector(by_id: dict, key: str, on_change) -> DataPick:
         sel = ui.select({i: dataset_label(m, lg) for i, m in by_id.items()}, label=t("bt.pick_assets"),
                         value=ids, multiple=True).props(DENSE + " use-chips").classes("w-full").mark(f"{key}_ids")
         with ui.row().classes("w-full items-start gap-3"):
-            start = ui.input(t("data.start")).props("outlined dense type=date").classes("w-44")
-            end = ui.input(t("data.end")).props("outlined dense type=date").classes("w-44")
+            start = ui.input(t("data.start")).props("outlined dense type=date").classes("w-44").mark(f"{key}_start")
+            end = ui.input(t("data.end")).props("outlined dense type=date").classes("w-44").mark(f"{key}_end")
             span = ui.label().classes("sq-muted text-sm self-center")
         err = ui.label().classes("text-negative text-sm")
 
@@ -97,14 +104,19 @@ def data_selector(by_id: dict, key: str, on_change) -> DataPick:
         try:
             d = dt.date.fromisoformat(e.value)
         except (TypeError, ValueError):
+            setattr(pick, which, None)
+            on_change()
             return
         lo, hi = bounds()
         if lo and hi:
             d = min(max(d, lo), hi)
         setattr(pick, which, d)
-        if pick.start and pick.end and pick.start > pick.end:
-            pick.error = t("bt.no_overlap")
-        state.STATE[f"{key}_range"] = (pick.start, pick.end)
+        if len(pick.freqs) <= 1:
+            pick.error = t("bt.no_overlap") if pick.start and pick.end and pick.start > pick.end else ""
+            err.text = pick.error
+            err.set_visibility(bool(pick.error))
+        if pick.start and pick.end:
+            state.STATE[f"{key}_range"] = (pick.start, pick.end)
         on_change()
 
     def on_union():
@@ -441,30 +453,37 @@ def metric_tile(label: str, value: str, delta: str | None = None, help_text: str
 
 
 def _fig_cell(k: str, m: dict, helps: dict):
-    delta = cls = None
-    if k == "total_return":
-        ex = m.get("excess_return")
-        delta = t("bt.excess", v=fmt_metric("excess_return", ex))
+    cls = None
     v = m.get(k)
     if k in ("total_return", "cagr", "excess_return", "xirr", "profit") and v == v and v is not None:
         cls = "sq-up" if v >= 0 else "sq-down"
     elif k == "max_drawdown":
         cls = "sq-down"
     with ui.element("div") as cell:
-        ui.label(t(f"m.{k}")).classes("k")
+        ui.label(t("bt.report_excess") if k == "excess_return" else t(f"m.{k}")).classes("k")
         ui.label(fmt_metric(k, v)).classes("v " + (cls or ""))
-        if delta:
-            ui.label(delta).classes("d")
     if k in helps:
         cell.tooltip(t(helps[k]))
 
 
-def metric_tiles(m: dict):
-    """结果指标：两行细线分栏，第一行大号数字；定投（有追加资金）换成按累计投入与 XIRR 的一组"""
+def metric_tiles(m: dict, *, details: bool = False):
+    """报告首行展示核心表现，其余指标在折叠区展示。"""
     dca = "invested" in m
     rows, helps = (DCA_TILE_ROWS, {**TILE_HELP, **DCA_TILE_HELP}) if dca else (TILE_ROWS, TILE_HELP)
-    for i, row in enumerate(rows):
-        with ui.element("div").classes("sq-figs" + (" sq-figs-sub" if i else ""))                 .style(f"grid-template-columns: repeat({len(row)}, minmax(0, 1fr))"):
+    summary = ("total_return", "xirr", "excess_return", "max_drawdown") if dca else (
+        "total_return", "cagr", "excess_return", "max_drawdown", "sharpe",
+    )
+    visible = [summary]
+    columns = len(summary)
+    if details:
+        remaining = [k for row in rows for k in row if k not in summary]
+        columns = 4 if dca else 3
+        visible = [remaining[start:start + columns] for start in range(0, len(remaining), columns)]
+    for i, row in enumerate(visible):
+        with ui.element("div").classes("sq-figs" + (" sq-figs-details" if details else "")
+                                       + (" sq-figs-sub" if i else "")) \
+                .style(f"grid-template-columns: repeat({columns}, minmax(0, 1fr))") \
+                .mark(f"report_metrics_row:{i}" if details else "report_metrics_summary"):
             for k in row:
                 _fig_cell(k, m, helps)
 
@@ -545,15 +564,18 @@ def walkforward_results(res, labels: dict, metric: str, stitch_label: str, note:
 
 # ---------------- 策略进度（新版界面：设置 → 回测 → 验证 → 模拟盘） ----------------
 def strategy_progress(steps: list[dict], on_click=None, mark: str = "prog"):
-    """四格进度条（沿用首页 .sq-pipe 的样式：完成的打勾，「建议下一步」浅红底）。
+    """四格进度条：完成的打勾，工作台当前步骤或首页建议下一步使用浅红底。
     steps 由 shared.progress_steps 算好；给了 on_click(key) 时每格可点，跳到工作台对应的位置。
     每格 mark 为 {mark}:{key}；小字状态在前，悬停显示全文"""
     with ui.element("div").classes("sq-pipe sq-progress").style(f"grid-template-columns: repeat({len(steps)}, minmax(0, 1fr))") \
             .mark(mark):
         for s in steps:
-            cls = "ok" if s["done"] else "next" if s["next"] else ""
-            cell = ui.element("div").classes(cls + (" sq-progress-link" if on_click else "")).mark(f"{mark}:{s['key']}")
+            classes = [name for name, show in (("ok", s["done"]), ("next", s["next"]),
+                                               ("current", s["current"]), ("sq-progress-link", on_click)) if show]
+            cell = ui.element("div").classes(" ".join(classes)).mark(f"{mark}:{s['key']}")
             cell.props["title"] = s["title"]
+            if s["current"]:
+                cell.props["aria-current"] = "step"
             if on_click:
                 cell.on("click", lambda k=s["key"]: on_click(k))
             with cell:

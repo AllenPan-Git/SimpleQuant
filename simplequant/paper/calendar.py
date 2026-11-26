@@ -24,19 +24,20 @@ def refresh_calendar(path: Path = CAL_PATH) -> pd.DatetimeIndex:
 
 
 def load_calendar(path: Path = CAL_PATH, refresh_if_stale: bool = True) -> pd.DatetimeIndex:
-    """本地缓存超过 7 天或覆盖不到未来 20 天时，重新获取"""
+    """允许刷新时补齐日历，仅展示时使用本地缓存或工作日近似。"""
     if path.exists():
         cal = pd.DatetimeIndex(pd.read_parquet(path)["date"])
         fresh = (dt.datetime.now().timestamp() - path.stat().st_mtime) < 7 * 86400
         covers = len(cal) and cal[-1] >= pd.Timestamp(dt.date.today() + dt.timedelta(days=20))
         if fresh and covers or not refresh_if_stale:
             return cal
-    try:
-        return refresh_calendar(path)
-    except Exception:  # noqa: BLE001 - 取不到时退回缓存或工作日近似
-        if path.exists():
-            return pd.DatetimeIndex(pd.read_parquet(path)["date"])
-        return pd.bdate_range("2015-01-01", dt.date.today() + dt.timedelta(days=60))
+    if refresh_if_stale:
+        try:
+            return refresh_calendar(path)
+        except Exception:  # noqa: BLE001 - 取不到时退回缓存或工作日近似
+            if path.exists():
+                return pd.DatetimeIndex(pd.read_parquet(path)["date"])
+    return pd.bdate_range("2015-01-01", dt.date.today() + dt.timedelta(days=60))
 
 
 def next_trading_days(calendar: pd.DatetimeIndex, after, n: int = 40) -> pd.DatetimeIndex:

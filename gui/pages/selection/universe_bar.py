@@ -55,6 +55,8 @@ def universe_bar(SP, ctx, on_reload):
         ctx.lo, ctx.hi = idx.index[0].date(), idx.index[-1].date()
         a, b = SP["ranges"].get(u, (ctx.lo, ctx.hi))
         a, b = max(a, ctx.lo), min(b, ctx.hi)
+        if a > b:
+            a, b = ctx.lo, ctx.hi
         SP["ranges"][u] = (a, b)
         for el in (start_in, end_in):
             el.props(f"min={ctx.lo} max={ctx.hi}")

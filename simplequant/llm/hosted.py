@@ -176,6 +176,48 @@ def list_cloud_packs(timeout: float = 10.0, lang: str = "zh") -> dict:
         raise HostedError(pick(L(f"无法连接云端数据包服务：{e}", f"Unable to reach cloud data pack service: {e}"), lang)) from e
 
 
+def _pack_state_path(cache_dir: Path | None = None) -> Path:
+    return (cache_dir or CACHE_DIR) / "cloud_packs.json"
+
+
+def get_imported_cloud_pack(pack: str, cache_dir: Path | None = None) -> dict | None:
+    """读取本机已导入的云端数据包版本记录（用于避免同版本重复下载）。"""
+    path = _pack_state_path(cache_dir)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        rec = data.get(pack) if isinstance(data, dict) else None
+        return dict(rec) if isinstance(rec, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def record_imported_cloud_pack(
+    pack: str,
+    version: str = "",
+    uploaded: str = "",
+    cache_dir: Path | None = None,
+) -> None:
+    """记录本机已导入的云端数据包版本信息。"""
+    import datetime as dt
+    path = _pack_state_path(cache_dir)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            data = {}
+    except (OSError, ValueError):
+        data = {}
+    data[pack] = {
+        "version": (version or "").strip(),
+        "uploaded": (uploaded or "").strip(),
+        "imported_at": dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+
+
 def download_cloud_pack(
     code: str,
     pack: str,
@@ -183,6 +225,7 @@ def download_cloud_pack(
     on_progress: Callable[[int, int], None] | None = None,
     timeout: float = 120.0,
     lang: str = "zh",
+    meta_out: dict | None = None,
 ) -> tuple[Path, int | None]:
     """凭额度码从云端 R2 下载数据包并保存到 dest，返回 (dest, 剩余下载次数)。"""
     code = (code or "").strip()
@@ -207,6 +250,11 @@ def download_cloud_pack(
             total = int(resp.headers.get("Content-Length") or 0)
             left_hdr = resp.headers.get("X-SQ-Pack-Left")
             pack_left = int(left_hdr) if left_hdr and left_hdr.isdigit() else None
+            if meta_out is not None:
+                ded_hdr = resp.headers.get("X-SQ-Pack-Deducted")
+                ver_hdr = (resp.headers.get("X-SQ-Pack-Version") or "").strip()
+                meta_out["deducted"] = (ded_hdr != "0") if ded_hdr is not None else True
+                meta_out["version"] = ver_hdr
             done = 0
             with tmp.open("wb") as f:
                 while True:

@@ -1,13 +1,13 @@
 """
 匿名使用统计 + 反馈（待办 57）。接收端：SimpleQuant-site/worker（https://api.simplequant.org）
 
-- 本机按天累计到 data_cache/telemetry.json；用户同意后：软件开着时数字有变化最多每 10 分钟发一次，
-  第一次做某件事（里程碑）时立刻发，关闭软件时再发一次；联网失败留到下次（待办 62）
+- 本机按天累计到 data_cache/telemetry.json；默认开启统计（Opt-out，首页首次打开明确告知，可一键关闭或随时在设置页关闭）：
+  软件开着时数字有变化最多每 10 分钟发一次，第一次做某件事（里程碑）时立刻发，关闭软件时再发一次；联网失败留到下次（待办 62）
 - 只收：随机安装编号、版本、系统、界面语言、界面版本（3.2 起只有新版）；里程碑（距安装天数）；按天的计数；报错类型与位置
 - 一律不收：策略内容、股票代码、资金、回测结果、文件路径、API key。计数键、报错位置在这里和服务器各校验一次
 - 没调用 activate() 时（界面测试、截图、--paper、打包版自动测试）所有记录都是空操作，也不会联网
 
-同意状态 consent：None = 还没问过（只在本机累计，不发送）；True = 同意；False = 不同意（清空已累计的，之后不再记录）
+同意状态 consent：None = 尚未关闭首页告知条（默认开启记录与发送）；True = 已确认开启；False = 已关闭（清空已累计的，之后不再记录与发送）
 """
 
 from __future__ import annotations
@@ -250,8 +250,10 @@ def payload() -> dict | None:
 
 
 def due() -> bool:
-    """同意了，且上次发送后数字有变化（或今天还没发过）"""
-    return bool(_state) and _state.get("consent") is True and         (bool(_state.get("pending")) or _state.get("last_sent") != _today())
+    """未关闭统计（默认开启），且上次发送后数字有变化（或今天还没发过）"""
+    return bool(_state) and _state.get("consent") is not False and (
+        bool(_state.get("pending")) or _state.get("last_sent") != _today()
+    )
 
 
 def send(post=None, timeout: float = TIMEOUT) -> bool:
@@ -283,9 +285,9 @@ def send(post=None, timeout: float = TIMEOUT) -> bool:
         _send_lock.release()
 
 
-def start(first_delay: float = 5, every: float = SEND_EVERY):
-    """软件开着时的后台发送：启动几秒后先发一次，之后每 every 秒看一次、有变化才发；
-    里程碑叫醒（_wake）时立刻发。后台线程随程序退出，关闭时由 flush() 补最后一次"""
+def start(first_delay: float = 15, every: float = SEND_EVERY):
+    """软件开着时的后台发送：启动延迟 first_delay 秒后先发一次（给首次打开的用户留出查看告知条并一键关闭的窗口），
+    之后每 every 秒看一次、有变化才发；里程碑叫醒（_wake）时立刻发。后台线程随程序退出，关闭时由 flush() 补最后一次"""
     global _loop
     if not _state or (_loop is not None and _loop.is_alive()):
         return

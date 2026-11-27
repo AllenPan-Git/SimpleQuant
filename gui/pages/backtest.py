@@ -35,13 +35,13 @@ from ui.shared import (export_script, export_filename, platform_export, orders_t
                        spec_key, timing_verify)
 
 
-def report(BT: dict, exp_menu, to_verify, on_iterate=None):
+def report(BT: dict, exp_menu, to_verify, on_iterate=None, on_change_asset=None):
     """回测报告：分别回测是分布与明细，否则是完整报告；还没有结果时什么都不画。
     to_verify()：右侧「下一步」的验证（择时工作台切到「验证」标签）"""
     if BT.get("batch") is not None:
         _batch_results(BT)
     elif BT.get("result") is not None:
-        _results(BT, exp_menu, to_verify, on_iterate=on_iterate)
+        _results(BT, exp_menu, to_verify, on_iterate=on_iterate, on_change_asset=on_change_asset)
 
 
 def setup_bar(by_id: dict, BT: dict, strategy_part, sticky: bool = False, open_: bool | None = None) -> SimpleNamespace:
@@ -258,6 +258,7 @@ def setup_bar(by_id: dict, BT: dict, strategy_part, sticky: bool = False, open_:
         saved_broker = deepcopy(state.STATE.get("bt_broker", {}))
         run_setup = {k: v for k, v in chip_items() if k != "strategy"}
         plan_ctx = state.STATE.pop("bt_plan", None)        # 刚导入的方案：回测后与其中记录的结果核对
+        is_sample = bool(state.STATE.pop("bt_sample_run", False))
         sig = signature()
         warm = warm_start(data, spec)                      # 用到估值百分位：区间前的数据只预热
         request = state.STATE["bt_request"] = object()
@@ -281,7 +282,7 @@ def setup_bar(by_id: dict, BT: dict, strategy_part, sticky: bool = False, open_:
             BT.update(result=res, title=(label, list(prices), next(iter(data.freqs))), spec=spec,
                       broker=broker, name=name, div_notes=(skipped, patched),
                       checks=check_backtest(res.metrics, res.trades, tried, res.positions, res.prices), sig=sig,
-                      sources=sources(data), run_setup=run_setup)
+                      sources=sources(data), run_setup=run_setup, is_sample=is_sample)
             if plan_ctx:
                 BT["plan_check"] = (plan_mod.compare(plan_ctx.get("result"), res.metrics), plan_ctx)
             _remember(BT, by_id, data, saved_broker)
@@ -552,12 +553,13 @@ def _checks(BT: dict):
     draw()
 
 
-def _results(BT: dict, exp_menu, to_verify, on_iterate=None):
+def _results(BT: dict, exp_menu, to_verify, on_iterate=None, on_change_asset=None):
     lg = lang()
     res = BT["result"]
     label, names, freq = BT["title"]
     paper_setup = BT["spec"], BT["broker"], BT["name"] or label, BT["sig"][1][0]
     symbols = list(res.prices)
+    sample_box = None
     with ui.element("div").classes("sq-report w-full grid gap-12 pt-2").style("grid-template-columns: minmax(0, 1fr) 280px"):
         # ---------------- 报告正文 ----------------
         with ui.column().classes("gap-0 min-w-0"):
@@ -569,6 +571,8 @@ def _results(BT: dict, exp_menu, to_verify, on_iterate=None):
                 ui.label(src).classes("sq-muted text-xs").mark("bt_sources")
             ui.html(lede(res)).classes("sq-lede my-5")
             metric_tiles(res.metrics)
+            if BT.get("is_sample"):
+                sample_box = ui.column().classes("w-full pt-4")
             if any(BT.get("div_notes", ({}, {}))):
                 with ui.column().classes("w-full pt-4 gap-2"):
                     dividend_notices(*BT["div_notes"])
@@ -632,7 +636,10 @@ def _results(BT: dict, exp_menu, to_verify, on_iterate=None):
                   lambda: ui.navigate.to(routes.paper_from_backtest(*paper_setup))) \
                 .mark("next_paper")
             _next("↗", t("bt.next_export"), t("bt.next_export_body"), exp_menu.open)
-            _explain(BT, explain_out, on_iterate=on_iterate)
+            explain_fn = _explain(BT, explain_out, on_iterate=on_iterate)
+    if sample_box is not None:
+        with sample_box:
+            _sample_next_bar(on_change_asset, explain_fn)
     with ui.expansion(t("bt.details"), icon="receipt_long").props("header-class=px-0") \
             .classes("w-full sq-rule-bottom mt-6").mark("report_details"):
         with ui.tabs().classes("w-full").props("align=left no-caps") as tabs:
@@ -669,10 +676,27 @@ def _next(no: str, title: str, body: str, on_click, rec: bool = False):
     return el
 
 
+def _sample_next_bar(on_change_asset, explain_fn):
+    """示例回测后的研报风细线轻引导（待办 63 第二部分）：引导更换标的重新回测或体验 AI 解读"""
+    with ui.row().classes("w-full items-center justify-between gap-4 py-3 flex-wrap") \
+            .style("border-top: 1px solid var(--sq-border); border-bottom: 1px solid var(--sq-border2)") \
+            .mark("bt_sample_next"):
+        with ui.column().classes("gap-0.5 min-w-0").style("flex: 1 1 280px"):
+            ui.label(t("bt.sample_next_eyebrow")).classes("sq-eyebrow")
+            ui.label(t("bt.sample_next_body")).classes("text-sm").style("color: var(--sq-text2)")
+        with ui.row().classes("items-center gap-2 flex-wrap shrink-0"):
+            if on_change_asset:
+                ui.button(t("bt.sample_change_asset"), icon="tune", on_click=on_change_asset) \
+                    .props("outline dense no-caps").classes("px-3").mark("sample_change_asset")
+            if explain_fn:
+                ui.button(t("bt.sample_ai_explain"), icon="auto_awesome", on_click=explain_fn) \
+                    .props("outline dense no-caps").classes("px-3").mark("sample_ai_explain")
+
+
 def _explain(BT: dict, out, on_iterate=None):
     cfg = llm.load_config() or llm.LLMConfig()
     if not (cfg and cfg.ready):
-        return
+        return None
 
     async def explain():
         c = llm.load_config() or llm.LLMConfig()
@@ -713,6 +737,7 @@ def _explain(BT: dict, out, on_iterate=None):
 
     el = _next("AI", t("ai.explain"), t("bt.next_ai_body"), explain).mark("explain")
     show()
+    return explain
 
 
 def _native(BT: dict):

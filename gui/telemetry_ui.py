@@ -30,19 +30,23 @@ def preview_dialog():
 
 
 def consent_note():
-    """首页：第一次打开时询问。默认勾选「同意」，但点「确定」之前什么都不发送"""
-    def ok():
-        telemetry.set_consent(bool(agree.value))
+    """首页：首次打开时展示默认开启告知条（研报风细线提示），支持查看原文、知道了或一键关闭统计"""
+    def accept():
+        telemetry.set_consent(True)
         box.delete()
         if telemetry.due():
             telemetry.send_async(1)
 
+    def decline():
+        telemetry.set_consent(False)
+        box.delete()
+
     with ui.column().classes("w-full gap-2 sq-note sq-note-info").mark("home_tele") as box:
         ui.markdown(t("tele.ask")).classes("text-sm sq-md-tight")
-        with ui.row().classes("items-center gap-4"):
-            agree = ui.checkbox(t("tele.agree"), value=True).mark("home_tele_agree")
+        with ui.row().classes("items-center gap-3 flex-wrap"):
+            ui.button(t("tele.ok"), on_click=accept).props("outline dense no-caps").classes("px-3").mark("home_tele_ok")
             ui.button(t("tele.preview"), on_click=preview_dialog).props("flat dense no-caps").mark("home_tele_preview")
-            ui.button(t("tele.ok"), on_click=ok).props("outline no-caps").mark("home_tele_ok")
+            ui.button(t("tele.disable"), on_click=decline).props("flat dense no-caps").classes("sq-muted").mark("home_tele_decline")
 
 
 def settings_section():
@@ -55,7 +59,7 @@ def settings_section():
                 if telemetry.due():
                     telemetry.send_async(1)
             with ui.row().classes("items-center gap-4"):
-                ui.switch(t("tele.agree"), value=telemetry.consent() is True, on_change=on_change) \
+                ui.switch(t("tele.agree"), value=telemetry.consent() is not False, on_change=on_change) \
                     .mark("set_tele")
                 ui.button(t("tele.preview"), on_click=preview_dialog).props("flat dense no-caps") \
                     .mark("set_tele_preview")

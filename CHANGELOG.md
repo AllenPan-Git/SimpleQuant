@@ -5,6 +5,22 @@
 
 Changes in each release. `tools/release.py` copies the matching section into the GitHub release notes.
 
+## 3.8.0（2026-11-27）
+
+### 更新内容
+- 新增：模拟盘「待执行信号」通知与推送——支持邮箱验证码绑定与研报风 HTML 邮件、Windows / macOS / Linux 原生桌面通知，以及 PushPlus、Server酱、企业微信、飞书、钉钉、Bark 与通用 Webhook 推送；支持多账户汇总与同日去重，仅由定时任务自动触发；Windows 定时任务启用开机补跑（`StartWhenAvailable`）
+- 新增：首页「今日」新增「市场温度」轻指标栏，基于本机已有宽基估值与中债 10 年期国债收益率展示市盈率历史百分位、10 年期国债收益率与股债利差（ERP），并支持一键刷新本机数据源
+- 新增：示例回测报告页增加「下一步」轻引导，便于一键切换标的重新回测或使用内置免费体验额度调用 AI 解读报告
+- 改进：选股与可转债数据页在本地无数据时明确说明免费接口下载耗时、单日限额与断点续传机制，并补充云端离线数据包快速导入入口
+- 改进：匿名使用统计调整为默认开启并透明告知（首次启动延迟 15 秒发送），首页提供明确告知条与「知道了 / 查看会发送什么 / 关闭统计」一键操作，并保留老用户此前的关闭选择
+
+### Changes
+- Added: Paper Trading "Pending signals" notifications — email verification with editorial-style HTML digests, native desktop notifications on Windows / macOS / Linux, plus PushPlus, ServerChan, WeCom, Feishu, DingTalk, Bark, and generic webhooks; aggregates across accounts with daily deduplication, triggered only by scheduled runs; Windows scheduled tasks now enable `StartWhenAvailable` catch-up runs
+- Added: "Market temperature" strip on the Home page showing local broad-index P/E percentile, 10-year China government bond yield, and equity risk premium (ERP) from existing local data with one-click refresh
+- Added: post-run next-step bar on the sample backtest report to quickly switch instruments and re-run or interpret the report with the built-in free AI trial
+- Improved: empty-state guidance on Stock Selection and Convertible Bond data tabs explaining free-source download duration, daily request limits, resumable downloads, and the cloud offline data pack option
+- Improved: anonymous usage statistics are now opt-out (enabled by default with a 15-second startup delay and a transparent Home notice offering "Got it", "See what is sent", and one-click "Disable"); existing users who previously opted out remain disabled
+
 ## 3.7.2（2026-11-27）
 
 ### 更新内容

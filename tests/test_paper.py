@@ -374,9 +374,10 @@ def test_schedule_commands(monkeypatch):
         returncode, stdout, stderr = 0, "SUCCESS", ""
     monkeypatch.setattr(schedule.subprocess, "run", lambda args, **kw: calls.append(args) or R())
     assert schedule.create_task("18:45")[0]
-    args = calls[-1]
-    assert args[:3] == ["schtasks", "/Create", "/F"] and "18:45" in args and schedule.TASK_NAME in args
-    assert str(schedule.BAT) in args[args.index("/TR") + 1]
+    sch_args = next(c for c in calls if c and c[0] == "schtasks")
+    assert sch_args[:3] == ["schtasks", "/Create", "/F"] and "18:45" in sch_args and schedule.TASK_NAME in sch_args
+    assert str(schedule.BAT) in sch_args[sch_args.index("/TR") + 1]
+    assert any(c and c[0] == "powershell" and "StartWhenAvailable" in " ".join(c) for c in calls)
     schedule.delete_task()
     assert calls[-1][:2] == ["schtasks", "/Delete"]
 

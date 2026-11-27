@@ -1936,12 +1936,12 @@ def tele_on(tmp_path, monkeypatch):
 
 
 async def test_home_telemetry_ask_once(user: User, tele_on):
-    """首页询问一次：默认勾选同意，点「确定」才算同意并在后台发送；之后不再询问。没启用统计时不询问"""
+    """首页首次展示默认开启告知条：点「知道了」确认开启并收起，之后不再提示；没启用统计时不提示"""
     telemetry, sent = tele_on
     await user.open("/")
     await user.should_see(marker="home_tele")
-    assert user.find(marker="home_tele_agree").elements.pop().value is True
-    assert telemetry.consent() is None                       # 默认勾选，但还没点确定：不算同意
+    await user.should_see(marker="home_tele_decline")
+    assert telemetry.consent() is None and telemetry.due()   # 默认开启
     user.find(marker="home_tele_ok").click()
     await settle()
     assert telemetry.consent() is True and sent == [1]
@@ -1955,8 +1955,7 @@ async def test_home_telemetry_ask_once(user: User, tele_on):
 async def test_home_telemetry_decline(user: User, tele_on):
     telemetry, sent = tele_on
     await user.open("/")
-    user.find(marker="home_tele_agree").elements.pop().set_value(False)
-    user.find(marker="home_tele_ok").click()
+    user.find(marker="home_tele_decline").click()
     await settle()
     assert telemetry.consent() is False and sent == []
     telemetry.count("page:/")
@@ -1973,14 +1972,16 @@ async def test_telemetry_preview_shows_payload(user: User, tele_on):
 
 
 async def test_settings_telemetry_and_feedback(user: User, tele_on, monkeypatch):
-    """设置页：没回答首页询问时开关是关的；打开即同意；反馈框提交成功后清空，失败显示原因"""
+    """设置页：默认开启，关闭即停止并清空，重新打开可恢复；反馈框提交成功后清空，失败显示原因"""
     telemetry, sent = tele_on
     got = []
     results = iter(["ok", "rate_limited"])
     monkeypatch.setattr(telemetry, "send_feedback", lambda text: got.append(text) or next(results))
     await user.open("/settings")
     sw = user.find(marker="set_tele").elements.pop()
-    assert sw.value is False
+    assert sw.value is True
+    sw.set_value(False)
+    assert telemetry.consent() is False and sent == []
     sw.set_value(True)
     assert telemetry.consent() is True and sent == [1]
     box = user.find(marker="set_fb_text").elements.pop()
@@ -3438,6 +3439,17 @@ async def test_home_sample_backtest(user: User, lib_dir, monkeypatch):
     assert calls == [("akshare", "510300")]
     assert state.STATE["bt_ids"] == ["x_510300"]
     assert state.strategy()["tpl_key"] == "sma_cross"
+    await user.should_see(marker="bt_sample_next")
+    await user.should_see(marker="sample_change_asset")
+    await user.should_see(marker="sample_ai_explain")
+    # 点击「更换标的重新回测」展开设置区；手动重新运行一次后示例引导自然隐藏
+    user.find(marker="sample_change_asset").click()
+    await settle()
+    assert user.find(marker="bt_setup").elements.pop().value is True
+    user.find(marker="run").click()
+    assert await _wait(lambda: state.STATE.get("bt", {}).get("is_sample") is False, n=600)
+    await settle()
+    await user.should_not_see(marker="bt_sample_next")
     md._JOBS.clear()
 
 
@@ -3932,3 +3944,86 @@ async def test_data_and_allocation_lazy_render_on_switch(user: User, lib_dir, mo
     user.find(marker="al_quiz").elements.pop().set_value(True)
     await settle()
     await user.should_see(marker="al_submit")
+
+
+async def test_data_empty_guide_and_cloud_dialog(user: User, monkeypatch, tmp_path):
+    """选股与可转债数据页在本地无数据时展示预计耗时、限额说明与云端离线包温和入口（待办 71）"""
+    from simplequant.stocks import StockStore
+    from simplequant.bonds import CBStore
+    from gui import sel_panel
+    monkeypatch.setattr(sel_panel, "store", lambda: StockStore(tmp_path / "stocks"))
+    monkeypatch.setattr(sel_panel, "universe_ready", lambda u: False)
+    monkeypatch.setattr("simplequant.bonds.CBStore", lambda: CBStore(tmp_path / "cb"))
+    state.STATE["data_uni"] = "hs300"
+
+    await user.open("/data?tab=stocks")
+    await user.should_see(marker="sp_empty_guide")
+    await user.should_see("10–20 分钟")
+    user.find(marker="sp_empty_cloud_btn").click()
+    await user.should_see(marker="cloud_dialog")
+
+    await user.open("/data?tab=cb")
+    await user.should_see(marker="cb_empty_guide")
+    await user.should_see("6–10 分钟")
+    await user.should_see(marker="cb_empty_cloud_btn")
+
+
+async def test_home_market_temp_hidden_when_empty(user: User, lib_dir, monkeypatch, tmp_path):
+    """首页市场温度栏：本地既无宽基估值又无利率数据时隐藏不占空间（待办 72）"""
+    from simplequant.bonds import rates as rates_mod
+    real_cls = rates_mod.RatesStore
+    monkeypatch.setattr(rates_mod, "RatesStore", lambda: real_cls(path=tmp_path / "rates.parquet"))
+    await user.open("/")
+    await asyncio.sleep(0.2)
+    await user.should_not_see(marker="home_temp")
+
+
+async def test_home_market_temp_displays_and_refreshes(user: User, lib_dir, monkeypatch, tmp_path):
+    """首页市场温度栏：有本机宽基估值与利率数据时展示百分位/国债/股债利差，并支持刷新（待办 72）"""
+    from simplequant.bonds import rates as rates_mod
+    import simplequant.data as data_mod
+    real_cls = rates_mod.RatesStore
+    rpath = tmp_path / "rates.parquet"
+    idx = pd.bdate_range("2024-01-02", periods=260)
+    # PE 从 10.0 递增到 20.0，最后一天为 12.5（对应 1/PE = 8.0%，ERP = 8.0 - 2.0 = +6.00%）
+    pe_vals = np.linspace(10.0, 20.0, 260)
+    pe_vals[-1] = 12.5
+    df = make_prices(n=260)
+    df.index = idx
+    df["pe"] = pe_vals
+    library.save(df, library.DatasetMeta(
+        id="x_510300", name="510300 沪深300ETF", symbol="510300",
+        source="akshare", freq="1d", adjust="hfq", extra={"valuation": "000300"},
+    ))
+    rates_df = pd.DataFrame({
+        "cgb_1y": [1.5] * len(idx),
+        "cgb_3y": [1.7] * len(idx),
+        "cgb_10y": [2.0] * len(idx),
+        "mtn_3y": [2.1] * len(idx),
+    }, index=idx)
+    rates_df.to_parquet(rpath)
+
+    refreshed = {"val": 0, "rates": 0}
+
+    class FakeRates(real_cls):
+        def __init__(self):
+            super().__init__(path=rpath)
+
+        def update(self, *a, **kw):
+            refreshed["rates"] += 1
+            return self.load_raw()
+
+    monkeypatch.setattr(rates_mod, "RatesStore", FakeRates)
+    monkeypatch.setattr(data_mod, "can_update", lambda m: True)
+    monkeypatch.setattr(data_mod, "update_dataset", lambda m: refreshed.__setitem__("val", refreshed["val"] + 1))
+
+    await user.open("/")
+    await user.should_see(marker="home_temp", retries=40)
+    await user.should_see(marker="home_temp_pe_pct")
+    await user.should_see(marker="home_temp_cgb10y")
+    await user.should_see(marker="home_temp_erp")
+    await user.should_see("2.00%")
+    await user.should_see("+6.00%")
+
+    user.find(marker="home_temp_refresh").click()
+    assert await _wait(lambda: refreshed["val"] == 1 and refreshed["rates"] == 1, n=200)

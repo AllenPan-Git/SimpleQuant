@@ -155,10 +155,14 @@ def test_payload_matches_server_format(tele):
     T.set_ui_info("zh", "new")
 
 
-def test_no_send_before_consent(tele):
+def test_default_enabled_opt_out(tele):
+    """默认开启（consent=None 时即可发送），明确关闭（consent=False）后不再发送"""
     post = FakePost()
-    assert T.consent() is None and not T.due() and not T.send(post)
-    assert post.calls == []
+    assert T.consent() is None and T.due() and T.send(post)
+    assert len(post.calls) == 1
+    T.set_consent(False)
+    assert not T.due() and not T.send(post)
+    assert len(post.calls) == 1
 
 
 def test_decline_clears_and_stops(tele):

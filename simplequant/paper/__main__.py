@@ -8,6 +8,7 @@ import datetime as dt
 import sys
 
 from .account import PAPER_ROOT, list_accounts
+from .notify import notify_after_run
 from .runner import run_all
 
 
@@ -25,6 +26,10 @@ def main() -> int:
         results = run_all(accounts, log=log)
         failed = [k for k, v in results.items() if v]
         log(f"run end: {len(results) - len(failed)} ok, {len(failed)} failed")
+        try:
+            notify_after_run(list_accounts(), results, log=log)
+        except Exception as e:  # noqa: BLE001 - 通知失败绝不影响主流程退出码
+            log(f"notify error: {e}")
     return 1 if failed else 0
 
 

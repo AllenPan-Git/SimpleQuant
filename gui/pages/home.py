@@ -52,6 +52,8 @@ def page():
                 _hero(bool(metas))
             _paper_panel(accounts, rows)
 
+        _market_temp_bar(metas)
+
         if len(accounts) >= 2:
             _section(t("home.accounts"), t("home.accounts_note"))
             accounts_table(accounts, _open_account, rows=rows)
@@ -227,6 +229,7 @@ def _sample_backtest():
     S.pop("bt_range", None)
     S.pop("bt", None)
     S["bt_autorun"] = True
+    S["bt_sample_run"] = True
     ui.navigate.to(routes.timing("backtest", spec=dict(SAMPLE_SPEC)))
 
 
@@ -468,6 +471,200 @@ def _paper_warnings():
                     ui.label(t(f"home.warn_{kind}", **kw)).classes("text-sm").mark(f"paper_warn:{kind}")
             ui.label(t("home.warn_fix")).classes("sq-red text-sm cursor-pointer")                 .on("click", lambda: ui.navigate.to("/paper"))
     ui.timer(0.05, fill, once=True)
+
+
+# ---------------- 市场温度轻指标栏（待办 72） ----------------
+_TEMP_INDEX_ORDER = ("000300", "000905", "000016", "000852")
+
+
+def _pick_valuation_meta(metas: list):
+    """从本机日线数据集中挑选一份带估值的宽基数据，优先沪深300 → 中证500 → 上证50 → 中证1000 → 其他"""
+    from simplequant.data import valuation
+    cands = []
+    for m in metas:
+        if getattr(m, "freq", "") != "1d":
+            continue
+        code = (m.extra or {}).get("valuation")
+        if not code:
+            code = valuation.ETF_INDEX.get(m.symbol) or (m.symbol if m.symbol in valuation.INDEXES else None)
+        if not code or code not in valuation.INDEXES:
+            continue
+        prio = _TEMP_INDEX_ORDER.index(code) if code in _TEMP_INDEX_ORDER else len(_TEMP_INDEX_ORDER)
+        cands.append((prio, -(m.rows or 0), str(m.end or ""), code, m))
+    if not cands:
+        return None, None
+    cands.sort(key=lambda x: (x[0], x[1], x[2]))
+    return cands[0][3], cands[0][4]
+
+
+def _calc_pe_percentile(pe_series, window: int = 1220, min_count: int = 244) -> tuple[float | None, float]:
+    """按回测引擎 Percentile 同口径计算最新 PE 历史百分位及实际回看年数"""
+    s = pe_series.dropna()
+    if s.empty:
+        return None, 0.0
+    tail = s.iloc[-window:]
+    n = len(tail)
+    if n < min_count:
+        return None, n / 244.0
+    cur = float(tail.iloc[-1])
+    less = int((tail < cur).sum())
+    eq = int((tail == cur).sum())
+    return (less + eq / 2.0) / n * 100.0, max(1.0, round(n / 244.0))
+
+
+def _market_temp_snapshot(metas: list) -> dict:
+    """仅读取本机已有估值与利率数据生成市场温度快照，不发任何网络请求"""
+    from simplequant.bonds.rates import RatesStore
+    from simplequant.data import valuation
+
+    items = []
+    val_code, val_meta = _pick_valuation_meta(metas)
+    pe_val, pe_date, idx_name = None, None, None
+    if val_meta is not None:
+        try:
+            df = library.load(val_meta.id)
+        except Exception:  # noqa: BLE001
+            df = None
+        if df is not None and "pe" in df.columns:
+            pe_s = df["pe"].dropna()
+            if not pe_s.empty:
+                pe_val = float(pe_s.iloc[-1])
+                pe_date = str(pe_s.index[-1])[:10]
+                idx_name = valuation.INDEXES.get(val_code, val_meta.name or val_meta.symbol)
+                pe_pct, yrs = _calc_pe_percentile(pe_s)
+                if pe_pct is not None:
+                    items.append({
+                        "key": "pe_pct",
+                        "label": t("home.temp_pe_pct", name=idx_name),
+                        "value": f"{pe_pct:.1f}%",
+                        "sub": t("home.temp_pe_pct_sub", pe=f"{pe_val:.1f}", years=f"{yrs:g}", d=pe_date),
+                    })
+                else:
+                    items.append({
+                        "key": "pe_val",
+                        "label": t("home.temp_pe_val", name=idx_name),
+                        "value": f"{pe_val:.2f}",
+                        "sub": t("home.temp_pe_val_sub", d=pe_date),
+                    })
+
+    rates_store = RatesStore()
+    has_rates = rates_store.ready()
+    cgb_val, cgb_date = None, None
+    if has_rates:
+        try:
+            raw_rates = rates_store.load_raw()
+            if "cgb_10y" in raw_rates.columns:
+                cgb_s = raw_rates["cgb_10y"].dropna()
+                if not cgb_s.empty:
+                    cgb_val = float(cgb_s.iloc[-1])
+                    cgb_date = str(cgb_s.index[-1])[:10]
+                    items.append({
+                        "key": "cgb10y",
+                        "label": t("home.temp_cgb10y"),
+                        "value": f"{cgb_val:.2f}%",
+                        "sub": t("home.temp_cgb10y_sub", d=cgb_date),
+                    })
+        except Exception:  # noqa: BLE001
+            pass
+
+    if pe_val is not None and pe_val > 0 and cgb_val is not None:
+        erp = 100.0 / pe_val - cgb_val
+        erp_date = min(pe_date, cgb_date) if pe_date and cgb_date else (pe_date or cgb_date or "")
+        items.append({
+            "key": "erp",
+            "label": t("home.temp_erp"),
+            "value": f"{'+' if erp >= 0 else ''}{erp:.2f}%",
+            "sub": t("home.temp_erp_sub", name=idx_name or "", d=erp_date),
+        })
+
+    return {"items": items, "val_meta": val_meta if pe_val is not None else None, "has_rates": has_rates}
+
+
+def _refresh_market_temp(val_meta, has_rates: bool) -> list[str]:
+    """仅刷新本机已有数据源（宽基日线估值 / 中债收益率曲线），两项互不阻塞，返回失败详情列表"""
+    from simplequant.bonds.rates import RatesStore
+    from simplequant.data import can_update, update_dataset
+
+    errs: list[str] = []
+    if val_meta is not None and can_update(val_meta):
+        try:
+            update_dataset(val_meta)
+        except Exception as e:  # noqa: BLE001
+            errs.append(f"{val_meta.name or val_meta.symbol}: {e}")
+    if has_rates:
+        try:
+            RatesStore().update()
+        except Exception as e:  # noqa: BLE001
+            errs.append(f"Rates: {e}")
+    return errs
+
+
+def _market_temp_bar(metas: list):
+    """首页「市场温度」轻指标栏：后台读取本机数据；无对应数据时隐藏不占空间"""
+    cur_snap: dict = {}
+    with ui.column().classes("w-full gap-3 py-4 mt-4") \
+            .style("border-top: 1px solid var(--sq-border); border-bottom: 1px solid var(--sq-border2)") \
+            .mark("home_temp") as wrap:
+        with ui.row().classes("w-full items-baseline justify-between gap-2 no-wrap"):
+            with ui.row().classes("items-baseline gap-3 flex-wrap"):
+                ui.label(t("home.temp_title")).classes("sq-h2")
+                ui.label(t("home.temp_note")).classes("sq-muted text-xs")
+            ref_btn = ui.button(t("home.temp_refresh"), icon="refresh") \
+                .props("flat dense no-caps").classes("sq-muted text-xs px-2").mark("home_temp_refresh")
+        grid_box = ui.column().classes("w-full gap-0")
+    wrap.set_visibility(False)
+
+    def render(snap: dict):
+        if wrap.is_deleted or grid_box.is_deleted:
+            return
+        cur_snap.clear()
+        cur_snap.update(snap)
+        items = snap.get("items") or []
+        grid_box.clear()
+        if not items:
+            wrap.set_visibility(False)
+            return
+        wrap.set_visibility(True)
+        with grid_box:
+            cols = len(items)
+            with ui.element("div").classes("w-full grid gap-6") \
+                    .style(f"grid-template-columns: repeat({cols}, minmax(0, 1fr))"):
+                for it in items:
+                    with ui.column().classes("gap-0.5 min-w-0").mark(f"home_temp_{it['key']}"):
+                        ui.label(it["label"]).classes("sq-muted text-xs")
+                        ui.label(it["value"]).classes("sq-fig text-2xl leading-tight")
+                        ui.label(it["sub"]).classes("sq-muted text-xs")
+
+    async def do_refresh():
+        ref_btn.disable()
+        ref_btn.set_text(t("home.temp_refreshing"))
+        try:
+            errs = await run.io_bound(_refresh_market_temp, cur_snap.get("val_meta"), bool(cur_snap.get("has_rates")))
+            fresh = await run.io_bound(_market_temp_snapshot, library.list_datasets())
+            if not wrap.is_deleted:
+                render(fresh)
+                if errs:
+                    ui.notify(t("home.temp_refresh_failed", e="; ".join(errs)), type="warning", multi_line=True)
+                else:
+                    ui.notify(t("home.temp_refreshed"), type="positive")
+        except Exception as e:  # noqa: BLE001
+            if not wrap.is_deleted:
+                ui.notify(t("home.temp_refresh_failed", e=e), type="negative", multi_line=True)
+        finally:
+            if not ref_btn.is_deleted:
+                ref_btn.set_text(t("home.temp_refresh"))
+                ref_btn.enable()
+
+    ref_btn.on_click(do_refresh)
+
+    async def load():
+        try:
+            snap = await run.io_bound(_market_temp_snapshot, metas)
+        except Exception:  # noqa: BLE001
+            return
+        render(snap)
+
+    ui.timer(0.05, load, once=True)
 
 
 # ---------------- 最近的报告 ----------------

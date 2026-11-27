@@ -54,8 +54,11 @@ def create_task(at: str = "19:00") -> tuple[bool, str]:
     """周一到周五 at 运行（节假日运行也无妨：没有新数据时不会产生新成交）；成功时说明可能为空"""
     b = backend()
     if b == "windows":
-        return _schtasks("/Create", "/F", "/SC", "WEEKLY", "/D", "MON,TUE,WED,THU,FRI", "/TN", TASK_NAME,
-                         "/TR", task_command(), "/ST", at)
+        ok, msg = _schtasks("/Create", "/F", "/SC", "WEEKLY", "/D", "MON,TUE,WED,THU,FRI", "/TN", TASK_NAME,
+                            "/TR", task_command(), "/ST", at)
+        if ok:
+            _enable_windows_catchup()
+        return ok, msg
     try:
         hour, minute = (int(x) for x in at.split(":")[:2])
     except ValueError:
@@ -94,6 +97,16 @@ def _run(*args, encoding: str = "utf-8", stdin: str | None = None) -> tuple[bool
 # ---------- Windows ----------
 def _schtasks(*args) -> tuple[bool, str]:
     return _run("schtasks", *args, encoding="gbk")
+
+
+def _enable_windows_catchup() -> None:
+    """为 Windows 定时任务开启「错过计划时间后尽快补跑」及电池供电允许运行（失败静默跳过，不影响已建任务）"""
+    ps = (
+        "$s = New-ScheduledTaskSettingsSet -StartWhenAvailable "
+        "-AllowStartIfOnBatteries -DontStopIfGoingOnBatteries; "
+        f"Set-ScheduledTask -TaskName '{TASK_NAME}' -Settings $s | Out-Null"
+    )
+    _run("powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps)
 
 
 # ---------- macOS：launchd ----------

@@ -12,7 +12,7 @@ from simplequant.engine.results import nav_of
 from simplequant.i18n import render
 from simplequant.paper import list_accounts, delete_account, create_account, run_all, load_calendar
 from simplequant.paper import account as account_mod
-from simplequant.paper import runner, schedule
+from simplequant.paper import notify, runner, schedule
 from simplequant.paper.calendar import latest_expected_day
 from simplequant.stocks import UNIVERSES, universe as U
 from simplequant.strategies import TEMPLATES
@@ -104,6 +104,7 @@ def page():
         body()
 
         _schedule_box(PP, task_status)
+        _notify_box()
 
 
 def _new_account_form(PP, run_accounts, redraw):
@@ -665,3 +666,165 @@ def _schedule_box(PP, task_status):
 
     _load_expansion(exp, draw)
     ui.timer(0, check_status, once=True)
+
+
+def _notify_box():
+    exp = ui.expansion(t("pp.notify_title"), icon="notifications") \
+        .props(f'caption="{t("pp.notify_caption")}"') \
+        .classes("w-full q-card").mark("pp_notify")
+
+    def draw():
+        cfg = notify.load_config()
+        ui.label(t("pp.notify_intro")).classes("sq-muted text-sm mb-3")
+        state_box = {"editing": not bool(cfg.email_token.strip()), "email": cfg.email_address, "code": ""}
+
+        # 邮件通知（主推）
+        @ui.refreshable
+        def email_section():
+            bound = bool(cfg.email_token.strip())
+            with ui.column().classes("w-full gap-2 py-3").style(
+                    "border-top: 1px solid var(--sq-border); border-bottom: 1px solid var(--sq-border2)"):
+                with ui.row().classes("items-center justify-between w-full flex-wrap gap-2"):
+                    with ui.row().classes("items-center gap-2"):
+                        ui.label(t("pp.notify_email_title")).classes("font-medium text-sm")
+                        status_txt = (t("pp.notify_email_bound", addr=notify.mask_email(cfg.email_address))
+                                      if bound else t("pp.notify_email_unbound"))
+                        ui.label(status_txt) \
+                            .classes("text-xs px-2 py-0.5 rounded") \
+                            .style("background: var(--sq-bg2); color: var(--sq-red)" if bound else
+                                   "background: var(--sq-bg2); color: var(--sq-muted)") \
+                            .mark("pp_email_status")
+                    if bound:
+                        with ui.row().classes("items-center gap-2"):
+                            def start_change():
+                                state_box["editing"] = not state_box["editing"]
+                                email_section.refresh()
+
+                            async def do_unbind():
+                                old = cfg.email_token
+                                ok, msg = await run.io_bound(notify.mail_unbind, old)
+                                if not ok:
+                                    ui.notify(t("pp.notify_email_unbind_failed", msg=msg), type="negative")
+                                    return
+                                cfg.email_token = ""
+                                cfg.email_address = ""
+                                cfg.email_enabled = False
+                                notify.save_config(cfg)
+                                state_box["editing"] = True
+                                state_box["email"] = ""
+                                state_box["code"] = ""
+                                email_section.refresh()
+                                ui.notify(t("pp.notify_email_unbound_ok"), type="info")
+
+                            ui.button(t("pp.notify_email_change"), icon="edit", on_click=start_change) \
+                                .props("outline no-caps").classes("px-3").mark("pp_email_change")
+                            ui.button(t("pp.notify_email_unbind"), icon="link_off", on_click=do_unbind) \
+                                .props("flat no-caps").classes("px-3").style("color: var(--sq-muted)").mark("pp_email_unbind")
+
+                if bound:
+                    ui.switch(t("pp.notify_email_enable"), value=cfg.email_enabled,
+                              on_change=lambda e: setattr(cfg, "email_enabled", bool(e.value))) \
+                        .props("dense").mark("pp_email_enable")
+
+                if state_box["editing"]:
+                    with ui.column().classes("w-full gap-2.5 mt-1"):
+                        with ui.row().classes("items-center gap-3 flex-wrap w-full"):
+                            email_in = ui.input(t("pp.notify_email_input"), value=state_box["email"],
+                                                placeholder="name@qq.com",
+                                                on_change=lambda e: state_box.__setitem__("email", (e.value or "").strip())) \
+                                .props("outlined dense").classes("w-64").mark("pp_email_input")
+
+                            async def do_send_code():
+                                ok, msg = await run.io_bound(notify.mail_request_code, email_in.value or "")
+                                if not email_in.is_deleted:
+                                    ui.notify(t("pp.notify_email_code_sent") if ok else msg,
+                                              type="positive" if ok else "negative")
+
+                            ui.button(t("pp.notify_email_send_code"), icon="mail", on_click=do_send_code) \
+                                .props("outline no-caps").classes("px-4").mark("pp_email_send_code")
+
+                        with ui.row().classes("items-center gap-3 flex-wrap w-full"):
+                            code_in = ui.input(t("pp.notify_email_code"), value=state_box["code"], placeholder="123456",
+                                               on_change=lambda e: state_box.__setitem__("code", (e.value or "").strip())) \
+                                .props("outlined dense").classes("w-40").mark("pp_email_code")
+
+                            async def do_verify():
+                                old_tok = cfg.email_token
+                                ok, res = await run.io_bound(notify.mail_verify, email_in.value or "", code_in.value or "")
+                                if email_in.is_deleted:
+                                    return
+                                if ok and isinstance(res, dict) and res.get("token"):
+                                    cfg.email_token = res["token"]
+                                    cfg.email_address = res.get("email") or (email_in.value or "").strip()
+                                    cfg.email_enabled = True
+                                    notify.save_config(cfg)
+                                    state_box["editing"] = False
+                                    state_box["code"] = ""
+                                    email_section.refresh()
+                                    ui.notify(t("pp.notify_email_bound_ok"), type="positive")
+                                    if old_tok and old_tok != cfg.email_token:
+                                        await run.io_bound(notify.mail_unbind, old_tok)
+                                else:
+                                    ui.notify(str(res), type="negative")
+
+                            ui.button(t("pp.notify_email_verify"), icon="check", on_click=do_verify) \
+                                .props("unelevated no-caps").classes("px-4").mark("pp_email_verify")
+
+        email_section()
+
+        # 系统桌面通知与推送时机
+        with ui.column().classes("w-full gap-2 py-3"):
+            ui.switch(t("pp.notify_desktop"), value=cfg.desktop,
+                      on_change=lambda e: setattr(cfg, "desktop", bool(e.value))) \
+                .props("dense").mark("pp_notify_desktop")
+            ui.label(t("pp.notify_mode")).classes("text-xs sq-muted mt-1")
+            ui.radio({"signals": t("pp.notify_mode_signals"), "always": t("pp.notify_mode_always")},
+                     value=cfg.mode, on_change=lambda e: setattr(cfg, "mode", e.value)) \
+                .props("dense").mark("pp_notify_mode")
+
+        # 其他推送方式（默认折叠）
+        with ui.expansion(t("pp.notify_webhook_more"), icon="webhook", value=cfg.webhook_enabled) \
+                .classes("w-full mb-3").style("border: 1px solid var(--sq-border2)").mark("pp_notify_webhook_exp"):
+            with ui.column().classes("w-full gap-2 p-2"):
+                ui.switch(t("pp.notify_webhook_enable"), value=cfg.webhook_enabled,
+                          on_change=lambda e: setattr(cfg, "webhook_enabled", bool(e.value))) \
+                    .props("dense").mark("pp_webhook_enable")
+                kind_opts = {k: t(f"pp.notify_kind_{k}") for k in
+                             ("auto", "pushplus", "serverchan", "wecom", "feishu", "dingtalk", "bark", "generic")}
+                ui.select(kind_opts, value=cfg.webhook_kind, label=t("pp.notify_webhook_kind"),
+                          on_change=lambda e: setattr(cfg, "webhook_kind", e.value)) \
+                    .props(DENSE).classes("w-64").mark("pp_webhook_kind")
+                ui.input(t("pp.notify_webhook_url"), value=cfg.webhook_url,
+                         password=True, password_toggle_button=True,
+                         on_change=lambda e: setattr(cfg, "webhook_url", (e.value or "").strip())) \
+                    .props("outlined dense").classes("w-full").mark("pp_webhook_url")
+                ui.input(t("pp.notify_webhook_secret"), value=cfg.webhook_secret,
+                         password=True, password_toggle_button=True,
+                         on_change=lambda e: setattr(cfg, "webhook_secret", (e.value or "").strip())) \
+                    .props("outlined dense").classes("w-full").mark("pp_webhook_secret")
+
+        # 保存与测试按钮
+        with ui.row().classes("items-center gap-3 pt-2"):
+            def do_save():
+                notify.save_config(cfg)
+                ui.notify(t("pp.notify_saved"), type="positive")
+
+            async def do_test():
+                notify.save_config(cfg)
+                if not cfg.any_enabled:
+                    ui.notify(t("pp.notify_none_enabled"), type="warning")
+                    return
+                res = await run.io_bound(notify.send_test, cfg)
+                ok_ch = [t(f"pp.notify_ch_{ch}") for ch, ok, _ in res if ok]
+                bad_ch = [f"{t(f'pp.notify_ch_{ch}')}（{msg}）" for ch, ok, msg in res if not ok]
+                if bad_ch:
+                    ui.notify(t("pp.notify_test_partial", detail="；".join(bad_ch)), type="warning", multi_line=True)
+                elif ok_ch:
+                    ui.notify(t("pp.notify_test_ok", channels="、".join(ok_ch)), type="positive")
+
+            ui.button(t("pp.notify_save"), icon="save", on_click=do_save) \
+                .props("unelevated no-caps").classes("px-4").mark("pp_notify_save")
+            ui.button(t("pp.notify_test"), icon="send", on_click=do_test) \
+                .props("outline no-caps").classes("px-4").mark("pp_notify_test")
+
+    _load_expansion(exp, draw)

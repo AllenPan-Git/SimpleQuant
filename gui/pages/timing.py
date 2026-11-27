@@ -102,10 +102,17 @@ def _workbench(S, by_id: dict):
         bar.setup.value = True
         _scroll_into_view(bar.setup_row)
 
+    def change_asset():
+        """示例回测下一步：展开设置区并定位到顶部，便于更换标的或调整规则后重新回测"""
+        tabs.set_value("report")
+        bar.setup.value = True
+        _scroll_into_view(bar.setup_row)
+
     @ui.refreshable
     def results():
         if _same_result(BT, bar):
-            report(BT, bar.exp_menu, to_verify=lambda: show_verify("optimize"), on_iterate=apply_iterated)
+            report(BT, bar.exp_menu, to_verify=lambda: show_verify("optimize"),
+                   on_iterate=apply_iterated, on_change_asset=change_asset)
             return
         if BT.get("result") is None and BT.get("batch") is None:
             ui.label(t("timing.no_report")).classes("sq-muted text-sm py-4")

@@ -16,7 +16,7 @@ from simplequant.stocks.store import DAILY_LIMIT
 from gui.common import t, p, lang
 from gui.components import metric_tile
 from gui.widgets import hint, notice, Progress
-from gui import sel_panel
+from gui import sel_panel, cloud_ui
 
 
 # 按目录 / 元数据 mtime 缓存统计结果：切回数据页或切换股票池时无需重复扫盘，目录内文件增删改时自动失效
@@ -94,6 +94,25 @@ def _risk_requests_cached(st, universe: str, year: int) -> int:
 
 
 # ================= 数据 =================
+def _empty_data_guide(universe: str):
+    """本地尚无选股/可转债数据时的耗时预期与云端离线包温和引导（待办 71）"""
+    eta_map = {
+        "hs300": "sp.empty_eta_hs300",
+        "zz500": "sp.empty_eta_zz500",
+        "all_a": "sp.empty_eta_all_a",
+        "cb": "sp.empty_eta_cb",
+    }
+    eta_key = eta_map.get(universe, "sp.empty_eta_stock")
+    tag = "cb" if universe == "cb" else "sp"
+    with ui.column().classes("w-full gap-2 py-3 px-4 sq-note").mark(f"{tag}_empty_guide"):
+        ui.label(t("sp.no_data")).classes("text-sm font-semibold")
+        ui.label(t(eta_key)).classes("text-sm sq-muted leading-relaxed")
+        ui.button(
+            t("sp.empty_cloud_btn"), icon="cloud_download",
+            on_click=lambda: cloud_ui.open_cloud_dialog(),
+        ).props("outline dense no-caps").classes("self-start mt-1 px-3").mark(f"{tag}_empty_cloud_btn")
+
+
 def _data_tab(SP, ctx, reload_all, universe: str | None = None):
     """universe：下载哪个股票池（新版数据中心自己选）；为空时用选股页当前的股票池。ctx 只用 lo / hi（是否已有数据）"""
     universe = universe or SP["universe"]
@@ -114,7 +133,7 @@ def _data_tab(SP, ctx, reload_all, universe: str | None = None):
             metric_tile(t("sp.div_downloaded"), f"{have_div}/{n_codes}", help_text=t("sp.div_help"))
             metric_tile(t("sp.risk_downloaded"), f"{have_risk}/{n_codes}", help_text=t("sp.risk_help"))
     else:
-        notice(t("sp.no_data"), "info")
+        _empty_data_guide(universe)
 
     D = SP["dl"]
     with ui.card().classes("w-full gap-3"):
@@ -378,7 +397,7 @@ def _cb_data_tab(SP, ctx, reload_all):
             metric_tile(t("cb.trading"), str(trading))
             metric_tile(t("cb.as_of"), str(ctx.hi))
     else:
-        notice(t("sp.no_data"), "info")
+        _empty_data_guide("cb")
 
     D = SP["dl"]
     with ui.card().classes("w-full gap-3"):
